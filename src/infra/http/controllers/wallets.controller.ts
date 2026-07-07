@@ -4,6 +4,19 @@ import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { wallets, walletAssets, companies } from '../../database/schema.ts';
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({
+      path: path.join('.'),
+      message: m,
+    })),
+  });
+}
+
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
 const createWalletSchema = z.object({
@@ -36,7 +49,10 @@ export async function createWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { userId, name } = createWalletSchema.parse(request.body);
+  const parsed = createWalletSchema.safeParse(request.body);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Payload inválido.');
+
+  const { userId, name } = parsed.data;
 
   const [row] = await db
     .insert(wallets)
@@ -54,7 +70,10 @@ export async function listWalletsController(
   const querySchema = z.object({
     userId: z.string().uuid().optional(),
   });
-  const { userId } = querySchema.parse(request.query);
+  const parsed = querySchema.safeParse(request.query);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
+
+  const { userId } = parsed.data;
 
   const rows = userId
     ? await db
@@ -74,7 +93,10 @@ export async function getWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { walletId } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'walletId inválido.');
+
+  const { walletId } = parsed.data;
 
   const [wallet] = await db
     .select()
@@ -108,8 +130,14 @@ export async function updateWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { walletId } = paramsSchema.parse(request.params);
-  const updates = updateWalletSchema.parse(request.body);
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'walletId inválido.');
+
+  const bodyParsed = updateWalletSchema.safeParse(request.body);
+  if (!bodyParsed.success) return sendZodError(reply, bodyParsed.error, 'Payload inválido.');
+
+  const { walletId } = paramsParsed.data;
+  const updates = bodyParsed.data;
 
   const [row] = await db
     .update(wallets)
@@ -130,7 +158,10 @@ export async function deleteWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { walletId } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'walletId inválido.');
+
+  const { walletId } = parsed.data;
 
   const [deleted] = await db
     .delete(wallets)
@@ -150,8 +181,14 @@ export async function addAssetToWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { walletId } = paramsSchema.parse(request.params);
-  const { ticker, targetAllocationPercent } = addAssetSchema.parse(request.body);
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'walletId inválido.');
+
+  const bodyParsed = addAssetSchema.safeParse(request.body);
+  if (!bodyParsed.success) return sendZodError(reply, bodyParsed.error, 'Payload inválido.');
+
+  const { walletId } = paramsParsed.data;
+  const { ticker, targetAllocationPercent } = bodyParsed.data;
 
   // Verifica se a carteira existe
   const [wallet] = await db.select({ id: wallets.id }).from(wallets).where(eq(wallets.id, walletId));
@@ -193,7 +230,10 @@ export async function removeAssetFromWalletController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { walletId, assetId } = assetParamsSchema.parse(request.params);
+  const parsed = assetParamsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Parâmetros de rota inválidos.');
+
+  const { walletId, assetId } = parsed.data;
 
   const [deleted] = await db
     .delete(walletAssets)

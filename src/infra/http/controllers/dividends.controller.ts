@@ -4,6 +4,14 @@ import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import { eq, desc } from 'drizzle-orm';
 
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
+
 const paramsSchema = z.object({
   ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
 });
@@ -13,17 +21,15 @@ const paramsSchema = z.object({
  *
  * Retorna histórico de dividendos e JCP extraídos do DMPL
  * (Demonstração das Mutações do Patrimônio Líquido) da CVM.
- *
- * Contas extraídas:
- *   5.04.06 - Dividendos distribuídos (coluna Patrimônio Líquido Consolidado)
- *   5.04.07 - Juros sobre Capital Próprio (coluna Patrimônio Líquido Consolidado)
  */
-
 export async function getDividendsController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+
+  const { ticker } = parsed.data;
 
   const [company] = await db
     .select({ cnpj: companies.cnpj, name: companies.name })
@@ -35,7 +41,6 @@ export async function getDividendsController(
     return;
   }
 
-  // Busca dividendos reais do banco (extraídos do DMPL)
   const rows = await db
     .select({
       fiscalYear: companyFundamentals.fiscalYear,

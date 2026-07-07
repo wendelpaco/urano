@@ -2,6 +2,14 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { getOrSet } from '../../services/redis.ts';
 
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
+
 /**
  * Indicadores macroeconômicos do Brasil.
  * Fonte: API pública do Banco Central do Brasil (BCB).
@@ -89,7 +97,9 @@ export async function getMacroSeriesController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { series } = z.object({ series: z.string() }).parse(request.params);
+  const paramsParsed = z.object({ series: z.string() }).safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Série inválida.');
+  const { series } = paramsParsed.data;
 
   const info = MACRO_SERIES[series];
   if (!info) {
@@ -100,9 +110,11 @@ export async function getMacroSeriesController(
     return;
   }
 
-  const { limit } = z.object({
+  const queryParsed = z.object({
     limit: z.string().optional().default('12').transform(Number).pipe(z.number().int().min(1).max(60)),
-  }).parse(request.query);
+  }).safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida.');
+  const { limit } = queryParsed.data;
 
   const cacheKey = `macro:${series}:${limit}`;
   const history = await getOrSet(cacheKey, 3600, () => fetchBcbSeries(series, limit));

@@ -1,12 +1,22 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { eq, desc, isNull } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
+
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
 
 const createKeySchema = z.object({
   name: z.string().min(1).max(100),
 });
+
+const deleteParamsSchema = z.object({ id: z.string().uuid() });
 
 function generateApiKey(): string {
   const chars = 'abcdef0123456789';
@@ -16,16 +26,15 @@ function generateApiKey(): string {
   return `ur_${segments.join('_')}`;
 }
 
-/**
- * POST /v1/keys
- * Cria uma nova API Key.
- */
+/** POST /v1/keys */
 export async function createApiKeyController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { name } = createKeySchema.parse(request.body);
+  const parsed = createKeySchema.safeParse(request.body);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Payload inválido.');
 
+  const { name } = parsed.data;
   const key = generateApiKey();
 
   const [row] = await db
@@ -43,10 +52,7 @@ export async function createApiKeyController(
   });
 }
 
-/**
- * GET /v1/keys
- * Lista todas as API Keys (sem exibir o segredo).
- */
+/** GET /v1/keys */
 export async function listApiKeysController(
   _request: FastifyRequest,
   reply: FastifyReply,
@@ -65,15 +71,15 @@ export async function listApiKeysController(
   reply.send({ total: rows.length, data: rows });
 }
 
-/**
- * DELETE /v1/keys/:id
- * Desativa uma API Key (soft-delete: apenas marca como inativa).
- */
+/** DELETE /v1/keys/:id */
 export async function deleteApiKeyController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+  const parsed = deleteParamsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
+
+  const { id } = parsed.data;
 
   const [updated] = await db
     .update(apiKeys)

@@ -3,8 +3,20 @@ import { z } from 'zod';
 import { getOrSet } from '../../services/redis.ts';
 import { stockQuoteService, type StockQuote } from '../../services/stock-quote-service.ts';
 
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
+
 const paramsSchema = z.object({
   ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+});
+
+const fiiHistoryQuerySchema = z.object({
+  range: z.enum(['1mo', '3mo', '6mo', '1y', '2y', '5y']).default('1y'),
 });
 
 /**
@@ -58,7 +70,9 @@ export async function listFiisController(
     segment: z.string().optional(),
     withQuote: z.string().optional().default('true').transform((v) => v === 'true'),
   });
-  const { segment, withQuote } = querySchema.parse(request.query);
+  const parsed = querySchema.safeParse(request.query);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
+  const { segment, withQuote } = parsed.data;
 
   let data = KNOWN_FIIS;
   if (segment) {
@@ -102,7 +116,10 @@ export async function getFiiByTickerController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+  const { ticker } = parsed.data;
+
   const fii = KNOWN_FIIS.find((f) => f.ticker === ticker);
 
   if (!fii) {
@@ -135,7 +152,10 @@ export async function getFiiHistoryController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Ticker inválido.');
+  const { ticker } = paramsParsed.data;
+
   const fii = KNOWN_FIIS.find((f) => f.ticker === ticker);
 
   if (!fii) {
@@ -143,10 +163,9 @@ export async function getFiiHistoryController(
     return;
   }
 
-  const querySchema = z.object({
-    range: z.enum(['1mo', '3mo', '6mo', '1y', '2y', '5y']).default('1y'),
-  });
-  const { range } = querySchema.parse(request.query);
+  const queryParsed = fiiHistoryQuerySchema.safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida.');
+  const { range } = queryParsed.data;
 
   try {
     const history = await stockQuoteService.getHistory(ticker, range);

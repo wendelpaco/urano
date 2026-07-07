@@ -2,12 +2,33 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
+
 const paramsSchema = z.object({
   ticker: z
     .string()
     .min(4)
     .max(10)
     .transform((t) => t.toUpperCase()),
+});
+
+const historyQuerySchema = z.object({
+  range: z.enum(['1mo', '3mo', '6mo', '1y', '2y', '5y']).default('1mo'),
+});
+
+const batchQuerySchema = z.object({
+  tickers: z
+    .string()
+    .transform((s) =>
+      s.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
+    )
+    .pipe(z.array(z.string().min(4).max(10)).min(1).max(20)),
 });
 
 /**
@@ -18,7 +39,10 @@ export async function getStockQuoteController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+
+  const { ticker } = parsed.data;
 
   try {
     const quote = await stockQuoteService.getQuote(ticker);
@@ -43,11 +67,14 @@ export async function getStockHistoryController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
-  const querySchema = z.object({
-    range: z.enum(['1mo', '3mo', '6mo', '1y', '2y', '5y']).default('1mo'),
-  });
-  const { range } = querySchema.parse(request.query);
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Ticker inválido.');
+
+  const queryParsed = historyQuerySchema.safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida.');
+
+  const { ticker } = paramsParsed.data;
+  const { range } = queryParsed.data;
 
   try {
     const history = await stockQuoteService.getHistory(ticker, range);
@@ -70,16 +97,10 @@ export async function getBatchQuotesController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const querySchema = z.object({
-    tickers: z
-      .string()
-      .transform((s) =>
-        s.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
-      )
-      .pipe(z.array(z.string().min(4).max(10)).min(1).max(20)),
-  });
+  const queryParsed = batchQuerySchema.safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida. Use ?tickers=PETR4,VALE3');
 
-  const { tickers } = querySchema.parse(request.query);
+  const { tickers } = queryParsed.data;
 
   try {
     const quotes = await stockQuoteService.getQuotes(tickers);

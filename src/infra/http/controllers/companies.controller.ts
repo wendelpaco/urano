@@ -2,6 +2,19 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { companyQueries } from '../../database/company-queries.ts';
 
+function safeParse<T>(schema: z.ZodSchema<T>, data: unknown, reply: FastifyReply, message: string): T | null {
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    reply.status(400).send({
+      error: 'ValidationError',
+      message,
+      details: parsed.error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+    });
+    return null;
+  }
+  return parsed.data;
+}
+
 const paramsSchema = z.object({
   ticker: z
     .string()
@@ -22,8 +35,10 @@ export async function listCompaniesController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { sector } = querySchema.parse(request.query);
-  const companies = await companyQueries.listCompanies(sector);
+  const parsed = safeParse(querySchema, request.query, reply, 'Query inválida.');
+  if (!parsed) return;
+
+  const companies = await companyQueries.listCompanies(parsed.sector);
   reply.send({ total: companies.length, data: companies });
 }
 
@@ -47,14 +62,15 @@ export async function getCompanyByTickerController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const parsed = safeParse(paramsSchema, request.params, reply, 'Ticker inválido.');
+  if (!parsed) return;
 
-  const company = await companyQueries.findDetailByTicker(ticker);
+  const company = await companyQueries.findDetailByTicker(parsed.ticker);
 
   if (!company) {
     reply.status(404).send({
       error: 'NotFound',
-      message: `Empresa "${ticker}" não encontrada.`,
+      message: `Empresa "${parsed.ticker}" não encontrada.`,
     });
     return;
   }

@@ -19,22 +19,43 @@ const app = Fastify({
 // Registra rotas globais sob o prefixo /v1
 await app.register(routesPlugin, { prefix: '/v1' });
 
-// Tratamento global de erros
-app.setErrorHandler((error: FastifyError, _request, reply) => {
-  app.log.error(error);
+// Verifica se um erro é de validação Zod (pelo nome ou propriedades)
+function isZodLike(error: unknown): error is { issues: Array<{ path: (string | number)[]; message: string }> } {
+  const e = error as Record<string, unknown>;
+  return e?.name === 'ZodError' || Array.isArray(e?.issues);
+}
 
-  if (error.validation) {
+// Tratamento global de erros
+app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
+  // Zod validation error — retorna 400 com detalhes
+  if (isZodLike(error)) {
     reply.status(400).send({
       error: 'ValidationError',
       message: 'Parâmetros da requisição inválidos.',
-      details: error.validation,
+      details: error.issues.map(({ path, message }) => ({
+        path: (Array.isArray(path) ? path : [String(path)]).join('.'),
+        message,
+      })),
     });
     return;
   }
 
-  reply.status(error.statusCode ?? 500).send({
+  // Fastify schema validation error
+  const fastifyErr = error as FastifyError;
+  if (fastifyErr.validation) {
+    reply.status(400).send({
+      error: 'ValidationError',
+      message: 'Parâmetros da requisição inválidos.',
+      details: fastifyErr.validation,
+    });
+    return;
+  }
+
+  app.log.error(error);
+
+  reply.status(fastifyErr.statusCode ?? 500).send({
     error: 'InternalServerError',
-    message: error.message ?? 'Erro interno do servidor.',
+    message: fastifyErr.message ?? 'Erro interno do servidor.',
   });
 });
 

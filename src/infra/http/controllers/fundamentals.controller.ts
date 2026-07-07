@@ -7,8 +7,20 @@ import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import type { FinancialIndicators } from '../../../core/entities/company-fundamentals.ts';
 
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
+
 const paramsSchema = z.object({
   ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+});
+
+const historyQuerySchema = z.object({
+  limit: z.string().optional().default('10').transform(Number).pipe(z.number().int().min(1).max(50)),
 });
 
 function calcAllIndicators(f: Record<string, unknown>, price: number): FinancialIndicators {
@@ -65,7 +77,9 @@ export async function getLatestFundamentalsController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+  const { ticker } = parsed.data;
 
   const rows = await db
     .select({
@@ -137,11 +151,13 @@ export async function getFundamentalsHistoryController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const { ticker } = paramsSchema.parse(request.params);
-  const querySchema = z.object({
-    limit: z.string().optional().default('10').transform(Number).pipe(z.number().int().min(1).max(50)),
-  });
-  const { limit } = querySchema.parse(request.query);
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Ticker inválido.');
+  const { ticker } = paramsParsed.data;
+
+  const queryParsed = historyQuerySchema.safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida.');
+  const { limit } = queryParsed.data;
   const history = await fundamentalsQueries.getHistoryByTicker(ticker, limit);
 
   if (history.length === 0) {

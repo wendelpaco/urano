@@ -1,8 +1,15 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { desc, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
-import { companies, companyFundamentals } from '../../database/schema.ts';
+
+function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({ path: path.join('.'), message: m })),
+  });
+}
 
 const screenerSchema = z.object({
   sector: z.string().optional(),
@@ -18,7 +25,9 @@ export async function screenerController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const filters = screenerSchema.parse(request.query);
+  const parsed = screenerSchema.safeParse(request.query);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
+  const filters = parsed.data;
 
   const rows = await db.execute(sql`
     SELECT * FROM (
