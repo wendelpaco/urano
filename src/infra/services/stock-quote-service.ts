@@ -1,4 +1,5 @@
 import { getOrSet } from './redis.ts';
+import { withRetry } from '../../shared/retry.ts';
 
 /**
  * Dados de cotação em tempo real de um ativo da B3.
@@ -95,7 +96,10 @@ export class StockQuoteService {
     const symbol = this.toYahooSymbol(ticker);
     const cacheKey = `quote:${ticker.toUpperCase()}`;
 
-    return getOrSet(cacheKey, 30, () => this.fetchQuote(symbol, ticker));
+    return getOrSet(cacheKey, 30, () =>
+      withRetry(() => this.fetchQuote(symbol, ticker), {
+        maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+      }));
   }
 
   /**
@@ -131,7 +135,10 @@ export class StockQuoteService {
     const symbol = this.toYahooSymbol(ticker);
     const cacheKey = `history:${ticker.toUpperCase()}:${range}`;
 
-    return getOrSet(cacheKey, 300, () => this.fetchHistory(symbol, ticker, range));
+    return getOrSet(cacheKey, 300, () =>
+      withRetry(() => this.fetchHistory(symbol, ticker, range), {
+        maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+      }));
   }
 
   // ---------------------------------------------------------------------------

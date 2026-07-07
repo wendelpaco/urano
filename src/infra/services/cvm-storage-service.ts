@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';
+import { withRetry } from '../../shared/retry.ts';
 
 /**
  * Layout do CSV da DRE (Demonstração de Resultado do Exercício) da CVM.
@@ -169,27 +170,29 @@ export class CvmStorageService {
     return `${this.baseUrl}/ITR/DADOS/itr_cia_aberta_${year}.zip`;
   }
 
-  /** Faz o download do ZIP com retry simples e timeout */
+  /** Faz o download do ZIP com retry e timeout */
   private async downloadZip(url: string): Promise<ArrayBuffer> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min
+    return withRetry(async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min
 
-    try {
-      const response = await fetch(url, {
-        headers: { 'User-Agent': this.userAgent },
-        signal: controller.signal,
-      });
+      try {
+        const response = await fetch(url, {
+          headers: { 'User-Agent': this.userAgent },
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(
-          `Falha ao baixar ZIP (HTTP ${response.status}): ${url}`,
-        );
+        if (!response.ok) {
+          throw new Error(
+            `Falha ao baixar ZIP (HTTP ${response.status}): ${url}`,
+          );
+        }
+
+        return await response.arrayBuffer();
+      } finally {
+        clearTimeout(timeout);
       }
-
-      return response.arrayBuffer();
-    } finally {
-      clearTimeout(timeout);
-    }
+    }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000 });
   }
 
   /**

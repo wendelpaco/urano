@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { getOrSet } from '../../services/redis.ts';
+import { withRetry } from '../../../shared/retry.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -51,9 +52,12 @@ async function fetchBcbSeries(code: string, limit = 12): Promise<MacroSeriesPoin
   const url = `https://api.bcb.gov.br/dados/serie/bcdata.sgs.${code}/dados?formato=json`;
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`BCB HTTP ${response.status}`);
-    const data = (await response.json()) as Array<{ data: string; valor: string }>;
+    const data = await withRetry(async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`BCB HTTP ${response.status}`);
+      return (await response.json()) as Array<{ data: string; valor: string }>;
+    }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000 });
+
     return data.slice(-limit).map((d) => ({
       date: d.data,
       value: parseFloat(d.valor),
