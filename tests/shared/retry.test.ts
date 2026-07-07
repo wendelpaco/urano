@@ -57,7 +57,7 @@ describe('withTimeout', () => {
 describe('batchWithConcurrency', () => {
   test('processa todos os itens', async () => {
     const results = await batchWithConcurrency([1, 2, 3, 4, 5], async (n) => n * 2, 2);
-    expect(results.toSorted((a, b) => a - b)).toEqual([2, 4, 6, 8, 10]);
+    expect(results).toEqual([2, 4, 6, 8, 10]);
   });
 
   test('respeita o limite de concorrência', async () => {

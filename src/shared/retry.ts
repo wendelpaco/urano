@@ -115,12 +115,12 @@ export async function batchWithConcurrency<T, R>(
   operation: (item: T) => Promise<R>,
   concurrency: number = 5
 ): Promise<R[]> {
-  const results: R[] = [];
+  const results: R[] = new Array(items.length);
   const executing: Promise<void>[] = [];
 
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     const promise = operation(item).then((result) => {
-      results.push(result);
+      results[index] = result;
       executing.splice(executing.indexOf(promise), 1);
     });
 
