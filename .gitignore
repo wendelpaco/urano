@@ -35,3 +35,6 @@ db/migrations/meta
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# CVM downloads
+*.csv
