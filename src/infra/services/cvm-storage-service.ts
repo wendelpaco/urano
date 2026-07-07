@@ -53,6 +53,15 @@ const SCALE_FACTORS: Record<string, number> = {
 const ACCOUNT_NET_INCOME_CONSOLIDATED = '3.11';
 const ACCOUNT_NET_INCOME_PARENT = '3.11.01';
 const ACCOUNT_NET_INCOME_NON_CONTROLLING = '3.11.02';
+const ACCOUNT_REVENUE = '3.01';
+const ACCOUNT_COGS = '3.02';
+const ACCOUNT_EBIT = '3.05';
+const ACCOUNT_EQUITY_CONSOLIDATED = '2.03';
+const ACCOUNT_TOTAL_ASSETS = '1';
+const ACCOUNT_CASH = '1.01';
+const ACCOUNT_CURRENT_LIABILITIES = '2.01';
+const ACCOUNT_NON_CURRENT_LIABILITIES = '2.02';
+const ACCOUNT_OPERATING_CASH_FLOW = '6.01';
 
 /**
  * Nomes alternativos encontrados na descrição da conta `3.99` em diferentes
@@ -119,21 +128,29 @@ export class CvmStorageService {
 
     const zipBuffer = await this.downloadZip(zipUrl);
     console.log(
-      `[CvmStorageService] ZIP baixado (${(zipBuffer.byteLength / 1024 / 1024).toFixed(2)} MB). Extraindo...`,
+      `[CvmStorageService] ZIP baixado (${(zipBuffer.byteLength / 1024 / 1024).toFixed(2)} MB). Extraindo DRE + BPP...`,
     );
 
-    const csvContent = await this.extractDreCsvFromZip(zipBuffer, year);
+    // Extrai DRE (Lucro Líquido)
+    const dreCsv = await this.extractCsvFromZip(zipBuffer, `DRE_con_${year}.csv`);
     console.log(
-      `[CvmStorageService] CSV DRE extraído (${(csvContent.length / 1024 / 1024).toFixed(2)} MB). Fazendo parsing...`,
+      `[CvmStorageService] CSV DRE extraído (${(dreCsv.length / 1024 / 1024).toFixed(2)} MB).`,
     );
 
-    const rows = this.parseCsv(csvContent);
-    console.log(`[CvmStorageService] ${rows.length} linhas parseadas. Filtrando CNPJ ${targetCnpj}...`);
+    const dreRows = this.parseCsv(dreCsv);
+    console.log(`[CvmStorageService] ${dreRows.length} linhas DRE. Filtrando CNPJ ${targetCnpj}...`);
 
-    const fundamentals = this.filterAndMapToEntity(rows, targetCnpj, year);
+    const fundamentals = this.filterAndMapToEntity(dreRows, targetCnpj, year);
     console.log(
-      `[CvmStorageService] ${fundamentals.length} registros de fundamentos encontrados para CNPJ ${targetCnpj}.`,
+      `[CvmStorageService] ${fundamentals.length} registros DRE encontrados.`,
     );
+
+    // Extrai BPP (Equity + Liabilities), BPA (Assets), DFC (Cash Flow)
+    await this.enrichFromBpp(zipBuffer, year, targetCnpj, fundamentals);
+    await this.enrichFromBpa(zipBuffer, year, targetCnpj, fundamentals);
+    await this.enrichFromDfc(zipBuffer, year, targetCnpj, fundamentals);
+    await this.enrichFromCapital(zipBuffer, year, targetCnpj, fundamentals);
+    await this.enrichFromDmpl(zipBuffer, year, targetCnpj, fundamentals);
 
     return { fundamentals };
   }
@@ -176,32 +193,233 @@ export class CvmStorageService {
   }
 
   /**
-   * Extrai o conteúdo do arquivo DRE consolidada de dentro do ZIP em memória.
-   * Procura por arquivos cujo nome contenha "DRE_con_" (consolidado).
+   * Extrai um arquivo CSV específico de dentro do ZIP em memória.
+   * @param zipBuffer Buffer do ZIP já baixado
+   * @param csvPattern Padrão do nome do arquivo (ex: "DRE_con_2024.csv")
    */
-  private async extractDreCsvFromZip(
+  private async extractCsvFromZip(
     zipBuffer: ArrayBuffer,
-    year: number,
+    csvPattern: string,
   ): Promise<string> {
     const zip = await JSZip.loadAsync(zipBuffer);
 
-    // Localiza o arquivo DRE consolidada dentro do ZIP
-    // Padrão de nomenclatura: dfp_cia_aberta_DRE_con_2024.csv
-    const drePattern = new RegExp(`DRE_con_${year}\\.csv$`, 'i');
-    const dreFile = Object.keys(zip.files).find((name) =>
-      drePattern.test(name),
+    const targetFile = Object.keys(zip.files).find((name) =>
+      name.includes(csvPattern),
     );
 
-    if (!dreFile) {
+    if (!targetFile) {
       const availableFiles = Object.keys(zip.files).join(', ');
       throw new Error(
-        `Arquivo DRE consolidada (padrão: "*DRE_con_${year}.csv") não encontrado no ZIP. ` +
-          `Arquivos disponíveis: ${availableFiles}`,
+        `Arquivo "${csvPattern}" não encontrado no ZIP. ` +
+          `Disponíveis: ${availableFiles}`,
       );
     }
 
-    const csvContent = await zip.file(dreFile)!.async('string');
-    return csvContent;
+    return zip.file(targetFile)!.async('string');
+  }
+
+  /** Extrai um valor de conta específica de um CSV e retorna Map<data, valor> */
+  private extractAccountFromCsv(
+    rows: CvmDreRow[],
+    targetCnpj: string,
+    accountCode: string,
+  ): Map<string, number> {
+    const normalizeCnpj = (cnpj: string): string =>
+      cnpj.replace(/[.\/-]/g, '').trim();
+
+    const normalizedTarget = normalizeCnpj(targetCnpj);
+    const result = new Map<string, number>();
+
+    for (const row of rows) {
+      if (normalizeCnpj(row.cnpj) !== normalizedTarget) continue;
+      if (row.accountCode !== accountCode) continue;
+
+      const periodKey = row.exerciseEndDate || row.referenceDate;
+      const scaleFactor = SCALE_FACTORS[row.currencyScale] ?? 1;
+      const value = parseFloat(row.rawValue) * scaleFactor;
+      result.set(periodKey, value);
+    }
+
+    return result;
+  }
+
+  /** Enriquece com BPP: Equity (2.03) + Current Liabilities (2.01) + Non-Current (2.02) */
+  private async enrichFromBpp(
+    zipBuffer: ArrayBuffer, year: number, targetCnpj: string,
+    fundamentals: CompanyFundamentals[],
+  ): Promise<void> {
+    try {
+      const csv = await this.extractCsvFromZip(zipBuffer, `BPP_con_${year}.csv`);
+      const rows = this.parseCsv(csv);
+      const equityMap = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_EQUITY_CONSOLIDATED);
+      const currentLiab = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_CURRENT_LIABILITIES);
+      const nonCurrentLiab = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_NON_CURRENT_LIABILITIES);
+      for (const f of fundamentals) {
+        const e = equityMap.get(f.referenceDate);
+        if (e !== undefined) f.equity = e;
+        const cl = currentLiab.get(f.referenceDate);
+        const ncl = nonCurrentLiab.get(f.referenceDate);
+        if (cl !== undefined || ncl !== undefined) {
+          f.totalLiabilities = (cl ?? 0) + (ncl ?? 0);
+        }
+      }
+      console.log(`[CvmStorageService] BPP: ${equityMap.size} equity, ${currentLiab.size} curr.liab, ${nonCurrentLiab.size} non-curr.liab`);
+    } catch (err) {
+      console.warn(`[CvmStorageService] ⚠️ BPP indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Enriquece com BPA: Total Assets (1) + Cash (1.01) */
+  private async enrichFromBpa(
+    zipBuffer: ArrayBuffer, year: number, targetCnpj: string,
+    fundamentals: CompanyFundamentals[],
+  ): Promise<void> {
+    try {
+      const csv = await this.extractCsvFromZip(zipBuffer, `BPA_con_${year}.csv`);
+      const rows = this.parseCsv(csv);
+      const assetsMap = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_TOTAL_ASSETS);
+      const cashMap = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_CASH);
+      for (const f of fundamentals) {
+        const a = assetsMap.get(f.referenceDate);
+        if (a !== undefined) f.totalAssets = a;
+        const c = cashMap.get(f.referenceDate);
+        if (c !== undefined) f.cash = c;
+      }
+      console.log(`[CvmStorageService] BPA: ${assetsMap.size} assets, ${cashMap.size} cash`);
+    } catch (err) {
+      console.warn(`[CvmStorageService] ⚠️ BPA indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Enriquece com DFC: Operating Cash Flow (6.01) */
+  private async enrichFromDfc(
+    zipBuffer: ArrayBuffer, year: number, targetCnpj: string,
+    fundamentals: CompanyFundamentals[],
+  ): Promise<void> {
+    try {
+      const csv = await this.extractCsvFromZip(zipBuffer, `DFC_MI_con_${year}.csv`);
+      const rows = this.parseCsv(csv);
+      const ocfMap = this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_OPERATING_CASH_FLOW);
+      for (const f of fundamentals) {
+        const ocf = ocfMap.get(f.referenceDate);
+        if (ocf !== undefined) f.operatingCashFlow = ocf;
+      }
+      console.log(`[CvmStorageService] DFC: ${ocfMap.size} operating cash flow`);
+    } catch (err) {
+      console.warn(`[CvmStorageService] ⚠️ DFC indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Enriquece com Composição de Capital: número total de ações */
+  private async enrichFromCapital(
+    zipBuffer: ArrayBuffer, year: number, targetCnpj: string,
+    fundamentals: CompanyFundamentals[],
+  ): Promise<void> {
+    try {
+      const csvContent = await this.extractCsvFromZip(zipBuffer, `composicao_capital_${year}.csv`);
+      const lines = this.splitCsvLines(csvContent);
+      if (lines.length < 2) return;
+
+      const header = this.parseCsvLine(lines[0]!);
+      const idxCnpj = header.indexOf('CNPJ_CIA');
+      const idxShares = header.indexOf('QT_ACAO_TOTAL_CAP_INTEGR');
+      if (idxCnpj < 0 || idxShares < 0) return;
+
+      const normalizeCnpj = (cnpj: string): string => cnpj.replace(/[.\/-]/g, '').trim();
+      const normalizedTarget = normalizeCnpj(targetCnpj);
+
+      for (let i = 1; i < lines.length; i++) {
+        const fields = this.parseCsvLine(lines[i]!);
+        if (normalizeCnpj(fields[idxCnpj] ?? '') === normalizedTarget) {
+          let totalShares = parseFloat((fields[idxShares] ?? '0').replace(/[^0-9.-]/g, ''));
+          if (totalShares > 0) {
+            // Algumas empresas reportam em milhares (ex: VALE3 4.539.008 → 4.5Bi)
+            // Heurística: se < 100 milhões, assume que está em milhares
+            if (totalShares < 100_000_000) totalShares *= 1000;
+            for (const f of fundamentals) {
+              f.sharesOutstanding = totalShares;
+            }
+            console.log(`[CvmStorageService] Capital: ${(totalShares / 1e9).toFixed(2)}Bi shares`);
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn(`[CvmStorageService] ⚠️ Capital indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Enriquece com DMPL: Dividendos (5.04.06) e JCP (5.04.07) — coluna total */
+  private async enrichFromDmpl(
+    zipBuffer: ArrayBuffer, year: number, targetCnpj: string,
+    fundamentals: CompanyFundamentals[],
+  ): Promise<void> {
+    try {
+      const csvContent = await this.extractCsvFromZip(zipBuffer, `DMPL_con_${year}.csv`);
+      const lines = this.splitCsvLines(csvContent);
+      if (lines.length < 2) return;
+
+      const header = this.parseCsvLine(lines[0]!);
+      const idxCnpj = header.indexOf('CNPJ_CIA');
+      const idxCol = header.indexOf('COLUNA_DF');
+      const idxCd = header.indexOf('CD_CONTA');
+      const idxVl = header.indexOf('VL_CONTA');
+      const idxEscala = header.indexOf('ESCALA_MOEDA');
+      const idxOrdem = header.indexOf('ORDEM_EXERC');
+      const idxDtFim = header.indexOf('DT_FIM_EXERC');
+
+      if (idxCnpj < 0 || idxCol < 0 || idxCd < 0 || idxVl < 0) return;
+
+      const normalizeCnpj = (cnpj: string): string => cnpj.replace(/[.\/-]/g, '').trim();
+      const normalizedTarget = normalizeCnpj(targetCnpj);
+
+      // Mapa: periodKey → { dividends, jcp }
+      const divMap = new Map<string, { dividends: number; jcp: number }>();
+
+      for (let i = 1; i < lines.length; i++) {
+        const fields = this.parseCsvLine(lines[i]!);
+        if (normalizeCnpj(fields[idxCnpj] ?? '') !== normalizedTarget) continue;
+
+        // Só interessa a coluna TOTAL (Patrimônio Líquido Consolidado)
+        const coluna = (fields[idxCol] ?? '').toLowerCase();
+        if (!coluna.includes('consolidado')) continue;
+
+        const code = fields[idxCd] ?? '';
+        const rawValue = parseFloat((fields[idxVl] ?? '0').replace(',', '.'));
+        if (rawValue === 0) continue;
+
+        const periodKey = fields[idxDtFim] || '';
+        const scaleFactor = SCALE_FACTORS[fields[idxEscala] ?? ''] ?? 1;
+        const value = Math.abs(rawValue) * scaleFactor;
+
+        if (!divMap.has(periodKey)) {
+          divMap.set(periodKey, { dividends: 0, jcp: 0 });
+        }
+        const entry = divMap.get(periodKey)!;
+
+        if (code === '5.04.06') entry.dividends += value;
+        else if (code === '5.04.07') entry.jcp += value;
+      }
+
+      for (const f of fundamentals) {
+        const d = divMap.get(f.referenceDate);
+        if (d) {
+          if (d.dividends > 0) f.dividendsPaid = d.dividends;
+          if (d.jcp > 0) f.jcpPaid = d.jcp;
+        }
+      }
+      console.log(`[CvmStorageService] DMPL: ${divMap.size} periods with dividends`);
+    } catch (err) {
+      console.warn(`[CvmStorageService] ⚠️ DMPL indisponível: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** @deprecated Use extractAccountFromCsv */
+  private extractEquityFromBpp(
+    rows: CvmDreRow[],
+    targetCnpj: string,
+  ): Map<string, number> {
+    return this.extractAccountFromCsv(rows, targetCnpj, ACCOUNT_EQUITY_CONSOLIDATED);
   }
 
   /**
@@ -227,7 +445,7 @@ export class CvmStorageService {
     const idxDenomCia = this.getColumnIndex(colIndex, 'DENOM_CIA');
     const idxEscalaMoeda = this.getOptionalColumnIndex(colIndex, 'ESCALA_MOEDA');
     const idxOrdemExerc = this.getColumnIndex(colIndex, 'ORDEM_EXERC');
-    const idxDtIniExerc = this.getColumnIndex(colIndex, 'DT_INI_EXERC');
+    const idxDtIniExerc = this.getOptionalColumnIndex(colIndex, 'DT_INI_EXERC');
     const idxDtFimExerc = this.getColumnIndex(colIndex, 'DT_FIM_EXERC');
     const idxCdConta = this.getColumnIndex(colIndex, 'CD_CONTA');
     const idxDsConta = this.getColumnIndex(colIndex, 'DS_CONTA');
@@ -245,7 +463,7 @@ export class CvmStorageService {
         companyName: fields[idxDenomCia] ?? '',
         currencyScale: idxEscalaMoeda >= 0 ? (fields[idxEscalaMoeda] ?? 'UNIDADE') : 'UNIDADE',
         exerciseOrder: fields[idxOrdemExerc] ?? '',
-        exerciseStartDate: fields[idxDtIniExerc] ?? '',
+        exerciseStartDate: idxDtIniExerc >= 0 ? (fields[idxDtIniExerc] ?? '') : '',
         exerciseEndDate: fields[idxDtFimExerc] ?? '',
         accountCode: fields[idxCdConta] ?? '',
         accountDescription: fields[idxDsConta] ?? '',
@@ -374,33 +592,35 @@ export class CvmStorageService {
     const relevantRows = rows.filter((row) => {
       if (normalizeCnpj(row.cnpj) !== normalizedTarget) return false;
 
-      // Aceita pelo código exato (3.11, 3.11.01, 3.11.02)
+      // Aceita contas da DRE: Lucro (3.11.x), Receita (3.01), EBIT (3.05)
       const codeMatch =
         row.accountCode === ACCOUNT_NET_INCOME_CONSOLIDATED ||
         row.accountCode === ACCOUNT_NET_INCOME_PARENT ||
-        row.accountCode === ACCOUNT_NET_INCOME_NON_CONTROLLING;
+        row.accountCode === ACCOUNT_NET_INCOME_NON_CONTROLLING ||
+        row.accountCode === ACCOUNT_REVENUE ||
+        row.accountCode === ACCOUNT_COGS ||
+        row.accountCode === ACCOUNT_EBIT;
 
       if (codeMatch) return true;
 
-      // Fallback: match por descrição (alguns layouts antigos diferem no código)
       const descLower = row.accountDescription.toLowerCase().trim();
       return NET_INCOME_LABELS.some((label) => descLower.includes(label));
     });
 
-    // Agrupa por data de fim do exercício (representa o período contábil real)
-    const grouped = new Map<
-      string,
-      {
-        exerciseEndDate: string;
-        companyName: string;
-        netIncome: number;
-        netIncomeParent: number;
-        fiscalYear: number;
-      }
-    >();
+    // Agrupa por data de fim do exercício
+    interface GroupEntry {
+      exerciseEndDate: string;
+      companyName: string;
+      netIncome: number;
+      netIncomeParent: number;
+      revenue: number;
+      cogs: number;
+      ebit: number;
+      fiscalYear: number;
+    }
+    const grouped = new Map<string, GroupEntry>();
 
     for (const row of relevantRows) {
-      // Usa DT_FIM_EXERC como chave; fallback para DT_REFER se ausente
       const periodKey = row.exerciseEndDate || row.referenceDate;
       const periodYear = periodKey ? parseInt(periodKey.slice(0, 4), 10) : fiscalYear;
       const scaleFactor = SCALE_FACTORS[row.currencyScale] ?? 1;
@@ -412,30 +632,34 @@ export class CvmStorageService {
           companyName: row.companyName,
           netIncome: 0,
           netIncomeParent: 0,
+          revenue: 0,
+          cogs: 0,
+          ebit: 0,
           fiscalYear: periodYear,
         });
       }
 
       const entry = grouped.get(periodKey)!;
 
-      // Verifica qual conta estamos populando (match exato para evitar ambiguidade)
-      if (row.accountCode === ACCOUNT_NET_INCOME_CONSOLIDATED) {
-        entry.netIncome = value;
-      } else if (row.accountCode === ACCOUNT_NET_INCOME_PARENT) {
-        entry.netIncomeParent = value;
-      }
+      if (row.accountCode === ACCOUNT_NET_INCOME_CONSOLIDATED) entry.netIncome = value;
+      else if (row.accountCode === ACCOUNT_NET_INCOME_PARENT) entry.netIncomeParent = value;
+      else if (row.accountCode === ACCOUNT_REVENUE) entry.revenue = value;
+      else if (row.accountCode === ACCOUNT_COGS) entry.cogs = value;
+      else if (row.accountCode === ACCOUNT_EBIT) entry.ebit = value;
     }
 
-    // Mapeia para a entidade de domínio
     const fundamentals: CompanyFundamentals[] = [];
     for (const [, entry] of grouped) {
       fundamentals.push({
         cnpj: targetCnpj,
-        ticker: '', // Será preenchido pelo Use Case via lookup
+        ticker: '',
         companyName: entry.companyName,
         referenceDate: entry.exerciseEndDate,
         netIncome: entry.netIncome,
         netIncomeAttributableToParent: entry.netIncomeParent || entry.netIncome,
+        revenue: entry.revenue || undefined,
+        cogs: entry.cogs || undefined,
+        ebit: entry.ebit || undefined,
         fiscalYear: entry.fiscalYear,
         source: 'DFP',
         extractedAt: new Date(),

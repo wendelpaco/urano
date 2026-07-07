@@ -1,0 +1,1 @@
+ALTER TABLE "company_fundamentals" ADD COLUMN "shares_outstanding" numeric(18, 0);

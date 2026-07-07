@@ -12,12 +12,48 @@ import { CvmStorageService } from '../../infra/services/cvm-storage-service.ts';
  * CNPJ deve ter 14 dígitos numéricos (sem pontuação).
  */
 const TICKER_TO_CNPJ: Record<string, string> = {
-  PETR4: '33000167000101',
-  PETR3: '33000167000101',
+  // Petrobras
+  PETR4: '33000167000101', PETR3: '33000167000101',
+  // Vale
   VALE3: '33592510000154',
-  ITUB4: '60872504000123',
-  WEGE3: '84642135000102',
-  BBDC4: '60746948000112',
+  // Bancos
+  ITUB4: '60872504000123', ITUB3: '60872504000123',
+  BBDC4: '60746948000112', BBDC3: '60746948000112',
+  BBAS3: '00000000000191',
+  SANB11: '90400888000142',
+  // Mineração e Siderurgia
+  GGBR4: '33611500000119', GGBR3: '33611500000119',
+  CSNA3: '08902291000115',
+  USIM5: '60894730000105', USIM3: '60894730000105',
+  // Energia Elétrica
+  ELET3: '00001180000126', ELET6: '00001180000126',
+  CPLE6: '76483817000120', CPLE3: '76483817000120',
+  EGIE3: '02474103000119',
+  // Petróleo e Gás
+  PRIO3: '10629105000168',
+  // Papel e Celulose
+  SUZB3: '16404287000155',
+  KLBN11: '89637490000145', KLBN4: '89637490000145',
+  // Alimentos e Bebidas
+  ABEV3: '07526557000100',
+  JBSS3: '02916265000160',
+  // Varejo
+  MGLU3: '47960950000121',
+  // Saúde
+  HAPV3: '05197443000138',
+  // Máquinas e Equipamentos
+  WEGE3: '84429695000111',
+  EMBR3: '07689002000189',
+  // Telecom
+  VIVT3: '02558157000162', VIVT4: '02558157000162',
+  TIMS3: '02421421000111',
+  // Transporte e Logística
+  RAIL3: '02387241000160',
+  CCRO3: '02846056000197',
+  // Construção
+  CYRE3: '73178600000118',
+  // Shoppings
+  MULT3: '07816890000153',
 };
 
 export interface SyncCompanyFundamentalsInput {

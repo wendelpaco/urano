@@ -1,0 +1,338 @@
+###############################################################################
+# Urano FinBot API — Test Suite
+###############################################################################
+# Execute no VS Code com a extensão "REST Client" (humao.rest-client)
+# Cada bloco ### é uma requisição separada. Clique em "Send Request".
+###############################################################################
+
+@baseUrl = http://localhost:3333/v1
+
+###############################################################################
+# 1. HEALTHCHECK
+###############################################################################
+
+### Healthcheck — status do servidor
+GET {{baseUrl}}/healthcheck
+
+
+###############################################################################
+# 2. COMPANIES
+###############################################################################
+
+### Listar todas as empresas
+GET {{baseUrl}}/companies
+
+### Listar setores disponíveis
+GET {{baseUrl}}/companies/sectors
+
+### Detalhes da Petrobras (com fundamentos mais recentes)
+GET {{baseUrl}}/companies/PETR3
+
+### Buscar Vale
+GET {{baseUrl}}/companies/VALE3
+
+### Empresa inexistente → 404
+GET {{baseUrl}}/companies/XXXX3
+
+
+###############################################################################
+# 3. FUNDAMENTALS
+###############################################################################
+
+### Fundamentos mais recentes da Petrobras
+GET {{baseUrl}}/fundamentals/PETR3
+
+### Histórico de fundamentos da Petrobras (últimos 10 períodos)
+GET {{baseUrl}}/fundamentals/PETR3/history?limit=5
+
+### Histórico da Vale
+GET {{baseUrl}}/fundamentals/VALE3/history
+
+### Fundamentos do Bradesco
+GET {{baseUrl}}/fundamentals/BBDC4
+
+
+###############################################################################
+# 4. STOCKS — COTAÇÕES EM TEMPO REAL (Yahoo Finance + Redis 30s cache)
+###############################################################################
+
+### Cotação atual da Petrobras
+GET {{baseUrl}}/stocks/PETR4/quote
+
+### Cotação da Vale
+GET {{baseUrl}}/stocks/VALE3/quote
+
+### Cotações em lote (até 20 tickers)
+GET {{baseUrl}}/stocks/quotes?tickers=PETR4,VALE3,BBDC4,ITUB4
+
+### Histórico de preços — último mês
+GET {{baseUrl}}/stocks/PETR4/history?range=1mo
+
+### Histórico — 3 meses
+GET {{baseUrl}}/stocks/VALE3/history?range=3mo
+
+### Histórico — 1 ano
+GET {{baseUrl}}/stocks/PETR4/history?range=1y
+
+
+###############################################################################
+# 5. DIVIDENDS
+###############################################################################
+
+### Dividendos da Petrobras
+GET {{baseUrl}}/dividends/PETR3
+
+### Dividendos da Vale
+GET {{baseUrl}}/dividends/VALE3
+
+
+###############################################################################
+# 6. FIIs — FUNDOS IMOBILIÁRIOS (cotações em tempo real via Yahoo Finance)
+###############################################################################
+
+### Listar todos os FIIs com cotação (cache 60s)
+GET {{baseUrl}}/fiis
+
+### Listar FIIs sem cotação (apenas dados cadastrais)
+GET {{baseUrl}}/fiis?withQuote=false
+
+### Filtrar FIIs por segmento (Logística)
+GET {{baseUrl}}/fiis?segment=Log
+
+### Detalhes do HGLG11 (cotação em tempo real, cache 30s)
+GET {{baseUrl}}/fiis/HGLG11
+
+### Histórico de preços do HGLG11 — 1 mês
+GET {{baseUrl}}/fiis/HGLG11/history?range=1mo
+
+### Histórico — 3 meses
+GET {{baseUrl}}/fiis/HGLG11/history?range=3mo
+
+### Histórico — 1 ano
+GET {{baseUrl}}/fiis/HGLG11/history?range=1y
+
+### Detalhes do MXRF11
+GET {{baseUrl}}/fiis/MXRF11
+
+### Histórico do MXRF11 — 6 meses
+GET {{baseUrl}}/fiis/MXRF11/history?range=6mo
+
+
+###############################################################################
+# 7. MACRO — INDICADORES ECONÔMICOS (Banco Central do Brasil)
+###############################################################################
+
+### Listar todos os indicadores macro disponíveis
+GET {{baseUrl}}/macro
+
+### SELIC mensal (código 432)
+GET {{baseUrl}}/macro/432?limit=3
+
+### SELIC anualizada (código 4189)
+GET {{baseUrl}}/macro/4189?limit=2
+
+### IPCA — variação mensal (código 433)
+GET {{baseUrl}}/macro/433?limit=6
+
+### IPCA — acumulado 12 meses (código 13522)
+GET {{baseUrl}}/macro/13522?limit=6
+
+### Câmbio USD/BRL (código 1)
+GET {{baseUrl}}/macro/1?limit=5
+
+### PIB (código 4389)
+GET {{baseUrl}}/macro/4389?limit=3
+
+
+###############################################################################
+# 8. SCREENER — FILTRO DE EMPRESAS POR INDICADORES
+###############################################################################
+
+### Todas empresas com dados fundamentalistas
+GET {{baseUrl}}/screener?limit=10
+
+### Empresas com Lucro Líquido acima de R$ 30 bilhões
+GET {{baseUrl}}/screener?minNetIncome=30000000000&sortBy=netIncome&order=desc
+
+### Empresas do ano fiscal 2024
+GET {{baseUrl}}/screener?year=2024
+
+### Top 5 por Lucro Líquido (decrescente)
+GET {{baseUrl}}/screener?limit=5&sortBy=netIncome&order=desc
+
+### Ordenar por ticker (alfabético)
+GET {{baseUrl}}/screener?sortBy=ticker&order=asc
+
+
+###############################################################################
+# 9. AUTH — API KEYS
+###############################################################################
+
+### Criar uma nova API Key
+POST {{baseUrl}}/keys
+Content-Type: application/json
+
+{
+  "name": "Minha Chave de Desenvolvimento"
+}
+
+### Listar todas as API Keys (sem exibir o segredo)
+GET {{baseUrl}}/keys
+
+### Desativar uma API Key (substitua o ID pela chave criada acima)
+# DELETE {{baseUrl}}/keys/{{keyId}}
+
+
+###############################################################################
+# 10. WALLETS — CRUD DE CARTEIRAS
+###############################################################################
+
+# ═══ Fluxo completo: criar carteira → adicionar ativos → rebalancear ═══
+
+### 10.1 Criar uma nova carteira
+# @name createWallet
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{
+  "userId": "00000000-0000-0000-0000-000000000001",
+  "name": "Carteira de Longo Prazo"
+}
+
+### 10.2 Listar carteiras do usuário
+GET {{baseUrl}}/wallets?userId=00000000-0000-0000-0000-000000000001
+
+### 10.3 Ver detalhes da carteira (substitua pelo ID retornado na criação)
+# @name walletDetail
+GET {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+
+### 10.4 Atualizar nome da carteira
+# PUT {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+# Content-Type: application/json
+#
+# {
+#   "name": "Carteira de Dividendos"
+# }
+
+### 10.5 Adicionar PETR4 com meta de 40% de alocação
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "PETR4",
+  "targetAllocationPercent": 40
+}
+
+### 10.6 Adicionar VALE3 com meta de 30%
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "VALE3",
+  "targetAllocationPercent": 30
+}
+
+### 10.7 Adicionar BBDC4 com meta de 15%
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "BBDC4",
+  "targetAllocationPercent": 15
+}
+
+### 10.8 Adicionar WEGE3 com meta de 15%
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "WEGE3",
+  "targetAllocationPercent": 15
+}
+
+### 10.9 Ver carteira com todos os ativos
+GET {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+
+### 10.10 Executar rebalanceamento (com R$ 5.000 de aporte)
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
+Content-Type: application/json
+
+{
+  "availableAmount": 5000
+}
+
+### 10.11 Rebalanceamento com valor maior (R$ 50.000)
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
+Content-Type: application/json
+
+{
+  "availableAmount": 50000
+}
+
+### 10.12 Remover um ativo da carteira (substitua assetId)
+# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets/{{assetId}}
+
+### 10.13 Deletar a carteira inteira
+# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+
+
+###############################################################################
+# 11. FLUXO COMPLETO COM VARIÁVEIS (execute na ordem 11.1 → 11.2 → ... → 11.6)
+###############################################################################
+
+### 11.1 Criar carteira
+# @name flowWallet
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{
+  "userId": "00000000-0000-0000-0000-000000000001",
+  "name": "Carteira Automatizada"
+}
+
+### 11.2 Adicionar ativos (execute 4x ou use os blocos individuais)
+POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "PETR4",
+  "targetAllocationPercent": 35
+}
+
+### 11.3 Adicionar VALE3
+POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "VALE3",
+  "targetAllocationPercent": 30
+}
+
+### 11.4 Adicionar BBDC4
+POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "BBDC4",
+  "targetAllocationPercent": 20
+}
+
+### 11.5 Adicionar ITUB4
+POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{
+  "ticker": "ITUB4",
+  "targetAllocationPercent": 15
+}
+
+### 11.6 Rebalancear com R$ 10.000
+POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/rebalance
+Content-Type: application/json
+
+{
+  "availableAmount": 10000
+}
+
+### 11.7 Ver resultado final da carteira
+GET {{baseUrl}}/wallets/{{flowWallet.response.body.id}}

@@ -6,6 +6,14 @@ const envSchema = z.object({
     .default('3000')
     .transform(Number)
     .pipe(z.number().int().positive()),
+
+  DATABASE_URL: z
+    .string()
+    .default('postgres://urano:urano_dev@localhost:5432/urano_finbot'),
+
+  REDIS_URL: z
+    .string()
+    .default('redis://localhost:6379'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -13,6 +21,8 @@ export type Env = z.infer<typeof envSchema>;
 function parseEnv(): Env {
   const raw = {
     PORT: process.env.PORT,
+    DATABASE_URL: process.env.DATABASE_URL,
+    REDIS_URL: process.env.REDIS_URL,
   };
 
   const result = envSchema.safeParse(raw);

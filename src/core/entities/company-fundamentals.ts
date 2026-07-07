@@ -1,25 +1,56 @@
 /**
- * Representa os dados fundamentalistas extraídos da DRE consolidada da CVM.
- * Valores financeiros já estão em Reais (R$), após conversão da escala monetária.
+ * Dados fundamentalistas completos extraídos da CVM (DRE + BPA + BPP + DFC).
  */
 export interface CompanyFundamentals {
   cnpj: string;
   ticker: string;
   companyName: string;
-  referenceDate: string; // YYYY-MM-DD (data de referência do demonstrativo)
-  netIncome: number; // Lucro/Prejuízo Consolidado do Período (em R$)
-  netIncomeAttributableToParent: number; // Atribuído aos sócios controladores (em R$)
+  referenceDate: string;
+  netIncome: number;
+  netIncomeAttributableToParent: number;
+  revenue?: number;
+  cogs?: number;
+  ebit?: number;
+  totalAssets?: number;
+  totalLiabilities?: number;
+  cash?: number;
+  operatingCashFlow?: number;
+  equity?: number;
+  sharesOutstanding?: number;
+  dividendsPaid?: number;
+  jcpPaid?: number;
   fiscalYear: number;
-  source: 'DFP' | 'ITR'; // Origem: Demonstração Financeira Padronizada ou Trimestral
+  source: 'DFP' | 'ITR';
   extractedAt: Date;
 }
 
-/**
- * Resultado do cálculo TTM (Trailing Twelve Months) de lucro líquido.
- */
+/** Indicadores financeiros calculados a partir dos fundamentos + cotação */
+export interface FinancialIndicators {
+  ticker: string;
+  referenceDate: string;
+  grossMargin: number | null;
+  ebitMargin: number | null;
+  netMargin: number | null;
+  roe: number | null;
+  roa: number | null;
+  peRatio: number | null;
+  pbRatio: number | null;
+  psRatio: number | null;
+  pebit: number | null;
+  evEbit: number | null;
+  debtToEquity: number | null;
+  netDebtToEquity: number | null;
+  eps: number;
+  bvps: number;
+  assetTurnover: number | null;
+  fcoToNetIncome: number | null;
+  marketCap: number;
+  dividendYield: number | null;
+}
+
 export interface TTMNetIncome {
   ttmNetIncome: number;
-  periods: number; // Quantidade de trimestres considerados (4 para TTM completo)
-  latestQuarter: string; // Data do trimestre mais recente
+  periods: number;
+  latestQuarter: string;
   quarters: Array<{ referenceDate: string; netIncome: number }>;
 }

@@ -1,35 +1,36 @@
 /**
  * Worker de sincronização de dados fundamentalistas da CVM.
  *
- * ATENÇÃO: Este worker depende de uma implementação concreta de ICompanyRepository
- * (ex: PostgreSQL, SQLite) para persistência. Sem ela, os dados são apenas
- * extraídos e exibidos (modo dry-run).
+ * Conecta-se ao PostgreSQL para persistir os dados extraídos da CVM.
+ * Utiliza UPSERT (ON CONFLICT DO UPDATE) para garantir idempotência.
  *
- * Uso:
- *   bun run src/infra/workers/cvm-sync-worker.ts PETR4
- *   bun run src/infra/workers/cvm-sync-worker.ts PETR4 2024
+ * Modos de execução:
+ *   - Com banco:    bun run src/infra/workers/cvm-sync-worker.ts PETR4
+ *   - Dry-run:      bun run src/infra/workers/cvm-sync-worker.ts PETR4 2024 --dry-run
+ *   - Múltiplos:    bun run src/infra/workers/cvm-sync-worker.ts --all 2024
  *
  * Argumentos:
- *   1. ticker  (obrigatório) - Ex: PETR4, VALE3
- *   2. ano     (opcional)    - Ano fiscal. Padrão: ano atual.
+ *   1. ticker | --all  (obrigatório) - Ticker da empresa ou "--all" para todas
+ *   2. ano              (opcional)    - Ano fiscal. Padrão: ano atual.
+ *   --dry-run           (opcional)    - Apenas extrai e exibe, sem persistir.
  */
 
+import 'dotenv/config';
 import { SyncCompanyFundamentalsUseCase } from '../../core/use-cases/sync-company-fundamentals.ts';
-import { CvmStorageService } from '../services/cvm-storage-service.ts';
+import { PgCompanyRepository } from '../database/pg-company-repository.ts';
+import { checkDatabaseConnection, closeDatabaseConnection } from '../database/connection.ts';
 import type { ICompanyRepository } from '../../core/repositories/company-repository.ts';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';
 
 // ---------------------------------------------------------------------------
 // Implementação de fallback do repositório (apenas loga, sem persistir).
-// Substituir pelo repositório real quando o banco estiver configurado.
+// Usada no modo --dry-run ou quando o banco está indisponível.
 // ---------------------------------------------------------------------------
 
 class ConsoleCompanyRepository implements ICompanyRepository {
   private storage = new Map<string, CompanyFundamentals>();
 
-  async upsertFundamentals(
-    data: CompanyFundamentals,
-  ): Promise<CompanyFundamentals> {
+  async upsertFundamentals(data: CompanyFundamentals): Promise<CompanyFundamentals> {
     const key = `${data.cnpj}|${data.referenceDate}|${data.source}`;
     this.storage.set(key, data);
     return data;
@@ -54,10 +55,9 @@ class ConsoleCompanyRepository implements ICompanyRepository {
     const results: Array<{ referenceDate: string; netIncome: number }> = [];
     for (const [, f] of this.storage) {
       if (f.cnpj === cnpj) {
-        results.push({ referenceDate: f.referenceDate, netIncome: f.netIncome });
+        results.push({ referenceDate: f.referenceDate, netIncome: f.netIncomeAttributableToParent });
       }
     }
-    // Ordena por data decrescente e limita
     results.sort(
       (a, b) =>
         new Date(b.referenceDate).getTime() -
@@ -68,70 +68,136 @@ class ConsoleCompanyRepository implements ICompanyRepository {
 }
 
 // ---------------------------------------------------------------------------
+// Lista completa de tickers para o modo --all
+// ---------------------------------------------------------------------------
+const ALL_TICKERS = [
+  'PETR4', 'VALE3', 'ITUB4', 'BBDC4', 'BBAS3', 'SANB11',
+  'GGBR4', 'CSNA3', 'USIM5',
+  'ELET3', 'CPLE6', 'EGIE3',
+  'PRIO3', 'SUZB3', 'KLBN11',
+  'ABEV3', 'JBSS3', 'MGLU3',
+  'HAPV3', 'WEGE3', 'EMBR3',
+  'VIVT3', 'TIMS3', 'RAIL3', 'CCRO3',
+  'CYRE3', 'MULT3',
+];
+
+// ---------------------------------------------------------------------------
 // Entrypoint
 // ---------------------------------------------------------------------------
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+interface CliArgs {
+  tickers: string[];
+  year: number;
+  dryRun: boolean;
+  allMode: boolean;
+}
 
-  if (args.length === 0) {
-    console.error('❌ Uso: bun run src/infra/workers/cvm-sync-worker.ts <TICKER> [ANO]');
-    console.error('   Exemplo: bun run src/infra/workers/cvm-sync-worker.ts PETR4 2024');
+function parseArgs(): CliArgs {
+  const args = process.argv.slice(2);
+  const dryRun = args.includes('--dry-run');
+  const allMode = args.includes('--all');
+
+  // Filtra flags para extrair tickers e ano
+  const positional = args.filter((a) => !a.startsWith('--'));
+
+  if (allMode) {
+    const year = positional[0] ? parseInt(positional[0], 10) : new Date().getFullYear();
+    return { tickers: ALL_TICKERS, year, dryRun, allMode: true };
+  }
+
+  if (positional.length === 0) {
+    console.error('❌ Uso: bun run src/infra/workers/cvm-sync-worker.ts <TICKER|--all> [ANO] [--dry-run]');
+    console.error('   Exemplos:');
+    console.error('     bun run src/infra/workers/cvm-sync-worker.ts PETR4');
+    console.error('     bun run src/infra/workers/cvm-sync-worker.ts PETR4 2024 --dry-run');
+    console.error('     bun run src/infra/workers/cvm-sync-worker.ts --all 2024');
     process.exit(1);
   }
 
-  const ticker = args[0]!.toUpperCase();
-  const year = args[1] ? parseInt(args[1], 10) : new Date().getFullYear();
+  const tickers = [positional[0]!.toUpperCase()];
+  const year = positional[1] ? parseInt(positional[1], 10) : new Date().getFullYear();
+
+  return { tickers, year, dryRun, allMode: false };
+}
+
+async function main(): Promise<void> {
+  const { tickers, year, dryRun, allMode } = parseArgs();
+
+  // Determina modo e repositório
+  let repository: ICompanyRepository;
+  let modeLabel: string;
+
+  if (dryRun) {
+    repository = new ConsoleCompanyRepository();
+    modeLabel = 'Dry-run (sem persistência em banco)';
+  } else {
+    try {
+      await checkDatabaseConnection();
+      repository = new PgCompanyRepository();
+      modeLabel = 'PostgreSQL (persistência real)';
+    } catch (error) {
+      console.error(
+        '⚠️  Banco de dados indisponível. Usando fallback dry-run.\n' +
+          '   Execute "docker compose up -d" para iniciar PostgreSQL e Redis.\n',
+      );
+      repository = new ConsoleCompanyRepository();
+      modeLabel = 'Dry-run (banco indisponível)';
+    }
+  }
 
   console.log(`\n🚀 Urano CVM Sync Worker`);
-  console.log(`   Ticker: ${ticker}`);
-  console.log(`   Ano:    ${year}`);
-  console.log(`   Modo:   Dry-run (ConsoleCompanyRepository - dados NÃO são persistidos em banco)\n`);
+  console.log(`   Tickers: ${allMode ? 'TODOS (' + tickers.length + ')' : tickers.join(', ')}`);
+  console.log(`   Ano:     ${year}`);
+  console.log(`   Modo:    ${modeLabel}\n`);
 
-  const repository = new ConsoleCompanyRepository();
   const useCase = new SyncCompanyFundamentalsUseCase(repository);
+  const startTime = performance.now();
 
-  try {
-    const startTime = performance.now();
+  let totalSuccess = 0;
+  let totalRecords = 0;
+  const errors: string[] = [];
 
-    const result = await useCase.execute({ ticker, year });
+  for (const ticker of tickers) {
+    try {
+      const result = await useCase.execute({ ticker, year });
 
-    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      if (result.recordsImported > 0) {
+        console.log(`✅ ${ticker.padEnd(8)} | ${result.recordsImported} registros | ${result.fundamentals[0]?.companyName ?? 'N/D'}`);
 
-    console.log(`\n✅ Sincronização concluída em ${elapsed}s`);
-    console.log(`   Registros importados: ${result.recordsImported}`);
-    console.log(`   CNPJ: ${result.cnpj}`);
-    console.log(`   Empresa: ${result.fundamentals[0]?.companyName ?? 'N/D'}`);
-
-    if (result.ttm) {
-      console.log(`   TTM Lucro Líquido: ${formatCurrency(result.ttm.ttmNetIncome)}`);
-    }
-
-    // Exibe os registros em formato tabular resumido
-    if (result.fundamentals.length > 0) {
-      console.log(`\n📊 Demonstrativos extraídos:`);
-      console.log(
-        `   ${'Data'.padEnd(12)} ${'Lucro Líquido'.padStart(20)} ${'Atrib. Controlador'.padStart(22)} ${'Fonte'.padStart(6)}`,
-      );
-      console.log(`   ${'-'.repeat(65)}`);
-
-      for (const f of result.fundamentals) {
-        const netIncomeFormatted = formatCurrency(f.netIncome);
-        const netIncomeParentFormatted = formatCurrency(f.netIncomeAttributableToParent);
-        console.log(
-          `   ${f.referenceDate.padEnd(12)} ${netIncomeFormatted.padStart(20)} ${netIncomeParentFormatted.padStart(22)} ${f.source.padStart(6)}`,
-        );
+        if (result.ttm) {
+          console.log(`   ↳ TTM Lucro Líquido: ${formatCurrency(result.ttm.ttmNetIncome)}`);
+        }
+        totalSuccess++;
+        totalRecords += result.recordsImported;
+      } else {
+        console.log(`⚠️  ${ticker.padEnd(8)} | Nenhum dado encontrado para o ano ${year}`);
       }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ ${ticker.padEnd(8)} | Erro: ${msg}`);
+      errors.push(`${ticker}: ${msg}`);
     }
-
-    process.exit(0);
-  } catch (error) {
-    console.error('\n❌ Erro na sincronização:');
-    console.error(
-      error instanceof Error ? error.message : String(error),
-    );
-    process.exit(1);
   }
+
+  const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+
+  console.log(`\n${'─'.repeat(65)}`);
+  console.log(`📊 Resumo: ${totalSuccess}/${tickers.length} empresas sincronizadas em ${elapsed}s`);
+  console.log(`   Total de registros importados: ${totalRecords}`);
+
+  if (errors.length > 0) {
+    console.log(`\n⚠️  Erros encontrados (${errors.length}):`);
+    for (const err of errors) {
+      console.log(`   - ${err}`);
+    }
+  }
+
+  // Encerra conexão com o banco se estiver usando PostgreSQL
+  if (!dryRun && repository instanceof PgCompanyRepository) {
+    await closeDatabaseConnection();
+  }
+
+  process.exit(errors.length > 0 ? 1 : 0);
 }
 
 function formatCurrency(value: number): string {
