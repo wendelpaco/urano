@@ -54,6 +54,12 @@ const TICKER_TO_CNPJ: Record<string, string> = {
   CYRE3: '73178600000118',
   // Shoppings
   MULT3: '07816890000153',
+  // Holding / Conglomerados
+  ITSA4: '61532644000115', ITSA3: '61532644000115',
+  // Saneamento
+  SAPR4: '76484013000145', SAPR3: '76484013000145', SAPR11: '76484013000145',
+  // Alimentos
+  MDIA3: '07206816000115',
 };
 
 export interface SyncCompanyFundamentalsInput {
