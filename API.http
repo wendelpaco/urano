@@ -32,6 +32,10 @@ Content-Type: application/json
 GET {{baseUrl}}/keys
 x-api-key: {{apiKey}}
 
+### Rotacionar chave (gera nova, mantém nome)
+# POST {{baseUrl}}/keys/{{keyId}}/rotate
+# x-api-key: {{apiKey}}
+
 ### Desativar chave
 # DELETE {{baseUrl}}/keys/{{keyId}}
 # x-api-key: {{apiKey}}
@@ -92,6 +96,23 @@ GET {{baseUrl}}/analysis/ranking?type=stock&limit=10&minScore=60
 
 
 ###############################################################################
+# 4b. COMPARAÇÃO — Lado a lado
+###############################################################################
+
+### Comparar ações
+POST {{baseUrl}}/analysis/compare
+Content-Type: application/json
+
+{ "tickers": ["PETR4", "VALE3", "WEGE3", "ITUB4"], "type": "stock" }
+
+### Comparar FIIs
+POST {{baseUrl}}/analysis/compare
+Content-Type: application/json
+
+{ "tickers": ["HGLG11", "KNCR11", "XPML11", "MXRF11"], "type": "fii" }
+
+
+###############################################################################
 # 5. ALOCAÇÃO — Carteira sugerida por perfil de risco
 ###############################################################################
 
@@ -133,6 +154,15 @@ GET {{baseUrl}}/screener?sector=Energia&minScore=50&limit=10
 ### Top por Score
 GET {{baseUrl}}/screener?sortBy=score&limit=15
 
+### Filtro avançado: P/VP < 2, ROE > 15%, Margem Líquida > 10%
+GET {{baseUrl}}/screener?maxPVP=2&minROE=15&minNetMargin=10&limit=10
+
+### Filtro por EV/EBIT e ROA
+GET {{baseUrl}}/screener?maxEVEBIT=8&minROA=5&sortBy=roa&limit=10
+
+### Ações com LPA > 2 e DY > 4%
+GET {{baseUrl}}/screener?minLPA=2&minDY=4&sortBy=dy&order=desc&limit=10
+
 
 ###############################################################################
 # 7. FUNDAMENTOS — Dados oficiais CVM
@@ -158,6 +188,21 @@ GET {{baseUrl}}/stocks/quotes?tickers=PETR4,VALE3,ITUB4,BBDC4
 ### Histórico de preços (6 meses)
 GET {{baseUrl}}/stocks/PETR4/history?range=6mo
 
+### Histórico em CSV (para Excel/Google Sheets)
+GET {{baseUrl}}/stocks/PETR4/history?range=1y&format=csv
+
+### Estatísticas: 52w range, YTD, volume médio
+GET {{baseUrl}}/stocks/PETR4/stats
+
+### Stats em CSV
+GET {{baseUrl}}/stocks/PETR4/stats?format=csv
+
+### Eventos corporativos (splits, grupamentos, bonificações)
+GET {{baseUrl}}/stocks/PETR4/corporate-events
+
+### Eventos corporativos de um ano específico
+GET {{baseUrl}}/stocks/MGLU3/corporate-events?year=2023
+
 
 ###############################################################################
 # 9. DIVIDENDOS — Proventos com análise
@@ -179,6 +224,21 @@ GET {{baseUrl}}/fiis
 
 ### FII específico
 GET {{baseUrl}}/fiis/HGLG11
+
+### Histórico de preços do FII
+GET {{baseUrl}}/fiis/HGLG11/history?range=1y
+
+### Dados operacionais do FII (vacância, imóveis, inquilinos, administrador)
+GET {{baseUrl}}/fiis/HGLG11/operational
+
+### Screener de FIIs: P/VP < 1 e DY > 8%, ordenado por DY
+GET {{baseUrl}}/fiis/screener?pvp_lte=1&dy_gte=8&sort=dy&order=desc&limit=10
+
+### Screener de FIIs: só tijolo, logística
+GET {{baseUrl}}/fiis/screener?classification=tijolo&segment=Logística&sort=pvp&order=asc&limit=10
+
+### Screener de FIIs: papel com DY > 10%
+GET {{baseUrl}}/fiis/screener?classification=papel&dy_gte=10&sort=dy&order=desc&limit=10
 
 
 ###############################################################################
@@ -207,6 +267,14 @@ GET {{baseUrl}}/macro/433?limit=6
 
 ### Câmbio USD/BRL (código 1)
 GET {{baseUrl}}/macro/1?limit=3
+
+
+###############################################################################
+# 12b. OPENAPI — Especificação da API
+###############################################################################
+
+### OpenAPI 3.0 spec (público)
+GET {{baseUrl}}/docs/openapi.json
 
 
 ###############################################################################

@@ -7,6 +7,7 @@ import { JobWorker } from './infra/jobs/worker.ts';
 import { JobScheduler } from './infra/jobs/scheduler.ts';
 import { checkRedisConnection } from './infra/services/redis.ts';
 import { checkDatabaseConnection } from './infra/database/connection.ts';
+import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
 
 const app = Fastify({
   logger: {
@@ -20,6 +21,9 @@ const app = Fastify({
     },
   },
 });
+
+// Rate limiting global (após auth, antes das rotas)
+app.addHook('onRequest', rateLimiter);
 
 // Registra rotas globais sob o prefixo /v1
 await app.register(routesPlugin, { prefix: '/v1' });

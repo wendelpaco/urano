@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { authMiddleware } from '../middleware/auth.ts';
 import { healthcheckController } from '../controllers/healthcheck.controller.ts';
+import { openApiController } from '../controllers/docs.controller.ts';
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
 import { listCompaniesController, listSectorsController, getCompanyByTickerController } from '../controllers/companies.controller.ts';
 import { getLatestFundamentalsController, getFundamentalsHistoryController } from '../controllers/fundamentals.controller.ts';
@@ -34,8 +35,9 @@ export async function routesPlugin(
   // Auth middleware — todas as rotas exceto healthcheck
   app.addHook('onRequest', authMiddleware);
 
-  // Healthcheck
+  // Healthcheck + Docs (rotas públicas, sem auth)
   app.get('/healthcheck', healthcheckController);
+  app.get('/docs/openapi.json', openApiController);
 
   // Wallets (CRUD + Rebalance)
   app.post('/wallets', createWalletController);
