@@ -160,7 +160,7 @@ async function main(): Promise<void> {
   const corr = (a: number[], b: number[]) => {
     const ma = a.reduce((s, v) => s + v, 0) / a.length, mb = b.reduce((s, v) => s + v, 0) / b.length;
     let cov = 0, va = 0, vb = 0;
-    for (let i = 0; i < a.length; i++) { cov += (a[i]! - ma) * (b[i]! - mb); va += (a[i]! - ma) ** 2; vb += (b[i]! - mb) ** 2; }
+    for (let i = 0; i < a.length; i++) { const ai = a[i] ?? 0; const bi = b[i] ?? 0; cov += (ai - ma) * (bi - mb); va += (ai - ma) ** 2; vb += (bi - mb) ** 2; }
     return va > 0 && vb > 0 ? +(cov / Math.sqrt(va * vb)).toFixed(3) : 0;
   };
   for (const p of ['score', 'valuation', 'profitability', 'growth', 'dividends', 'quality', 'momentum']) {
