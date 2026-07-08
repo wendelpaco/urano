@@ -90,14 +90,14 @@ async function main(): Promise<void> {
   // 3. Jobs de ações (StatusInvest a cada 6h)
   console.log('📅 Criando jobs de ações...');
   for (const s of stocks) {
-    await store.createJob({ ticker: s.ticker, assetType: 'stock', runInterval: STOCK_INTERVAL, priority: 0 });
+    await store.createJob({ ticker: s.ticker, assetType: 'stock', runInterval: STOCK_INTERVAL, priority: 1 });
   }
   console.log(`   ✅ ${stocks.length} jobs (refresh a cada ${STOCK_INTERVAL / 3600}h)`);
 
   // 4. Jobs de FIIs (StatusInvest a cada 3h)
   console.log('📅 Criando jobs de FIIs...');
   for (const f of fiis) {
-    await store.createJob({ ticker: f.ticker, assetType: 'fii', runInterval: FII_INTERVAL, priority: 1 });
+    await store.createJob({ ticker: f.ticker, assetType: 'fii', runInterval: FII_INTERVAL, priority: 1 });  // mesma prioridade = intercala
   }
   console.log(`   ✅ ${fiis.length} jobs (refresh a cada ${FII_INTERVAL / 3600}h)`);
 

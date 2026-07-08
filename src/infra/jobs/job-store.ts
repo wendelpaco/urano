@@ -22,7 +22,7 @@ export class JobStore {
       })
       .onConflictDoUpdate({
         target: [jobs.ticker, jobs.assetType],
-        set: { updatedAt: new Date() },
+        set: { priority: input.priority ?? 0, runInterval: input.runInterval ?? 3600, updatedAt: new Date() },
       })
       .returning();
 
