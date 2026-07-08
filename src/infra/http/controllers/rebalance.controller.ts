@@ -4,6 +4,14 @@ import { ExecuteRebalanceUseCase } from '../../../core/use-cases/execute-rebalan
 
 const bodySchema = z.object({
   availableAmount: z.number().positive(),
+  currentPositions: z
+    .array(
+      z.object({
+        ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+        quantity: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 
 const paramsSchema = z.object({
@@ -42,10 +50,10 @@ export async function rebalanceController(
 
   try {
     const { walletId } = paramsResult.data;
-    const { availableAmount } = bodyResult.data;
+    const { availableAmount, currentPositions } = bodyResult.data;
 
     const useCase = new ExecuteRebalanceUseCase();
-    const result = await useCase.execute({ walletId, availableAmount });
+    const result = await useCase.execute({ walletId, availableAmount, currentPositions });
 
     reply.status(200).send(result);
   } catch (error) {

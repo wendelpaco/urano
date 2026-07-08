@@ -2,6 +2,11 @@ import 'dotenv/config';
 import Fastify, { type FastifyError } from 'fastify';
 import { env } from './config/env.ts';
 import { routesPlugin } from './infra/http/routes/index.ts';
+import { JobStore } from './infra/jobs/job-store.ts';
+import { JobWorker } from './infra/jobs/worker.ts';
+import { JobScheduler } from './infra/jobs/scheduler.ts';
+import { checkRedisConnection } from './infra/services/redis.ts';
+import { checkDatabaseConnection } from './infra/database/connection.ts';
 
 const app = Fastify({
   logger: {
@@ -59,10 +64,43 @@ app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
   });
 });
 
+// ─── Job Scheduler ──────────────────────────────────────────────────────
+const jobStore = new JobStore();
+const jobWorker = new JobWorker(jobStore);
+const scheduler = new JobScheduler(jobStore, jobWorker, {
+  enabled: true,
+  checkInterval: 30_000,
+  maxConcurrentJobs: 3,
+  staleTimeout: 300_000,
+});
+
+// Não bloqueia o startup — scheduler roda em background
+scheduler.start().catch((err) => {
+  console.warn('[scheduler] Falha ao iniciar (modo sem jobs):', err.message);
+});
+
+// Graceful shutdown
+const shutdown = async () => {
+  console.log('\n⏸️  Encerrando...');
+  await scheduler.stop();
+  await app.close();
+  process.exit(0);
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+// ─── Start server ───────────────────────────────────────────────────────
 try {
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
+
+  // Log de status da infra
+  const dbOk = await checkDatabaseConnection().then(() => true).catch(() => false);
+  const redisOk = await checkRedisConnection();
+
   app.log.info(`🚀 Urano API rodando em http://0.0.0.0:${env.PORT}`);
+  app.log.info(`   DB: ${dbOk ? '✅' : '❌'}  Redis: ${redisOk ? '✅' : '❌'}  Scheduler: ${scheduler.getStatus().running ? '✅' : '❌'}`);
 } catch (err) {
   app.log.error(err, 'Falha ao iniciar o servidor');
+  await scheduler.stop();
   process.exit(1);
 }

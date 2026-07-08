@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import crypto from 'node:crypto';
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
@@ -19,9 +20,8 @@ const createKeySchema = z.object({
 const deleteParamsSchema = z.object({ id: z.string().uuid() });
 
 function generateApiKey(): string {
-  const chars = 'abcdef0123456789';
   const segments = Array.from({ length: 4 }, () =>
-    Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''),
+    crypto.randomBytes(6).toString('hex'),
   );
   return `ur_${segments.join('_')}`;
 }

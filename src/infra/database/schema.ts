@@ -152,6 +152,69 @@ export const walletAssets = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// jobs — Agendamento de sincronização de dados por ticker
+// ═══════════════════════════════════════════════════════════════════════════
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    assetType: varchar('asset_type', { length: 10 }).notNull().default('stock'),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    priority: smallint('priority').notNull().default(0),
+    runInterval: smallint('run_interval').notNull().default(3600), // segundos
+    nextRunAt: timestamp('next_run_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true, mode: 'date' }),
+    lastError: varchar('last_error', { length: 500 }),
+    retryCount: smallint('retry_count').notNull().default(0),
+    maxRetries: smallint('max_retries').notNull().default(2),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_jobs_ticker_type').on(table.ticker, table.assetType),
+    index('idx_jobs_next_run').on(table.nextRunAt),
+    index('idx_jobs_status').on(table.status),
+    index('idx_jobs_enabled').on(table.enabled).where(sql`${table.enabled} = true`),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// job_runs — Histórico de execução dos jobs
+// ═══════════════════════════════════════════════════════════════════════════
+export const jobRuns = pgTable(
+  'job_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id, { onDelete: 'cascade' }),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+    durationMs: smallint('duration_ms'),
+    errorMessage: varchar('error_message', { length: 500 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_job_runs_job_id').on(table.jobId),
+    index('idx_job_runs_started').on(table.startedAt.desc()),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // api_keys — API Keys para autenticação de clientes
 // ═══════════════════════════════════════════════════════════════════════════
 export const apiKeys = pgTable(

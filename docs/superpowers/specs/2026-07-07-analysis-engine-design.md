@@ -140,3 +140,293 @@ Primeiro conjunto de testes do Urano (`bun test`):
 - **Endpoint StatusInvest não documentado** — pode mudar/bloquear. Mitigação: cache 24h, fallback DMPL, rate limit próprio, isolado num provider único
 - **Datasets de subclasse FII estáticos** — envelhecem (classificações de 2024/25). Mitigação: aceitável para primeira versão; documentar data no arquivo
 - **P/VP de FII ausente** — score de FII menos preciso no início. Mitigação: campo `dataQuality` expõe a lacuna ao consumidor
+
+## 9. Contratos de API
+
+### 9a. GET /v1/dividends/:ticker (enriquecido — Onda 1d)
+
+Resposta atual (seção atual `data` com DMPL anual) + dois blocos novos:
+
+```typescript
+// Response (200)
+{
+  ticker: string;
+  companyName: string;
+  source: string;
+  total: number;
+  totalValuePerShare: number;
+  data: Array<{ fiscalYear: number; type: 'DIVIDEND' | 'JCP'; totalValue: number; valuePerShare: number; payoutRatio: number | null }>;
+  // ↓ NOVO
+  monthlyHistory: Array<{
+    date: string;        // "2025-06-15"
+    value: number;       // valor por cota
+    type: string;        // "DIVIDEND" | "JCP" | "RENDIMENTO" | "AMORTIZACAO"
+    ticker: string;
+  }>;
+  analysis: {
+    stability: number;        // 0-1, coeficiente de variação invertido
+    consistency: number;      // 0-1, regularidade de pagamentos
+    trend: number;            // -1 a 1, tendência 6m vs 6m anterior
+    quality: number;          // 0-100, score composto
+    period: { start: string; end: string };
+  } | null;  // null se sem dados de proventos
+  dataQuality: {
+    dividends: boolean;       // true = StatusInvest disponível
+    dmplFallback: boolean;    // true = dados são DMPL (anual, não mensal)
+  };
+}
+```
+
+### 9b. GET /v1/analysis/stocks/:ticker (Onda 2c)
+
+```typescript
+// Response (200)
+{
+  ticker: string;
+  companyName: string;
+  cnpj: string;
+  score: number;                  // 0-100
+  breakdown: {
+    valuation:    { score: number; weight: number };  // P/L, P/VP, P/S
+    profitability:{ score: number; weight: number };  // ROE, margens
+    dividends:    { score: number; weight: number };  // DY, payout, estabilidade
+    quality:      { score: number; weight: number };  // setor defensivo, consistência
+  };
+  reasons: string[];              // explicações humanas
+  alerts: string[];               // pontos de atenção
+  indicators: FinancialIndicators; // reusa interface existente, agora com DY real
+  price: number | null;
+  dataQuality: {
+    quotes: boolean;
+    dividends: boolean;
+    fundamentals: boolean;
+  };
+}
+
+// Erros
+// 404: { error: "NotFound", message: "Fundamentos não encontrados para \"XXXX3\". Execute worker:sync primeiro." }
+// 503: { error: "ServiceUnavailable", message: "...", dataQuality: {...} }
+```
+
+### 9c. GET /v1/analysis/fiis/:ticker (Onda 2c)
+
+```typescript
+// Response (200)
+{
+  ticker: string;
+  name: string;
+  type: string;                       // "tijolo" | "papel" | "fundo_de_fundos" | "hibrido"
+  typeSource: 'classified' | 'inferred';
+  subclass: string;                   // "logistica" | "shopping" | "lajes_corporativas" | ...
+  score: number;                      // 0-100
+  breakdown: {
+    incomeQuality:  { score: number; weight: number; details: string };
+    assetQuality:   { score: number; weight: number; details: string };
+    risk:           { score: number; weight: number; details: string };
+  };
+  recommendation: 'conservador' | 'moderado' | 'arriscado';
+  explanation: string;                // resumo humano da recomendação
+  dataQuality: {
+    quotes: boolean;
+    dividends: boolean;
+    pvp: boolean;                     // sempre false até fonte confiável
+    classification: boolean;          // false se tipo inferido
+  };
+  price: number | null;
+  dividendYield: number | null;       // DY 12m (de proventos mensais + preço)
+  pvp: number | null;                 // sempre null na Onda 2
+  liquidity: number | null;           // volume médio diário (Yahoo)
+}
+```
+
+### 9d. GET /v1/analysis/ranking (Onda 2c)
+
+```typescript
+// Query params: type=stock|fii, limit=10 (default), minScore (opcional, 0-100)
+// Response (200)
+{
+  type: 'stock' | 'fii';
+  total: number;
+  filters: { minScore: number | null; limit: number };
+  data: Array<{
+    ticker: string;
+    name: string;
+    score: number;
+    recommendation?: string;   // apenas FII
+    type?: string;             // apenas FII (subclasse)
+  }>;
+}
+```
+
+### 9e. POST /v1/wallets/:walletId/rebalance (estendido — Onda 3b)
+
+```typescript
+// Body (currentPositions é opcional)
+{
+  availableAmount: number;  // obrigatório
+  currentPositions?: Array<{
+    ticker: string;
+    quantity: number;
+  }>;
+}
+
+// Response (200) — adiciona currentQuantity e sugestão SELL
+{
+  walletId: string;
+  availableAmount: number;
+  suggestions: Array<{
+    ticker: string;
+    action: 'BUY' | 'SELL' | 'HOLD';   // NOVO: antes só existia BUY implícito
+    targetAllocation: number;
+    currentQuantity: number | null;     // NOVO
+    targetQuantity: number;
+    suggestedQuantity: number;
+    estimatedCost: number;
+    reason: string;
+  }>;
+}
+```
+
+## 10. Modelagem de dados e migrations
+
+### 10a. Estrutura atual já existente
+
+`api_keys` já tem `last_used_at` (timestamp). A migration é só de código:
+o middleware de auth passa a escrever nesse campo a cada request autenticado.
+
+### 10b. Cache keys (Redis)
+
+| Padrão | TTL | Conteúdo |
+|---|---|---|
+| `quote:{ticker}` | 30s | `StockQuote` serializado (já existe) |
+| `dividends:{ticker}` | 24h | `Array<MonthlyDividend>` do StatusInvest |
+| `analysis:stock:{ticker}` | 15min | Resposta completa de `/v1/analysis/stocks/:ticker` |
+| `analysis:fii:{ticker}` | 15min | Resposta completa de `/v1/analysis/fiis/:ticker` |
+| `analysis:ranking:{type}:{hash}` | 30min | Ranking serializado (hash = query params) |
+| `apikey:valid:{key}` | 60s | `boolean` — lookup rápido sem query no banco |
+| `apikey:valid-set` | 60s | `Set<string>` — todas as keys ativas (carga em bloco) |
+
+### 10c. Rate limiter (StatusInvest)
+
+Provider isolado com controle interno:
+- Máximo 1 requisição por segundo para o domínio `statusinvest.com.br`
+- Implementado como token bucket em memória (não Redis — single-instance basta)
+- Se o bucket esgotar, operação aguarda (não rejeita) até liberar
+
+## 11. Requisitos não-funcionais
+
+| Dimensão | Alvo | Observação |
+|---|---|---|
+| Latência `/v1/analysis/stocks/:ticker` (cache hit) | p50 < 10ms | Redis local, dado serializado |
+| Latência `/v1/analysis/stocks/:ticker` (cache miss) | p95 < 2s | 2 fontes externas + cálculo local |
+| Latência `/v1/analysis/fiis/:ticker` (cache miss) | p95 < 3s | proventos + cotação + score (mais pesado) |
+| Degradação tolerada | 1 fonte externa fora → resposta parcial | `dataQuality` sinaliza; nunca 500 por dependência externa |
+| Throughput (api-key autenticado) | 100 req/s sustentado | Benchmark com `bun`; sem DB por request (cache Redis de keys) |
+| Precisão numérica | 2 casas decimais para valores monetários, 4 para scores | Consistente com `FinancialIndicators` existente |
+
+## 12. Segurança
+
+### 12a. Correção de geração de API key (Onda 3a)
+
+Vulnerabilidade atual (`auth.controller.ts:21`): `Math.random()` é pseudo-aleatório e previsível
+— entropia efetiva de ~48 bits (6 chars × 8 posições × 4 segmentos, mas `Math.random` reduz a ~32 bits).
+
+Correção:
+```typescript
+import crypto from 'node:crypto';
+
+function generateApiKey(): string {
+  const segments = Array.from({ length: 4 }, () =>
+    crypto.randomBytes(6).toString('hex')  // 12 chars hex por segmento
+  );
+  return `ur_${segments.join('_')}`;
+}
+```
+Entropia resultante: 192 bits (48 hex chars × 4 bits). Prefixo `ur_` mantido.
+
+⚠️ **Breaking change**: keys existentes permanecem válidas (coluna `key` é string, sem constraint de formato),
+mas novas keys terão formato diferente. Documentar no changelog.
+
+### 12b. Rate limiting por API key
+
+Não implementado na Onda 3 (escopo extra). Se necessário, adicionar middleware com Redis:
+- Janela deslizante de 1 minuto, 100 req/key
+- Excedido → 429 com header `Retry-After`
+- Decisão: postergar até primeiro abuso reportado
+
+### 12c. Secrets
+
+- `REDIS_URL` e `DATABASE_URL` já estão em `.env` (não versionado)
+- Nenhum secret novo é introduzido (StatusInvest é endpoint público)
+
+## 13. Dependências e ordem de execução
+
+```
+Onda 1 ─────────────────────────────┐
+  ├─ 1a (retry.ts) ── sem dep.      │
+  ├─ 1b (dividends-analyzer) ── sem │
+  ├─ 1c (dividends-provider) ── 1a  │ Bloqueia 1d e 2b (DY real)
+  └─ 1d (dividends enriquecido) ── 1b + 1c
+                                     │
+Onda 2 ─────────────────────────────┤
+  ├─ extrair indicators.ts ── sem   │
+  ├─ 2a (fii-score + datasets) ── 1d (precisa de DY)
+  ├─ 2b (stock-score) ── indicators.ts + 1d (DY)
+  └─ 2c (endpoints analysis) ── 2a + 2b + 1a (cache Redis)
+                                     │
+Onda 3 ─────────────────────────────┘
+  ├─ 3a (api-key middleware) ── sem dep. das ondas anteriores
+  └─ 3b (rebalance c/ posição) ── sem dep.
+```
+
+## 14. Aceitação por onda
+
+### Onda 1 — Critérios de aceite
+- [ ] `withRetry` aplicado em `CvmStorageService.downloadZip`, `StockQuoteService.fetchQuote/fetchHistory`, `fetchBcbSeries`
+- [ ] `withTimeout` em todas as chamadas externas (mín. 10s)
+- [ ] `DividendsAnalyzer` portado com zero dependências externas
+- [ ] Testes passam: estabilidade 0.98+ para KNCR11, <0.3 para empresa com gap
+- [ ] `GET /v1/dividends/:ticker` inclui `monthlyHistory` e `analysis` (não-null para tickers com proventos)
+- [ ] `GET /v1/fundamentals/:ticker` retorna `dividendYield` preenchido (≠ null) quando há proventos 12m + cotação
+- [ ] StatusInvest indisponível → resposta degrada com `dataQuality.dividends: false`, sem 500
+- [ ] Cache Redis de proventos respeita TTL 24h
+
+### Onda 2 — Critérios de aceite
+- [ ] `indicators.ts` produz os mesmos resultados que `calcAllIndicators` original (golden tests)
+- [ ] `stock-score.ts` para WEGE3 (saudável, ROE alto) → score > 70
+- [ ] `stock-score.ts` para empresa com prejuízo → score < 30, `alerts` inclui "prejuízo"
+- [ ] `fii-score.ts` para KNCR11 (CDI high grade) → score > 80, recommendation "conservador"
+- [ ] `fii-score.ts` para ticker fora da lista → type "tijolo", typeSource "inferred", score calculado mesmo assim
+- [ ] `GET /v1/analysis/ranking?type=fii&limit=10` ordenado por score decrescente
+- [ ] `GET /v1/screener?minScore=50` funciona (parâmetro novo)
+- [ ] Cache Redis de análise: hit retorna em < 10ms
+
+### Onda 3 — Critérios de aceite
+- [ ] `GET /v1/keys` e `DELETE /v1/keys/:id` exigem api-key (antes estavam abertos)
+- [ ] `GET /v1/healthcheck` continua público (sem auth)
+- [ ] API key inválida/inativa → 401 `{ error: "Unauthorized" }`
+- [ ] `last_used_at` atualizado a cada request autenticado
+- [ ] `generateApiKey()` usa `crypto.randomBytes`, não `Math.random`
+- [ ] `POST /v1/wallets/:walletId/rebalance` com `currentPositions` preenche `currentQuantity` e sugere SELL
+- [ ] Sem `currentPositions` → comportamento inalterado (retrocompatível)
+
+## 15. Perguntas abertas
+
+| # | Pergunta | Decisão pendente | Impacto |
+|---|---|---|---|
+| 1 | FIIs: cadastrar tabela própria `fiis` ou usar `companies` com flag? | Usar `companies` (já existe `fiis.controller` lendo dela). Riscos: `sector` de FII é null; `cnpj` é obrigatório. | Se migrar para tabela própria, impacto em `getFiiByTicker` e `listFiis` |
+| 2 | `stock-score.ts`: pesos dos pilares são fixos ou configuráveis? | Fixos na v1 (valuation 35%, profitability 25%, dividends 20%, quality 20%). Justificativa: easy-invest usava fixos. | Se configurável, precisa de tabela/payload |
+| 3 | Ranking de ações: escopo é só empresas com fundamentals no banco ou todas as listadas? | Só com fundamentals (consistente com screener). Se usuário quiser PETR4 sem fundamentals → 404. | Nenhum; alinhado com comportamento atual |
+| 4 | `dataQuality.pvp` de FII: quando implementar fonte? | Postergar. Fonte candidata: FundsExplorer (HTML scraping — mesma fragilidade do StatusInvest). Ou esperar CVM disponibilizar DRE de FIIs em formato estruturado. | Score de FII sem P/VP penaliza valuation como "neutro" (50), subestimando FIIs caros e superestimando baratos |
+| 5 | StatusInvest rate limit: 1 req/s é suficiente para o volume esperado? | Sim para single-user/single-instance. Se surgir multi-tenant, o bucket precisa ser Redis (distribuído). | Refatorar provider para receber rate limiter injetável |
+
+## 16. Referências
+
+- easy-invest retry: `~/works/easy-invest/server/src/utils/retry.ts`
+- easy-invest DividendsAnalyzer: `~/works/easy-invest/server/src/core/services/` (verificar caminho exato)
+- easy-invest FIIScoreV4: `~/works/easy-invest/server/src/core/services/fii-score.v4.1.ts` (728 linhas)
+- easy-invest datasets: `~/works/easy-invest/server/src/core/data/fii-*.data.ts`
+- easy-invest AssetAnalyzer: `~/works/easy-invest/server/src/core/services/` (inspiração para stock-score.ts)
+- Urano schema atual: `src/infra/database/schema.ts`
+- Urano rotas atuais: `src/infra/http/routes/index.ts`
+- StatusInvest endpoint proventos: `https://statusinvest.com.br/acao/companytickerprovents?ticker={TICKER}&chartProventsType=2`

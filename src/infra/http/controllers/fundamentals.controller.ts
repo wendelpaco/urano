@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { eq, desc } from 'drizzle-orm';
 import { fundamentalsQueries } from '../../database/fundamentals-queries.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
+import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
-import type { FinancialIndicators } from '../../../core/entities/company-fundamentals.ts';
+import { calcAllIndicators } from '../../../core/services/indicators.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -22,55 +23,6 @@ const paramsSchema = z.object({
 const historyQuerySchema = z.object({
   limit: z.string().optional().default('10').transform(Number).pipe(z.number().int().min(1).max(50)),
 });
-
-function calcAllIndicators(f: Record<string, unknown>, price: number): FinancialIndicators {
-  const netIncome = Number(f.netIncomeParent ?? f.netIncome ?? 0);
-  const revenue = Number(f.revenue ?? 0);
-  const cogs = Math.abs(Number(f.cogs ?? 0)); // CVM reporta COGS negativo
-  const ebit = Number(f.ebit ?? 0);
-  const totalAssets = Number(f.totalAssets ?? 0);
-  const totalLiabilities = Number(f.totalLiabilities ?? 0);
-  const cash = Number(f.cash ?? 0);
-  const equity = Number(f.equity ?? 0);
-  const ocf = Number(f.operatingCashFlow ?? 0);
-  const shares = Number(f.sharesOutstanding ?? 0);
-
-  const eps = shares > 0 ? netIncome / shares : 0;
-  const bvps = shares > 0 ? equity / shares : 0;
-  const marketCap = shares > 0 ? shares * price : 0;
-  const grossProfit = revenue - cogs;
-  const netDebt = totalLiabilities - cash;
-
-  return {
-    ticker: String(f.ticker ?? ''),
-    referenceDate: String(f.referenceDate ?? '').slice(0, 10),
-    // Margens
-    grossMargin: revenue > 0 ? +(grossProfit / revenue * 100).toFixed(2) : null,
-    ebitMargin: revenue > 0 ? +(ebit / revenue * 100).toFixed(2) : null,
-    netMargin: revenue > 0 ? +(netIncome / revenue * 100).toFixed(2) : null,
-    // Retornos
-    roe: equity > 0 ? +(netIncome / equity * 100).toFixed(2) : null,
-    roa: totalAssets > 0 ? +(netIncome / totalAssets * 100).toFixed(2) : null,
-    // Valuation
-    peRatio: eps > 0 && price > 0 ? +(price / eps).toFixed(2) : null,
-    pbRatio: bvps > 0 && price > 0 ? +(price / bvps).toFixed(2) : null,
-    psRatio: revenue > 0 && shares > 0 ? +(marketCap / revenue).toFixed(2) : null,
-    pebit: ebit > 0 && shares > 0 ? +(marketCap / ebit).toFixed(2) : null,
-    evEbit: ebit > 0 ? +((totalLiabilities + equity) / ebit).toFixed(2) : null,
-    // Endividamento
-    debtToEquity: equity > 0 ? +(totalLiabilities / equity).toFixed(2) : null,
-    netDebtToEquity: equity > 0 ? +(netDebt / equity).toFixed(2) : null,
-    // Per-share
-    eps: +eps.toFixed(2),
-    bvps: +bvps.toFixed(2),
-    // Eficiência
-    assetTurnover: totalAssets > 0 ? +(revenue / totalAssets).toFixed(2) : null,
-    fcoToNetIncome: netIncome !== 0 ? +(ocf / Math.abs(netIncome)).toFixed(2) : null,
-    // Mercado
-    marketCap,
-    dividendYield: null,
-  };
-}
 
 /** GET /v1/fundamentals/:ticker */
 export async function getLatestFundamentalsController(
@@ -121,6 +73,26 @@ export async function getLatestFundamentalsController(
 
   const indicators = calcAllIndicators(f, price);
 
+  // Onda 1d: corrige dividendYield com proventos 12m reais
+  let dividendYieldSource = false;
+  try {
+    const proventos = await dividendsProvider.fetchDividends(ticker);
+    if (proventos && proventos.length > 0 && price > 0) {
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      const cutoff = twelveMonthsAgo.toISOString().slice(0, 10);
+      const sum12m = proventos
+        .filter((e) => e.date >= cutoff)
+        .reduce((s, e) => s + e.value, 0);
+      if (sum12m > 0) {
+        indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+        dividendYieldSource = true;
+      }
+    }
+  } catch {
+    // Provider indisponível → DY fica null (degradado)
+  }
+
   reply.send({
     ticker: f.ticker,
     companyName: f.companyName,
@@ -128,6 +100,11 @@ export async function getLatestFundamentalsController(
     period: { fiscalYear: f.fiscalYear, referenceDate: String(f.referenceDate).slice(0, 10), source: f.source },
     price: price || null,
     indicators,
+    dataQuality: {
+      quotes: price > 0,
+      dividends: dividendYieldSource,
+      fundamentals: true,
+    },
     financials: {
       revenue: Number(f.revenue ?? 0),
       cogs: Math.abs(Number(f.cogs ?? 0)),

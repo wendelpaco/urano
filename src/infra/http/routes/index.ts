@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import { authMiddleware } from '../middleware/auth.ts';
 import { healthcheckController } from '../controllers/healthcheck.controller.ts';
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
 import { listCompaniesController, listSectorsController, getCompanyByTickerController } from '../controllers/companies.controller.ts';
@@ -9,6 +10,11 @@ import { listFiisController, getFiiByTickerController, getFiiHistoryController }
 import { listMacroController, getMacroSeriesController } from '../controllers/macro.controller.ts';
 import { createApiKeyController, listApiKeysController, deleteApiKeyController } from '../controllers/auth.controller.ts';
 import { screenerController } from '../controllers/screener.controller.ts';
+import {
+  getStockAnalysisController,
+  getFiiAnalysisController,
+  getRankingController,
+} from '../controllers/analysis.controller.ts';
 import {
   createWalletController,
   listWalletsController,
@@ -23,6 +29,9 @@ export async function routesPlugin(
   app: FastifyInstance,
   _opts: FastifyPluginOptions,
 ): Promise<void> {
+  // Auth middleware — todas as rotas exceto healthcheck
+  app.addHook('onRequest', authMiddleware);
+
   // Healthcheck
   app.get('/healthcheck', healthcheckController);
 
@@ -69,4 +78,9 @@ export async function routesPlugin(
 
   // Screener
   app.get('/screener', screenerController);
+
+  // Analysis (Onda 2c)
+  app.get('/analysis/stocks/:ticker', getStockAnalysisController);
+  app.get('/analysis/fiis/:ticker', getFiiAnalysisController);
+  app.get('/analysis/ranking', getRankingController);
 }

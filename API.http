@@ -336,3 +336,114 @@ Content-Type: application/json
 
 ### 11.7 Ver resultado final da carteira
 GET {{baseUrl}}/wallets/{{flowWallet.response.body.id}}
+
+
+###############################################################################
+# 12. ANALYSIS — ANÁLISE DE AÇÕES E FIIs (Onda 2c)
+# Requer header x-api-key (crie uma key na seção 9 e cole abaixo)
+###############################################################################
+
+@apiKey = ur_SUA_CHAVE_AQUI
+
+### 12.1 Score completo da Petrobras
+GET {{baseUrl}}/analysis/stocks/PETR4
+x-api-key: {{apiKey}}
+
+### 12.2 Score da Vale
+GET {{baseUrl}}/analysis/stocks/VALE3
+x-api-key: {{apiKey}}
+
+### 12.3 Score do Bradesco
+GET {{baseUrl}}/analysis/stocks/BBDC4
+x-api-key: {{apiKey}}
+
+### 12.4 Score de FII — HGLG11 (logística defensiva)
+GET {{baseUrl}}/analysis/fiis/HGLG11
+x-api-key: {{apiKey}}
+
+### 12.5 Score de FII — KNCR11 (CDI high-grade, juros sensitive)
+GET {{baseUrl}}/analysis/fiis/KNCR11
+x-api-key: {{apiKey}}
+
+### 12.6 Score de FII — XPML11 (shopping prime cíclico)
+GET {{baseUrl}}/analysis/fiis/XPML11
+x-api-key: {{apiKey}}
+
+### 12.7 Score de FII — MXRF11 (middle risk)
+GET {{baseUrl}}/analysis/fiis/MXRF11
+x-api-key: {{apiKey}}
+
+### 12.8 Ranking de ações (top 5)
+GET {{baseUrl}}/analysis/ranking?type=stock&limit=5
+x-api-key: {{apiKey}}
+
+### 12.9 Ranking de ações com score mínimo 60
+GET {{baseUrl}}/analysis/ranking?type=stock&limit=10&minScore=60
+x-api-key: {{apiKey}}
+
+### 12.10 Ranking de FIIs (top 10)
+GET {{baseUrl}}/analysis/ranking?type=fii&limit=10
+x-api-key: {{apiKey}}
+
+### 12.11 Ranking de FIIs filtrado por score
+GET {{baseUrl}}/analysis/ranking?type=fii&limit=10&minScore=70
+x-api-key: {{apiKey}}
+
+### 12.12 Ticker sem fundamentos → 404
+GET {{baseUrl}}/analysis/stocks/XXXX4
+x-api-key: {{apiKey}}
+
+
+###############################################################################
+# 13. SCREENER COM minScore (Onda 2c)
+###############################################################################
+
+### 13.1 Screener com score mínimo 50
+GET {{baseUrl}}/screener?limit=10&minScore=50
+x-api-key: {{apiKey}}
+
+### 13.2 Screener com score mínimo 70 (só empresas excelentes)
+GET {{baseUrl}}/screener?limit=10&minScore=70
+x-api-key: {{apiKey}}
+
+
+###############################################################################
+# 14. REBALANCE COM POSIÇÃO ATUAL (Onda 3b)
+###############################################################################
+
+### 14.1 Rebalanceamento informando posição atual (sugere SELL se sobrealocado)
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "availableAmount": 5000,
+  "currentPositions": [
+    { "ticker": "PETR4", "quantity": 100 },
+    { "ticker": "VALE3", "quantity": 50 },
+    { "ticker": "BBDC4", "quantity": 200 },
+    { "ticker": "WEGE3", "quantity": 10 }
+  ]
+}
+
+### 14.2 Rebalanceamento sem currentPositions (retrocompatível)
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "availableAmount": 5000
+}
+
+
+###############################################################################
+# 15. DIVIDENDS ENRIQUECIDO (Onda 1d)
+###############################################################################
+
+### 15.1 Dividendos com análise e histórico mensal
+GET {{baseUrl}}/dividends/PETR4
+x-api-key: {{apiKey}}
+
+### 15.2 Dividendos de FII (proventos mensais)
+GET {{baseUrl}}/dividends/KNCR11
+x-api-key: {{apiKey}}

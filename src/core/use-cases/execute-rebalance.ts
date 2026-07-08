@@ -65,17 +65,48 @@ export class ExecuteRebalanceUseCase {
 
       const estimatedCost = suggestedQuantity * currentPrice;
 
+      // Onda 3b: posição atual do usuário (se informada)
+      const position = input.currentPositions?.find(
+        (p) => p.ticker.toUpperCase() === asset.ticker.toUpperCase(),
+      );
+      const currentQty = position?.quantity ?? 0;
+
+      // Determina ação: BUY, SELL, ou HOLD
+      let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+      let finalQuantity = suggestedQuantity;
+      let finalCost = estimatedCost;
+
+      if (currentQty > 0 && currentPrice > 0) {
+        // Calcula alocação atual em valor
+        const currentValue = currentQty * currentPrice;
+
+        // Se a alocação atual excede a alvo em mais de 20%, sugere SELL
+        if (currentValue > targetValue * 1.2) {
+          const excessValue = currentValue - targetValue;
+          const sellQty = Math.floor(excessValue / currentPrice);
+          if (sellQty > 0) {
+            action = 'SELL';
+            finalQuantity = sellQty;
+            finalCost = sellQty * currentPrice;
+          }
+        } else if (suggestedQuantity > 0) {
+          action = 'BUY';
+        }
+      } else if (suggestedQuantity > 0) {
+        action = 'BUY';
+      }
+
       recommendations.push({
         ticker: asset.ticker,
-        currentQuantity: 0, // MVP: não rastreamos posição atual
+        currentQuantity: currentQty,
         currentPrice: Math.round(currentPrice * 100) / 100,
         targetAllocationPercent: targetPercent,
-        suggestedAction: suggestedQuantity > 0 ? 'BUY' : 'HOLD',
-        suggestedQuantity,
-        estimatedCost: Math.round(estimatedCost * 100) / 100,
+        suggestedAction: action,
+        suggestedQuantity: finalQuantity,
+        estimatedCost: Math.round(finalCost * 100) / 100,
       });
 
-      totalEstimatedCost += estimatedCost;
+      totalEstimatedCost += finalCost;
     }
 
     const remainingCash = Math.round((availableAmount - totalEstimatedCost) * 100) / 100;

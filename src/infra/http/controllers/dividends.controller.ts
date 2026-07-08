@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import { eq, desc } from 'drizzle-orm';
+import { dividendsProvider } from '../../services/dividends-provider.ts';
+import { DividendsAnalyzer } from '../../../core/services/dividends-analyzer.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -91,12 +93,45 @@ export async function getDividendsController(
 
   const totalPerShare = events.reduce((sum, e) => sum + e.valuePerShare, 0);
 
+  // Onda 1d: busca proventos mensais do StatusInvest + análise
+  let monthlyHistory: Array<{ date: string; value: number; type: string; ticker: string }> | null = null;
+  let analysis = null;
+  let dividendsAvailable = false;
+  let dmplFallback = true;
+
+  try {
+    const proventos = await dividendsProvider.fetchDividends(ticker);
+    if (proventos !== null) {
+      dividendsAvailable = true;
+      dmplFallback = false;
+      if (proventos.length > 0) {
+        monthlyHistory = proventos.map((e) => ({
+          date: e.date,
+          value: e.value,
+          type: e.type,
+          ticker,
+        }));
+        analysis = DividendsAnalyzer.analyze(proventos);
+      }
+    }
+  } catch {
+    // Provider falhou → degradado, mantém DMPL
+  }
+
   reply.send({
     ticker,
     companyName: company.name,
-    source: 'CVM — DMPL (Demonstração das Mutações do Patrimônio Líquido)',
+    source: dmplFallback
+      ? 'CVM — DMPL (Demonstração das Mutações do Patrimônio Líquido)'
+      : 'StatusInvest (proventos mensais)',
     total: events.length,
     totalValuePerShare: Math.round(totalPerShare * 100) / 100,
     data: events,
+    monthlyHistory,
+    analysis,
+    dataQuality: {
+      dividends: dividendsAvailable,
+      dmplFallback,
+    },
   });
 }
