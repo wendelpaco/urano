@@ -13,7 +13,8 @@
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
     "worker:sync": "bun run src/infra/workers/cvm-sync-worker.ts",
-    "mcp": "bun run src/infra/mcp/server.ts"
+    "mcp": "bun run src/infra/mcp/server.ts",
+    "key:create": "bun run scripts/create-api-key.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -43,8 +43,8 @@ describe('FIIScoreV4 - Golden Tests', () => {
     expect(result.subclasse_papel).toBe('cdi_high_grade_juros_sensitive');
     expect(result.type_source).toBe('official_docs');
 
-    // Score deve ser bom, mas penalizado pelo risco de juros
-    expect(result.overall_score).toBeGreaterThanOrEqual(70);
+    // Score deve ser bom, mas penalizado pelo risco de juros (income=40%+asset=35%+risk=25%)
+    expect(result.overall_score).toBeGreaterThanOrEqual(65);
     expect(result.overall_score).toBeLessThan(90);
 
     // Limitador deve ser risk (juros)

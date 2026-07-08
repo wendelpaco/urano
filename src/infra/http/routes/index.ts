@@ -4,9 +4,9 @@ import { healthcheckController } from '../controllers/healthcheck.controller.ts'
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
 import { listCompaniesController, listSectorsController, getCompanyByTickerController } from '../controllers/companies.controller.ts';
 import { getLatestFundamentalsController, getFundamentalsHistoryController } from '../controllers/fundamentals.controller.ts';
-import { getStockQuoteController, getBatchQuotesController, getStockHistoryController } from '../controllers/stocks.controller.ts';
+import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController } from '../controllers/stocks.controller.ts';
 import { getDividendsController } from '../controllers/dividends.controller.ts';
-import { listFiisController, getFiiByTickerController, getFiiHistoryController } from '../controllers/fiis.controller.ts';
+import { listFiisController, getFiiByTickerController, getFiiHistoryController, fiiScreenerController, getFiiOperationalController } from '../controllers/fiis.controller.ts';
 import { listMacroController, getMacroSeriesController } from '../controllers/macro.controller.ts';
 import { createApiKeyController, listApiKeysController, deleteApiKeyController } from '../controllers/auth.controller.ts';
 import { screenerController } from '../controllers/screener.controller.ts';
@@ -58,6 +58,7 @@ export async function routesPlugin(
   // Stocks
   app.get('/stocks/:ticker/quote', getStockQuoteController);
   app.get('/stocks/:ticker/history', getStockHistoryController);
+  app.get('/stocks/:ticker/stats', getStockStatsController);
   app.get('/stocks/quotes', getBatchQuotesController);
 
   // Dividends
@@ -65,8 +66,11 @@ export async function routesPlugin(
 
   // FIIs (Fundos Imobiliários)
   app.get('/fiis', listFiisController);
+  // IMPORTANTE: /fiis/screener antes de /fiis/:ticker para não capturar "screener" como ticker
+  app.get('/fiis/screener', fiiScreenerController);
   app.get('/fiis/:ticker', getFiiByTickerController);
   app.get('/fiis/:ticker/history', getFiiHistoryController);
+  app.get('/fiis/:ticker/operational', getFiiOperationalController);
 
   // Macro
   app.get('/macro', listMacroController);
