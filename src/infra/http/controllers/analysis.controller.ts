@@ -25,6 +25,7 @@ import {
 import { AllocationEngine } from '../../../core/services/allocation-engine.ts';
 import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
+import { SCORE_VALIDATION } from '../../../core/data/score-validation.data.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -809,4 +810,13 @@ export async function getAllocationController(
   const result = await engine.buildAllocation(parsed.data);
 
   reply.send(result);
+}
+
+// ─── GET /v1/analysis/validation ─────────────────────────────────────────────
+
+export async function getValidationController(
+  _request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  reply.send(SCORE_VALIDATION);
 }

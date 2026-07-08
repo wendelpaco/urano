@@ -14,6 +14,9 @@
  *   get_corporate_events — Desdobramentos, grupamentos, bonificações
  *   screen_fiis          — Screener de FIIs por P/VP, DY, classificação
  *   get_fii_operational  — Dados operacionais: vacância, imóveis, inquilinos
+ *   suggest_contribution — Consultor de aporte: o que comprar com o valor do mês
+ *   explain_score        — Explica o score em linguagem simples + validação (backtest)
+ *   get_data_health      — Saúde da base: cobertura, frescor, jobs
  *
  * Uso:
  *   Claude Desktop: adicionar ao claude_desktop_config.json
@@ -271,6 +274,63 @@ server.tool(
     return {
       content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
     };
+  },
+);
+
+server.tool(
+  'suggest_contribution',
+  'CONSULTOR DE APORTE: dado o valor disponível (ex: R$ 2.000 do mês), a carteira atual e o perfil de risco, retorna exatamente o que comprar — ticker, quantidade, custo e justificativa por ativo — além do que foi deixado de fora e por quê (concentração, score baixo, setor excluído). Use esta tool quando o usuário perguntar "onde devo investir/aportar".',
+  {
+    amount: z.number().positive().describe('Valor disponível para aportar em reais'),
+    profile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado').describe('Perfil de risco'),
+    positions: z
+      .array(z.object({ ticker: z.string(), quantity: z.number().positive() }))
+      .optional()
+      .describe('Posições atuais da carteira (ex: [{"ticker":"PETR4","quantity":100}])'),
+    onlyTypes: z.array(z.enum(['stock', 'fii'])).optional().describe('Restringir a ações (stock) ou FIIs (fii)'),
+    excludeSectors: z.array(z.string()).optional().describe('Setores a evitar (ex: ["financeiro"])'),
+  },
+  async (params) => {
+    const data = await apiPost('/analysis/contribution', params);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+const PILLAR_GLOSSARY = {
+  valuation: 'Preço vs o que a empresa entrega (P/L, P/VP, EV/EBIT). Alto = ação barata para o lucro que gera.',
+  profitability: 'Rentabilidade: ROE e margens comparados à média do setor.',
+  growth: 'Crescimento de receita e lucro ao longo dos anos + consistência (anos seguidos de lucro).',
+  dividends: 'Dividend yield dos últimos 12 meses.',
+  quality: 'Solidez: endividamento, geração de caixa real (FCO vs lucro) e setor defensivo ou cíclico.',
+  momentum: 'Comportamento recente do preço: queda exagerada pode ser oportunidade, euforia é risco.',
+} as const;
+
+server.tool(
+  'explain_score',
+  'Explica o score de um ativo em linguagem simples: o que cada pilar mede, onde o ativo vai bem/mal, e o histórico de validação do score (backtest). Use quando o usuário perguntar "por que esse score?" ou "posso confiar nessa nota?".',
+  {
+    ticker: z.string().describe('Ticker do ativo (ex: PETR4, HGLG11)'),
+    assetType: z.enum(['stock', 'fii']).default('stock').describe('Tipo do ativo'),
+  },
+  async ({ ticker, assetType }) => {
+    const path = assetType === 'fii' ? `/analysis/fiis/${ticker.toUpperCase()}` : `/analysis/stocks/${ticker.toUpperCase()}`;
+    const [analysis, validation] = [await api(path), await api('/analysis/validation')];
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ analysis, glossario_dos_pilares: PILLAR_GLOSSARY, validacao_do_score: validation }, null, 2),
+      }],
+    };
+  },
+);
+
+server.tool(
+  'get_data_health',
+  'Saúde da base de dados do Urano: cobertura de fundamentals, frescor dos dados, jobs de sincronização. Consulte antes de recomendações importantes — warnings indicam scores potencialmente defasados.',
+  {},
+  async () => {
+    const data = await api('/health/data');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   },
 );
 
