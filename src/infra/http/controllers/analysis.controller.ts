@@ -15,6 +15,7 @@ import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { statusInvestScraper } from '../../services/statusinvest-scraper.ts';
 import { fiisScraper } from '../../services/fiis-scraper.ts';
 import { fiiOperationalService } from '../../services/fii-operational.service.ts';
+import { batchWithConcurrency } from '../../../shared/retry.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
 import {
@@ -640,6 +641,213 @@ export async function getRankingController(
 }
 
 // ─── POST /v1/analysis/allocate ──────────────────────────────────────────────
+
+// ─── Compare ─────────────────────────────────────────────────────────────────
+
+const compareSchema = z.object({
+  tickers: z.array(z.string().min(4).max(10).transform((t) => t.toUpperCase())).min(2).max(10),
+  type: z.enum(['stock', 'fii']).default('stock'),
+});
+
+interface CompareResultItem {
+  ticker: string;
+  name: string;
+  price: number | null;
+  score: number | null;
+  peRatio?: number | null;
+  pvp?: number | null;
+  roe?: number | null;
+  dy?: number | null;
+  netMargin?: number | null;
+  debtToEquity?: number | null;
+  diagnosis?: string;
+  recommendation?: string;
+  highlights?: string[];
+  warnings?: string[];
+  error?: string;
+}
+
+/**
+ * POST /v1/analysis/compare
+ *
+ * Comparação lado a lado de até 10 ações ou FIIs.
+ * Retorna métricas alinhadas para facilitar análise comparativa.
+ * Cache Redis 5 min.
+ */
+export async function compareController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = compareSchema.safeParse(request.body);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Payload inválido.');
+
+  const { tickers, type } = parsed.data;
+  const cacheKey = `compare:${type}:${tickers.sort().join(',')}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) { reply.send(JSON.parse(cached)); return; }
+  } catch { /* Redis offline */ }
+
+  const results: CompareResultItem[] = await batchWithConcurrency(tickers, async (ticker) => {
+    try {
+      if (type === 'fii') {
+        const cacheKeyFii = `analysis:fii:${ticker}`;
+        let data: Record<string, unknown> | null = null;
+        try {
+          const cached = await redis.get(cacheKeyFii);
+          if (cached) data = JSON.parse(cached);
+        } catch { /* ok */ }
+
+        if (!data) {
+          // Busca via endpoint interno (simplificado)
+          const [company] = await db
+            .select({ name: companies.name, sector: companies.sector })
+            .from(companies)
+            .where(eq(companies.ticker, ticker));
+
+          if (!company) return { ticker, name: ticker, price: null, score: null, error: 'FII não encontrado' };
+
+          let price = 0;
+          try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { /* ok */ }
+
+          let dy = 0;
+          let dividends: Array<{ date: string; value: number; type: string }> = [];
+          try {
+            const proventos = await dividendsProvider.fetchDividends(ticker);
+            if (proventos && price > 0) {
+              const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+              const c = cutoff.toISOString().slice(0, 10);
+              dividends = proventos.filter((e) => e.date >= c);
+              const sum12m = dividends.reduce((s, e) => s + e.value, 0);
+              if (sum12m > 0) dy = +(sum12m / price * 100).toFixed(2);
+            }
+          } catch { /* ok */ }
+
+          let pvp: number | null = null;
+          try {
+            const scraped = await fiisScraper.fetchFII(ticker);
+            if (scraped.pvp > 0) pvp = scraped.pvp;
+          } catch { /* ok */ }
+
+          const score = FIIScoreCalculatorV4.calculate({ ticker, price, dy, pvp, liquidity: null, dividendsHistory: dividends });
+
+          return {
+            ticker,
+            name: String(company.name),
+            price: price || null,
+            score: score.overall_score,
+            pvp,
+            dy: dy || null,
+            diagnosis: score.overall_rating,
+            recommendation: score.recommendation.action,
+            highlights: [score.explanation_short],
+          };
+        }
+
+        return {
+          ticker: data.ticker as string,
+          name: data.name as string,
+          price: data.price as number | null,
+          score: data.score as number | null,
+          pvp: data.pvp as number | null,
+          dy: data.dividendYield as number | null,
+          diagnosis: (data as Record<string, unknown>).recommendation as string,
+        };
+      }
+
+      // Stock
+      const cacheKeyStock = `analysis:stock:${ticker}`;
+      try {
+        const cached = await redis.get(cacheKeyStock);
+        if (cached) {
+          const d = JSON.parse(cached) as Record<string, unknown>;
+          const ind = d.indicators as Record<string, unknown> | undefined;
+          return {
+            ticker: d.ticker as string,
+            name: d.companyName as string,
+            price: d.price as number | null,
+            score: d.score as number | null,
+            peRatio: ind?.peRatio as number | null,
+            pvp: ind?.pbRatio as number | null,
+            roe: ind?.roe as number | null,
+            dy: ind?.dividendYield as number | null,
+            netMargin: ind?.netMargin as number | null,
+            debtToEquity: ind?.debtToEquity as number | null,
+            diagnosis: d.diagnosis as string,
+            highlights: d.reasons as string[],
+            warnings: d.alerts as string[],
+          };
+        }
+      } catch { /* ok */ }
+
+      // Fallback: busca simplificada
+      const rows = await db
+        .select({
+          ticker: companies.ticker,
+          name: companies.name,
+          sector: companies.sector,
+          cnpj: companyFundamentals.companyCnpj,
+          referenceDate: companyFundamentals.referenceDate,
+          netIncomeParent: companyFundamentals.netIncomeParent,
+          equity: companyFundamentals.equity,
+          revenue: companyFundamentals.revenue,
+          totalLiabilities: companyFundamentals.totalLiabilities,
+        })
+        .from(companyFundamentals)
+        .innerJoin(companies, eq(companyFundamentals.companyCnpj, companies.cnpj))
+        .where(eq(companies.ticker, ticker))
+        .orderBy(desc(companyFundamentals.referenceDate))
+        .limit(1);
+
+      if (rows.length === 0) return { ticker, name: ticker, price: null, score: null, error: 'Sem fundamentos' };
+
+      const f = rows[0]!;
+      let price = 0;
+      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { /* ok */ }
+
+      const indicators = calcAllIndicators(f as unknown as Record<string, unknown>, price);
+      const scoreResult = StockScoreCalculator.calculate(
+        indicators, f.sector, String(f.name),
+      );
+
+      return {
+        ticker,
+        name: String(f.name),
+        price: price || null,
+        score: scoreResult.score,
+        peRatio: indicators.peRatio,
+        pvp: indicators.pbRatio,
+        roe: indicators.roe,
+        dy: indicators.dividendYield,
+        netMargin: indicators.netMargin,
+        debtToEquity: indicators.debtToEquity,
+        diagnosis: scoreResult.diagnosis,
+        highlights: scoreResult.reasons,
+        warnings: scoreResult.alerts,
+      };
+    } catch (err) {
+      return { ticker, name: ticker, price: null, score: null, error: String(err) };
+    }
+  }, 5);
+
+  // Adiciona análise de dispersão
+  const scores = results.filter((r) => r.score !== null).map((r) => r.score!);
+  const avgScore = scores.length > 0 ? +(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
+  const bestPick = results.filter((r) => r.score !== null).sort((a, b) => b.score! - a.score!)[0]?.ticker ?? null;
+
+  const response = {
+    type,
+    count: results.length,
+    bestPick,
+    avgScore,
+    data: results,
+  };
+
+  try { await redis.setex(cacheKey, 300, JSON.stringify(response)); } catch { /* ok */ }
+
+  reply.send(response);
+}
 
 const allocateSchema = z.object({
   totalAmount: z.number().positive().default(10000),

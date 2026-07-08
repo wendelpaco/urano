@@ -1,25 +1,17 @@
 /**
  * Advanced Screener Controller — Filtro de ações por múltiplos indicadores.
  *
- * Suporta filtros combinados:
- *   - minScore, maxScore (score do modelo)
- *   - minPE, maxPE (P/L)
- *   - minROE, maxROE
- *   - minDY (dividend yield mínimo)
- *   - maxDE (dívida/equity máximo)
- *   - sector (setor)
- *   - year (ano fiscal)
- *   - sortBy (score, peRatio, roe, dy, ticker)
- *   - limit, order
+ * Suporta filtros de range (min/max) em 8 dimensões:
+ *   Score, P/L, P/VP, EV/EBIT, ROE, ROA, Margem Líquida, Margem Bruta,
+ *   LPA, DY, Dívida/Equity, Setor, Ano.
  *
- * Performance: cache Redis 5 min + batch com concorrência controlada.
+ * Performance: cache Redis 5 min + batch com concorrência controlada (5 workers).
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { sql, eq, desc } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
-import { companies, companyFundamentals } from '../../database/schema.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
@@ -35,24 +27,43 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
   });
 }
 
+const numberParam = () =>
+  z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().optional());
+
 const screenerSchema = z.object({
   // Score
   minScore: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().min(0).max(100).optional()),
   maxScore: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().min(0).max(100).optional()),
 
   // Valuation
-  minPE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
-  maxPE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+  minPE: numberParam(),
+  maxPE: numberParam(),
+  minPVP: numberParam(),
+  maxPVP: numberParam(),
+  minEVEBIT: numberParam(),
+  maxEVEBIT: numberParam(),
 
   // Rentabilidade
-  minROE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().optional()),
-  maxROE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().optional()),
+  minROE: numberParam(),
+  maxROE: numberParam(),
+  minROA: numberParam(),
+  maxROA: numberParam(),
+
+  // Margens
+  minNetMargin: numberParam(),
+  maxNetMargin: numberParam(),
+  minGrossMargin: numberParam(),
+  maxGrossMargin: numberParam(),
+
+  // Per-share
+  minLPA: numberParam(),
+  maxLPA: numberParam(),
 
   // Dividendos
-  minDY: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+  minDY: numberParam(),
 
   // Endividamento
-  maxDE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+  maxDE: numberParam(),
 
   // Setor / Ano
   sector: z.string().optional(),
@@ -60,7 +71,7 @@ const screenerSchema = z.object({
 
   // Paginação / Ordenação
   limit: z.string().optional().default('20').transform(Number).pipe(z.number().int().min(1).max(100)),
-  sortBy: z.enum(['score', 'peRatio', 'roe', 'dy', 'ticker']).default('score'),
+  sortBy: z.enum(['score', 'peRatio', 'pvp', 'roe', 'roa', 'dy', 'netMargin', 'ticker']).default('score'),
   order: z.enum(['asc', 'desc']).default('desc'),
 });
 
@@ -72,7 +83,7 @@ export async function screenerController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
   const filters = parsed.data;
 
-  // Cache key (exclui filtros vazios)
+  // Cache key
   const activeFilters = Object.fromEntries(
     Object.entries(filters).filter(([, v]) => v !== undefined),
   );
@@ -80,10 +91,7 @@ export async function screenerController(
 
   try {
     const cached = await redis.get(cacheKey);
-    if (cached) {
-      reply.send(JSON.parse(cached));
-      return;
-    }
+    if (cached) { reply.send(JSON.parse(cached)); return; }
   } catch { /* Redis offline */ }
 
   // Busca fundamentals base
@@ -109,12 +117,8 @@ export async function screenerController(
     WHERE c.ticker NOT LIKE '%11' AND LENGTH(c.ticker) >= 5
   `;
 
-  if (filters.sector) {
-    query = sql`${query} AND c.sector ILIKE ${`%${filters.sector}%`}`;
-  }
-  if (filters.year) {
-    query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
-  }
+  if (filters.sector) query = sql`${query} AND c.sector ILIKE ${`%${filters.sector}%`}`;
+  if (filters.year) query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
 
   query = sql`${query} ORDER BY c.ticker, cf.reference_date DESC LIMIT 100`;
 
@@ -124,66 +128,81 @@ export async function screenerController(
   // Enriquece com scores usando batch (concorrência controlada)
   const results: Array<Record<string, unknown>> = [];
 
-  const enriched = await batchWithConcurrency(
-    rawData,
-    async (r) => {
-      const ticker = String(r.ticker);
+  const enriched = await batchWithConcurrency(rawData, async (r) => {
+    const ticker = String(r.ticker);
 
-      let price = 0;
-      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
-      if (price <= 0) return null;
+    let price = 0;
+    try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
+    if (price <= 0) return null;
 
-      const indicators = calcAllIndicators(r, price);
+    const indicators = calcAllIndicators(r, price);
 
-      // DY
-      try {
-        const proventos = await dividendsProvider.fetchDividends(ticker);
-        if (proventos && price > 0) {
-          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-          const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-            .reduce((s, e) => s + e.value, 0);
-          if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
-        }
-      } catch { /* ok */ }
+    // DY
+    try {
+      const proventos = await dividendsProvider.fetchDividends(ticker);
+      if (proventos && price > 0) {
+        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+        const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
+          .reduce((s, e) => s + e.value, 0);
+        if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+      }
+    } catch { /* ok */ }
 
-      const scoreResult = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
+    const scoreResult = StockScoreCalculator.calculate(
+      indicators, (r.sector as string) || null, String(r.name),
+    );
 
-      return {
-        ticker,
-        name: r.name,
-        sector: r.sector ?? null,
-        price: Math.round(price * 100) / 100,
-        score: scoreResult.score,
-        peRatio: indicators.peRatio,
-        roe: indicators.roe,
-        dividendYield: indicators.dividendYield,
-        debtToEquity: indicators.debtToEquity,
-        netMargin: indicators.netMargin,
-        diagnosis: scoreResult.diagnosis,
-      };
-    },
-    5,
-  );
+    return {
+      ticker,
+      name: r.name,
+      sector: r.sector ?? null,
+      price: Math.round(price * 100) / 100,
+      score: scoreResult.score,
+      peRatio: indicators.peRatio,
+      pvp: indicators.pbRatio,
+      evEbit: indicators.evEbit,
+      roe: indicators.roe,
+      roa: indicators.roa,
+      netMargin: indicators.netMargin,
+      grossMargin: indicators.grossMargin,
+      lpa: indicators.eps,
+      dividendYield: indicators.dividendYield,
+      debtToEquity: indicators.debtToEquity,
+      diagnosis: scoreResult.diagnosis,
+    };
+  }, 5);
 
   // Filtra resultados
   for (const r of enriched) {
     if (!r) continue;
 
-    if (filters.minScore !== undefined && (r.score as number) < filters.minScore) continue;
-    if (filters.maxScore !== undefined && (r.score as number) > filters.maxScore) continue;
-    if (filters.minPE !== undefined && (r.peRatio === null || (r.peRatio as number) < filters.minPE)) continue;
-    if (filters.maxPE !== undefined && (r.peRatio === null || (r.peRatio as number) > filters.maxPE)) continue;
-    if (filters.minROE !== undefined && (r.roe === null || (r.roe as number) < filters.minROE)) continue;
-    if (filters.maxROE !== undefined && (r.roe === null || (r.roe as number) > filters.maxROE)) continue;
-    if (filters.minDY !== undefined && (r.dividendYield === null || (r.dividendYield as number) < filters.minDY)) continue;
-    if (filters.maxDE !== undefined && (r.debtToEquity === null || (r.debtToEquity as number) > filters.maxDE)) continue;
+    const num = (v: unknown): number | null => (v === null || v === undefined ? null : v as number);
+    const pass = (min: number | undefined, max: number | undefined, val: number | null): boolean => {
+      if (val === null) return false;
+      if (min !== undefined && val < min) return false;
+      if (max !== undefined && val > max) return false;
+      return true;
+    };
+
+    if (!pass(filters.minScore, filters.maxScore, r.score as number)) continue;
+    if (!pass(filters.minPE, filters.maxPE, num(r.peRatio))) continue;
+    if (!pass(filters.minPVP, filters.maxPVP, num(r.pvp))) continue;
+    if (!pass(filters.minEVEBIT, filters.maxEVEBIT, num(r.evEbit))) continue;
+    if (!pass(filters.minROE, filters.maxROE, num(r.roe))) continue;
+    if (!pass(filters.minROA, filters.maxROA, num(r.roa))) continue;
+    if (!pass(filters.minNetMargin, filters.maxNetMargin, num(r.netMargin))) continue;
+    if (!pass(filters.minGrossMargin, filters.maxGrossMargin, num(r.grossMargin))) continue;
+    if (!pass(filters.minLPA, filters.maxLPA, num(r.lpa))) continue;
+    if (filters.minDY !== undefined && (num(r.dividendYield) === null || (r.dividendYield as number) < filters.minDY)) continue;
+    if (filters.maxDE !== undefined && (num(r.debtToEquity) !== null && (r.debtToEquity as number) > filters.maxDE)) continue;
 
     results.push(r);
   }
 
   // Ordena
   const sortMap: Record<string, string> = {
-    score: 'score', peRatio: 'peRatio', roe: 'roe', dy: 'dividendYield', ticker: 'ticker',
+    score: 'score', peRatio: 'peRatio', pvp: 'pvp', roe: 'roe', roa: 'roa',
+    dy: 'dividendYield', netMargin: 'netMargin', ticker: 'ticker',
   };
   const sortKey = sortMap[filters.sortBy] || 'score';
   results.sort((a, b) => {
@@ -199,7 +218,13 @@ export async function screenerController(
       sector: filters.sector ?? null,
       minScore: filters.minScore ?? null, maxScore: filters.maxScore ?? null,
       minPE: filters.minPE ?? null, maxPE: filters.maxPE ?? null,
+      minPVP: filters.minPVP ?? null, maxPVP: filters.maxPVP ?? null,
+      minEVEBIT: filters.minEVEBIT ?? null, maxEVEBIT: filters.maxEVEBIT ?? null,
       minROE: filters.minROE ?? null, maxROE: filters.maxROE ?? null,
+      minROA: filters.minROA ?? null, maxROA: filters.maxROA ?? null,
+      minNetMargin: filters.minNetMargin ?? null, maxNetMargin: filters.maxNetMargin ?? null,
+      minGrossMargin: filters.minGrossMargin ?? null, maxGrossMargin: filters.maxGrossMargin ?? null,
+      minLPA: filters.minLPA ?? null, maxLPA: filters.maxLPA ?? null,
       minDY: filters.minDY ?? null, maxDE: filters.maxDE ?? null,
       year: filters.year ?? null,
     },
@@ -207,7 +232,6 @@ export async function screenerController(
     data: sliced,
   };
 
-  // Cache 5 min
   try { await redis.setex(cacheKey, 300, JSON.stringify(response)); } catch { /* ok */ }
 
   reply.send(response);
