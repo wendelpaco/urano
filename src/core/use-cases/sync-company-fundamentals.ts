@@ -94,11 +94,99 @@ export interface SyncCompanyFundamentalsOutput {
   ttm?: TTMNetIncome;
 }
 
+export interface SyncBatchOutput {
+  ticker: string;
+  cnpj: string;
+  year: number;
+  recordsImported: number;
+  companyName: string;
+  ttmNetIncome?: number;
+  error?: string;
+}
+
 export class SyncCompanyFundamentalsUseCase {
   constructor(
     private readonly companyRepository: ICompanyRepository,
     private readonly cvmService: CvmStorageService = new CvmStorageService(),
   ) {}
+
+  /**
+   * Batch: baixa ZIP 1×, parseia 1×, persiste todos os tickers.
+   * Pico de memória ~50 MB (vs ~300 MB do modo ticker-a-ticker).
+   */
+  async executeBatch(
+    tickers: string[],
+    year: number,
+  ): Promise<SyncBatchOutput[]> {
+    // 1. Resolve CNPJs (filtra os que não têm mapeamento)
+    const tickerCnpjMap = new Map<string, string>();
+    const skipped: SyncBatchOutput[] = [];
+
+    for (const t of tickers) {
+      try {
+        const cnpj = this.resolveCnpj(t);
+        tickerCnpjMap.set(t, cnpj);
+      } catch (err) {
+        skipped.push({
+          ticker: t, cnpj: '', year, recordsImported: 0, companyName: '',
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    if (tickerCnpjMap.size === 0) return skipped;
+
+    // 2. Chama CVM UMA vez para todos os CNPJs
+    const cnpjs = [...new Set(tickerCnpjMap.values())];
+    console.log(
+      `[SyncCompanyFundamentals] Batch: ${tickers.length} tickers → ${cnpjs.length} CNPJs únicos, ano ${year}`,
+    );
+
+    const dataByCnpj = await this.cvmService.fetchAndParseCvmDataBatch(year, cnpjs);
+
+    // 3. Para cada ticker, persiste os fundamentos do seu CNPJ
+    const results: SyncBatchOutput[] = [];
+
+    for (const [ticker, cnpj] of tickerCnpjMap) {
+      try {
+        const fundamentals = dataByCnpj.get(cnpj.replace(/[.\/-]/g, '').trim()) ?? [];
+
+        if (fundamentals.length === 0) {
+          results.push({ ticker, cnpj, year, recordsImported: 0, companyName: '' });
+          continue;
+        }
+
+        // Enriquece com ticker
+        for (const f of fundamentals) f.ticker = ticker;
+
+        // Persiste
+        for (const f of fundamentals) {
+          await this.companyRepository.upsertFundamentals(f);
+        }
+
+        // TTM
+        let ttmNetIncome: number | undefined;
+        try {
+          const ttm = await this.calculateTTM(cnpj);
+          if (ttm) ttmNetIncome = ttm.ttmNetIncome;
+        } catch { /* ok */ }
+
+        results.push({
+          ticker, cnpj, year,
+          recordsImported: fundamentals.length,
+          companyName: fundamentals[0]!.companyName,
+          ttmNetIncome,
+        });
+      } catch (err) {
+        results.push({
+          ticker, cnpj, year, recordsImported: 0, companyName: '',
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    return [...results, ...skipped];
+  }
 
   /**
    * Orquestra a sincronização de dados fundamentalistas:
