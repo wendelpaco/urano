@@ -164,8 +164,8 @@ async function main(): Promise<void> {
     return va > 0 && vb > 0 ? +(cov / Math.sqrt(va * vb)).toFixed(3) : 0;
   };
   for (const p of ['score', 'valuation', 'profitability', 'growth', 'dividends', 'quality', 'momentum']) {
-    const vals = wr.map(r => (r as Record<string, number>)[p]);
-    console.log(`  ${p.padEnd(15)}: ${corr(vals, returns)}`);
+    const pairs = wr.map(r => ({ v: (r as Record<string, number>)[p] ?? 0, r: r.return12m ?? 0 }));
+    console.log(`  ${p.padEnd(15)}: ${corr(pairs.map(x => x.v), pairs.map(x => x.r))}`);
   }
 
   // ═══ BUCKETS ═══
@@ -216,9 +216,8 @@ async function main(): Promise<void> {
   console.log(`  Scores >= 60: ${highScore.length} (${((highScore.length / wr.length) * 100).toFixed(1)}%)`);
   console.log(`  Scores < 40: ${lowScore.length} (${((lowScore.length / wr.length) * 100).toFixed(1)}%)`);
 
-  // Pilar com maior dispersão
   for (const p of ['valuation', 'profitability', 'growth', 'dividends', 'quality', 'momentum']) {
-    const vals = wr.map(r => (r as Record<string, number>)[p]);
+    const vals = wr.map(r => (r as Record<string, number>)[p] ?? 0);
     console.log(`  ${p.padEnd(15)}: média ${(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)}  min ${Math.min(...vals)}  max ${Math.max(...vals)}`);
   }
 
