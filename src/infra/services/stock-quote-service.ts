@@ -1,5 +1,6 @@
 import { getOrSet } from './redis.ts';
 import { withRetry } from '../../shared/retry.ts';
+import { StatusInvestScraper } from './statusinvest-scraper.ts';
 
 /**
  * Dados de cotação em tempo real de um ativo da B3.
@@ -85,6 +86,7 @@ interface YahooFinanceResponse {
 export class StockQuoteService {
   private readonly baseUrl =
     'https://query1.finance.yahoo.com/v8/finance/chart';
+  private readonly statusInvest = new StatusInvestScraper();
 
   /**
    * Busca cotação atual de um ticker da B3.
@@ -98,7 +100,10 @@ export class StockQuoteService {
 
     return getOrSet(cacheKey, 30, () =>
       withRetry(() => this.fetchQuote(symbol, ticker), {
-        maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+        maxRetries: 0, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+      }).catch((yahooErr) => {
+        console.warn(`[quote] Yahoo falhou para ${ticker} (${yahooErr.message}), tentando StatusInvest...`);
+        return this.fetchFromStatusInvest(ticker);
       }));
   }
 
@@ -259,6 +264,48 @@ export class StockQuoteService {
       symbol,
       range,
       points,
+    };
+  }
+
+  /**
+   * Fallback: busca preço via StatusInvest quando Yahoo falha.
+   * StatusInvest é mais estável para ativos brasileiros.
+   */
+  private async fetchFromStatusInvest(ticker: string): Promise<StockQuote> {
+    const isFII = ticker.toUpperCase().endsWith('11');
+    const scraper = this.statusInvest;
+
+    let result;
+    try {
+      result = isFII
+        ? await scraper.fetchFII(ticker)
+        : await scraper.fetchStock(ticker);
+    } catch (scraperErr: any) {
+      throw new Error(
+        `StatusInvest também falhou para ${ticker}: ${scraperErr.message}`,
+      );
+    }
+
+    if (!result || result.price <= 0) {
+      throw new Error(`StatusInvest: preço não disponível para ${ticker}`);
+    }
+
+    console.log(`[quote] ✅ StatusInvest resgatou ${ticker} a R$ ${result.price}`);
+
+    return {
+      ticker: ticker.toUpperCase(),
+      symbol: `${ticker.toUpperCase()}.SA`,
+      price: result.price,
+      currency: 'BRL',
+      change: 0,
+      changePercent: 0,
+      previousClose: result.price,
+      open: result.price,
+      dayHigh: result.price,
+      dayLow: result.price,
+      volume: result.avgDailyLiquidity || 0,
+      marketCap: result.marketCap ?? null,
+      updatedAt: new Date().toISOString(),
     };
   }
 }

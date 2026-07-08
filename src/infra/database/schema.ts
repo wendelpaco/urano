@@ -4,6 +4,7 @@ import {
   char,
   varchar,
   smallint,
+  integer,
   date,
   uuid,
   decimal,
@@ -211,6 +212,76 @@ export const jobRuns = pgTable(
   (table) => [
     index('idx_job_runs_job_id').on(table.jobId),
     index('idx_job_runs_started').on(table.startedAt.desc()),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// daily_snapshots — Snapshot diário de indicadores para treinamento de ML
+// ═══════════════════════════════════════════════════════════════════════════
+export const dailySnapshots = pgTable(
+  'daily_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    assetType: varchar('asset_type', { length: 10 }).notNull().default('stock'),
+    snapshotDate: date('snapshot_date').notNull().defaultNow(),
+
+    // ── Mercado ──
+    price: decimal('price', { precision: 12, scale: 2 }),
+    dy12m: decimal('dy_12m', { precision: 6, scale: 2 }),
+    pl: decimal('pl', { precision: 8, scale: 2 }),
+    pvp: decimal('pvp', { precision: 8, scale: 2 }),
+    evEbitda: decimal('ev_ebitda', { precision: 8, scale: 2 }),
+    evEbit: decimal('ev_ebit', { precision: 8, scale: 2 }),
+    vpa: decimal('vpa', { precision: 10, scale: 2 }),
+    lpa: decimal('lpa', { precision: 10, scale: 2 }),
+    marketCap: decimal('market_cap', { precision: 18, scale: 2 }),
+    avgLiquidity: decimal('avg_liquidity', { precision: 18, scale: 2 }),
+    min52w: decimal('min_52w', { precision: 10, scale: 2 }),
+    max52w: decimal('max_52w', { precision: 10, scale: 2 }),
+    valorization12m: decimal('valorization_12m', { precision: 6, scale: 2 }),
+    volatility: decimal('volatility', { precision: 6, scale: 2 }),
+
+    // ── Rentabilidade ──
+    roe: decimal('roe', { precision: 6, scale: 2 }),
+    roa: decimal('roa', { precision: 6, scale: 2 }),
+    roic: decimal('roic', { precision: 6, scale: 2 }),
+    grossMargin: decimal('gross_margin', { precision: 6, scale: 2 }),
+    ebitdaMargin: decimal('ebitda_margin', { precision: 6, scale: 2 }),
+    ebitMargin: decimal('ebit_margin', { precision: 6, scale: 2 }),
+    netMargin: decimal('net_margin', { precision: 6, scale: 2 }),
+
+    // ── Crescimento ──
+    cagrRevenue5y: decimal('cagr_revenue_5y', { precision: 6, scale: 2 }),
+    cagrEarnings5y: decimal('cagr_earnings_5y', { precision: 6, scale: 2 }),
+    dyCagr3y: decimal('dy_cagr_3y', { precision: 6, scale: 2 }),
+    valueCagr3y: decimal('value_cagr_3y', { precision: 6, scale: 2 }),
+
+    // ── Endividamento / Saúde Financeira ──
+    netDebtToEquity: decimal('net_debt_to_equity', { precision: 6, scale: 2 }),
+    netDebtToEbitda: decimal('net_debt_to_ebitda', { precision: 6, scale: 2 }),
+    currentRatio: decimal('current_ratio', { precision: 6, scale: 2 }),
+    assetTurnover: decimal('asset_turnover', { precision: 6, scale: 2 }),
+
+    // ── FII específicos ──
+    bookValue: decimal('book_value', { precision: 10, scale: 2 }),
+    avgMonthlyIncome: decimal('avg_monthly_income', { precision: 10, scale: 4 }),
+    numShareholders: integer('num_shareholders'),
+    cashValue: decimal('cash_value', { precision: 14, scale: 2 }),
+    ifixParticipation: decimal('ifix_participation', { precision: 6, scale: 2 }),
+
+    // ── Score calculado ──
+    ourScore: decimal('our_score', { precision: 5, scale: 2 }),
+
+    // ── Metadados ──
+    source: varchar('source', { length: 20 }).default('statusinvest'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_snapshot_ticker_date').on(table.ticker, table.snapshotDate),
+    index('idx_snapshot_date').on(table.snapshotDate.desc()),
+    index('idx_snapshot_ticker').on(table.ticker),
+    index('idx_snapshot_type_date').on(table.assetType, table.snapshotDate.desc()),
   ],
 );
 

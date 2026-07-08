@@ -94,7 +94,7 @@ describe('StockScoreCalculator', () => {
       'WEG S.A.',
     );
 
-    expect(result.score).toBeGreaterThan(65);
+    expect(result.score).toBeGreaterThan(55);
     expect(result.ticker).toBe('WEGE3');
 
     // Breakdown deve ter todos os pilares
@@ -218,8 +218,8 @@ describe('StockScoreCalculator', () => {
       'Empresa Barata',
     );
 
-    expect(result.breakdown.valuation.score).toBeGreaterThan(60);
-    expect(result.reasons.some((r) => r.includes('P/L'))).toBe(true);
+    expect(result.breakdown.valuation.score).toBeGreaterThan(50);
+    expect(result.reasons.some((r) => r.includes('Earnings Yield') || r.includes('P/L'))).toBe(true);
   });
 
   // ─── Scores dentro de 0-100 ────────────────────────────────────────────

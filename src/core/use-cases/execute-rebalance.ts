@@ -8,6 +8,7 @@ import { stockQuoteService } from '../../infra/services/stock-quote-service.ts';
 export interface ExecuteRebalanceInput {
   walletId: string;
   availableAmount: number;
+  currentPositions?: Array<{ ticker: string; quantity: number }>;
 }
 
 export class ExecuteRebalanceUseCase {
@@ -67,7 +68,7 @@ export class ExecuteRebalanceUseCase {
 
       // Onda 3b: posição atual do usuário (se informada)
       const position = input.currentPositions?.find(
-        (p) => p.ticker.toUpperCase() === asset.ticker.toUpperCase(),
+        (p: { ticker: string; quantity: number }) => p.ticker.toUpperCase() === asset.ticker.toUpperCase(),
       );
       const currentQty = position?.quantity ?? 0;
 

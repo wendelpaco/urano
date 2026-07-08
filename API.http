@@ -1,449 +1,275 @@
 ###############################################################################
-# Urano FinBot API — Test Suite
+# Urano API — Test Suite
 ###############################################################################
 # Execute no VS Code com a extensão "REST Client" (humao.rest-client)
-# Cada bloco ### é uma requisição separada. Clique em "Send Request".
+#
+# ⚠️  A maioria das rotas exige autenticação via header x-api-key.
+# Crie uma chave na seção 1 e cole na variável @apiKey abaixo.
 ###############################################################################
 
-@baseUrl = http://localhost:3333/v1
+@baseUrl = http://localhost:3000/v1
+@apiKey  = ur_9a0250d6317a_75d6d35ef3ac_ba54074251bc_e8e9f67f316f
 
 ###############################################################################
-# 1. HEALTHCHECK
+# 0. HEALTHCHECK (público)
 ###############################################################################
 
-### Healthcheck — status do servidor
+### Status do servidor
 GET {{baseUrl}}/healthcheck
 
 
 ###############################################################################
-# 2. COMPANIES
+# 1. AUTH — Crie sua API Key (público)
 ###############################################################################
 
-### Listar todas as empresas
-GET {{baseUrl}}/companies
-
-### Listar setores disponíveis
-GET {{baseUrl}}/companies/sectors
-
-### Detalhes da Petrobras (com fundamentos mais recentes)
-GET {{baseUrl}}/companies/PETR3
-
-### Buscar Vale
-GET {{baseUrl}}/companies/VALE3
-
-### Empresa inexistente → 404
-GET {{baseUrl}}/companies/XXXX3
-
-
-###############################################################################
-# 3. FUNDAMENTALS
-###############################################################################
-
-### Fundamentos mais recentes da Petrobras
-GET {{baseUrl}}/fundamentals/PETR3
-
-### Histórico de fundamentos da Petrobras (últimos 10 períodos)
-GET {{baseUrl}}/fundamentals/PETR3/history?limit=5
-
-### Histórico da Vale
-GET {{baseUrl}}/fundamentals/VALE3/history
-
-### Fundamentos do Bradesco
-GET {{baseUrl}}/fundamentals/BBDC4
-
-
-###############################################################################
-# 4. STOCKS — COTAÇÕES EM TEMPO REAL (Yahoo Finance + Redis 30s cache)
-###############################################################################
-
-### Cotação atual da Petrobras
-GET {{baseUrl}}/stocks/PETR4/quote
-
-### Cotação da Vale
-GET {{baseUrl}}/stocks/VALE3/quote
-
-### Cotações em lote (até 20 tickers)
-GET {{baseUrl}}/stocks/quotes?tickers=PETR4,VALE3,BBDC4,ITUB4
-
-### Histórico de preços — último mês
-GET {{baseUrl}}/stocks/PETR4/history?range=1mo
-
-### Histórico — 3 meses
-GET {{baseUrl}}/stocks/VALE3/history?range=3mo
-
-### Histórico — 1 ano
-GET {{baseUrl}}/stocks/PETR4/history?range=1y
-
-
-###############################################################################
-# 5. DIVIDENDS
-###############################################################################
-
-### Dividendos da Petrobras
-GET {{baseUrl}}/dividends/PETR3
-
-### Dividendos da Vale
-GET {{baseUrl}}/dividends/VALE3
-
-
-###############################################################################
-# 6. FIIs — FUNDOS IMOBILIÁRIOS (cotações em tempo real via Yahoo Finance)
-###############################################################################
-
-### Listar todos os FIIs com cotação (cache 60s)
-GET {{baseUrl}}/fiis
-
-### Listar FIIs sem cotação (apenas dados cadastrais)
-GET {{baseUrl}}/fiis?withQuote=false
-
-### Filtrar FIIs por segmento (Logística)
-GET {{baseUrl}}/fiis?segment=Log
-
-### Detalhes do HGLG11 (cotação em tempo real, cache 30s)
-GET {{baseUrl}}/fiis/HGLG11
-
-### Histórico de preços do HGLG11 — 1 mês
-GET {{baseUrl}}/fiis/HGLG11/history?range=1mo
-
-### Histórico — 3 meses
-GET {{baseUrl}}/fiis/HGLG11/history?range=3mo
-
-### Histórico — 1 ano
-GET {{baseUrl}}/fiis/HGLG11/history?range=1y
-
-### Detalhes do MXRF11
-GET {{baseUrl}}/fiis/MXRF11
-
-### Histórico do MXRF11 — 6 meses
-GET {{baseUrl}}/fiis/MXRF11/history?range=6mo
-
-
-###############################################################################
-# 7. MACRO — INDICADORES ECONÔMICOS (Banco Central do Brasil)
-###############################################################################
-
-### Listar todos os indicadores macro disponíveis
-GET {{baseUrl}}/macro
-
-### SELIC mensal (código 432)
-GET {{baseUrl}}/macro/432?limit=3
-
-### SELIC anualizada (código 4189)
-GET {{baseUrl}}/macro/4189?limit=2
-
-### IPCA — variação mensal (código 433)
-GET {{baseUrl}}/macro/433?limit=6
-
-### IPCA — acumulado 12 meses (código 13522)
-GET {{baseUrl}}/macro/13522?limit=6
-
-### Câmbio USD/BRL (código 1)
-GET {{baseUrl}}/macro/1?limit=5
-
-### PIB (código 4389)
-GET {{baseUrl}}/macro/4389?limit=3
-
-
-###############################################################################
-# 8. SCREENER — FILTRO DE EMPRESAS POR INDICADORES
-###############################################################################
-
-### Todas empresas com dados fundamentalistas
-GET {{baseUrl}}/screener?limit=10
-
-### Empresas com Lucro Líquido acima de R$ 30 bilhões
-GET {{baseUrl}}/screener?minNetIncome=30000000000&sortBy=netIncome&order=desc
-
-### Empresas do ano fiscal 2024
-GET {{baseUrl}}/screener?year=2024
-
-### Top 5 por Lucro Líquido (decrescente)
-GET {{baseUrl}}/screener?limit=5&sortBy=netIncome&order=desc
-
-### Ordenar por ticker (alfabético)
-GET {{baseUrl}}/screener?sortBy=ticker&order=asc
-
-
-###############################################################################
-# 9. AUTH — API KEYS
-###############################################################################
-
-### Criar uma nova API Key
+### Criar chave (guarde o valor retornado em "key" e cole em @apiKey acima)
 POST {{baseUrl}}/keys
 Content-Type: application/json
 
-{
-  "name": "Minha Chave de Desenvolvimento"
-}
+{ "name": "dev" }
 
-### Listar todas as API Keys (sem exibir o segredo)
+### Listar chaves (sem mostrar o segredo)
 GET {{baseUrl}}/keys
+x-api-key: {{apiKey}}
 
-### Desativar uma API Key (substitua o ID pela chave criada acima)
+### Desativar chave
 # DELETE {{baseUrl}}/keys/{{keyId}}
+# x-api-key: {{apiKey}}
 
 
 ###############################################################################
-# 10. WALLETS — CRUD DE CARTEIRAS
+# 2. ANÁLISE DE AÇÕES — Score completo + diagnóstico
 ###############################################################################
 
-# ═══ Fluxo completo: criar carteira → adicionar ativos → rebalancear ═══
+### Score da Petrobras (P/L 4.6, ROE 24%, DY 6.9%)
+GET {{baseUrl}}/analysis/stocks/PETR4
 
-### 10.1 Criar uma nova carteira
+### Score da Vale (cíclica, ROE caindo)
+GET {{baseUrl}}/analysis/stocks/VALE3
+
+### Score da Weg (excelente empresa, preço caro — não bate SELIC)
+GET {{baseUrl}}/analysis/stocks/WEGE3
+
+### Score da Ambev (defensiva, margens altas, consistente)
+GET {{baseUrl}}/analysis/stocks/ABEV3
+
+### Score da Engie (bate SELIC, crescimento sólido)
+GET {{baseUrl}}/analysis/stocks/EGIE3
+
+### Comparar ações lado a lado
+GET {{baseUrl}}/analysis/stocks/ITUB4
+
+
+###############################################################################
+# 3. ANÁLISE DE FIIs — Score, P/VP, DY
+###############################################################################
+
+### HGLG11 — Logística defensiva, P/VP 0.90 (desconto!)
+GET {{baseUrl}}/analysis/fiis/HGLG11
+
+### MXRF11 — Papel middle risk, DY 12.3%
+GET {{baseUrl}}/analysis/fiis/MXRF11
+
+### KNCR11 — CDI high-grade, sensível a juros
+GET {{baseUrl}}/analysis/fiis/KNCR11
+
+### XPML11 — Shopping prime, cíclico
+GET {{baseUrl}}/analysis/fiis/XPML11
+
+
+###############################################################################
+# 4. RANKING — Melhores ativos por score
+###############################################################################
+
+### Top 10 ações
+GET {{baseUrl}}/analysis/ranking?type=stock&limit=10
+
+### Top 10 FIIs
+GET {{baseUrl}}/analysis/ranking?type=fii&limit=10
+
+### Ações com score mínimo 60
+GET {{baseUrl}}/analysis/ranking?type=stock&limit=10&minScore=60
+
+
+###############################################################################
+# 5. ALOCAÇÃO — Carteira sugerida por perfil de risco
+###############################################################################
+
+### Perfil conservador: R$ 10.000 (70% FIIs, 30% ações)
+POST {{baseUrl}}/analysis/allocate
+Content-Type: application/json
+
+{ "totalAmount": 10000, "riskProfile": "conservador" }
+
+### Perfil moderado: R$ 15.000 (50%/50%)
+POST {{baseUrl}}/analysis/allocate
+Content-Type: application/json
+
+{ "totalAmount": 15000, "riskProfile": "moderado" }
+
+### Perfil agressivo: R$ 20.000 (70% ações, 30% FIIs)
+POST {{baseUrl}}/analysis/allocate
+Content-Type: application/json
+
+{ "totalAmount": 20000, "riskProfile": "agressivo" }
+
+
+###############################################################################
+# 6. SCREENER AVANÇADO — Filtros combinados
+###############################################################################
+
+### Ações baratas: P/L < 10
+GET {{baseUrl}}/screener?maxPE=10&sortBy=peRatio&order=asc&limit=10
+
+### Qualidade: ROE > 15% com Score > 55
+GET {{baseUrl}}/screener?minROE=15&minScore=55&limit=10
+
+### Renda passiva: DY > 5% com endividamento controlado
+GET {{baseUrl}}/screener?minDY=5&maxDE=1.5&limit=10
+
+### Setor específico: Energia Elétrica
+GET {{baseUrl}}/screener?sector=Energia&minScore=50&limit=10
+
+### Top por Score
+GET {{baseUrl}}/screener?sortBy=score&limit=15
+
+
+###############################################################################
+# 7. FUNDAMENTOS — Dados oficiais CVM
+###############################################################################
+
+### Último balanço (DFP 2024)
+GET {{baseUrl}}/fundamentals/PETR4
+
+### Histórico de fundamentos
+GET {{baseUrl}}/fundamentals/PETR4/history?limit=10
+
+
+###############################################################################
+# 8. COTAÇÕES — Yahoo Finance (tempo real)
+###############################################################################
+
+### Cotação atual
+GET {{baseUrl}}/stocks/PETR4/quote
+
+### Cotações em lote
+GET {{baseUrl}}/stocks/quotes?tickers=PETR4,VALE3,ITUB4,BBDC4
+
+### Histórico de preços (6 meses)
+GET {{baseUrl}}/stocks/PETR4/history?range=6mo
+
+
+###############################################################################
+# 9. DIVIDENDOS — Proventos com análise
+###############################################################################
+
+### Dividendos + análise de qualidade + histórico mensal
+GET {{baseUrl}}/dividends/PETR4
+
+### Proventos de FII
+GET {{baseUrl}}/dividends/HGLG11
+
+
+###############################################################################
+# 10. FIIs — Lista completa
+###############################################################################
+
+### Todos os FIIs cadastrados
+GET {{baseUrl}}/fiis
+
+### FII específico
+GET {{baseUrl}}/fiis/HGLG11
+
+
+###############################################################################
+# 11. COMPANIES — Empresas listadas
+###############################################################################
+
+### Todas as empresas (59 tickers)
+GET {{baseUrl}}/companies
+
+### Setores disponíveis
+GET {{baseUrl}}/companies/sectors
+
+
+###############################################################################
+# 12. MACRO — Indicadores econômicos (Banco Central)
+###############################################################################
+
+### Todos os indicadores disponíveis
+GET {{baseUrl}}/macro
+
+### SELIC mensal (código 432)
+GET {{baseUrl}}/macro/432?limit=6
+
+### IPCA variação mensal (código 433)
+GET {{baseUrl}}/macro/433?limit=6
+
+### Câmbio USD/BRL (código 1)
+GET {{baseUrl}}/macro/1?limit=3
+
+
+###############################################################################
+# 13. WALLETS + REBALANCE — Carteiras com posição atual
+###############################################################################
+
+### Criar carteira
 # @name createWallet
 POST {{baseUrl}}/wallets
 Content-Type: application/json
 
-{
-  "userId": "00000000-0000-0000-0000-000000000001",
-  "name": "Carteira de Longo Prazo"
-}
+{ "userId": "00000000-0000-0000-0000-000000000001", "name": "Longo Prazo" }
 
-### 10.2 Listar carteiras do usuário
-GET {{baseUrl}}/wallets?userId=00000000-0000-0000-0000-000000000001
+### Adicionar ativos à carteira
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
 
-### 10.3 Ver detalhes da carteira (substitua pelo ID retornado na criação)
-# @name walletDetail
+{ "ticker": "PETR4", "targetAllocationPercent": 25 }
+
+### Adicionar mais ativos
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{ "ticker": "VALE3", "targetAllocationPercent": 20 }
+
+### Adicionar FII
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{ "ticker": "HGLG11", "targetAllocationPercent": 20 }
+
+### Adicionar
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{ "ticker": "ABEV3", "targetAllocationPercent": 15 }
+
+### Adicionar
+POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
+Content-Type: application/json
+
+{ "ticker": "EGIE3", "targetAllocationPercent": 20 }
+
+### Ver carteira completa
 GET {{baseUrl}}/wallets/{{createWallet.response.body.id}}
 
-### 10.4 Atualizar nome da carteira
-# PUT {{baseUrl}}/wallets/{{createWallet.response.body.id}}
-# Content-Type: application/json
-#
-# {
-#   "name": "Carteira de Dividendos"
-# }
-
-### 10.5 Adicionar PETR4 com meta de 40% de alocação
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "PETR4",
-  "targetAllocationPercent": 40
-}
-
-### 10.6 Adicionar VALE3 com meta de 30%
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "VALE3",
-  "targetAllocationPercent": 30
-}
-
-### 10.7 Adicionar BBDC4 com meta de 15%
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "BBDC4",
-  "targetAllocationPercent": 15
-}
-
-### 10.8 Adicionar WEGE3 com meta de 15%
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "WEGE3",
-  "targetAllocationPercent": 15
-}
-
-### 10.9 Ver carteira com todos os ativos
-GET {{baseUrl}}/wallets/{{createWallet.response.body.id}}
-
-### 10.10 Executar rebalanceamento (com R$ 5.000 de aporte)
+### Rebalancear com R$ 5.000 (sem posição atual — só BUY)
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
 Content-Type: application/json
 
-{
-  "availableAmount": 5000
-}
+{ "availableAmount": 5000 }
 
-### 10.11 Rebalanceamento com valor maior (R$ 50.000)
+### Rebalancear informando posição atual (sugere SELL se sobrealocado)
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
 Content-Type: application/json
-
-{
-  "availableAmount": 50000
-}
-
-### 10.12 Remover um ativo da carteira (substitua assetId)
-# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets/{{assetId}}
-
-### 10.13 Deletar a carteira inteira
-# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}
-
-
-###############################################################################
-# 11. FLUXO COMPLETO COM VARIÁVEIS (execute na ordem 11.1 → 11.2 → ... → 11.6)
-###############################################################################
-
-### 11.1 Criar carteira
-# @name flowWallet
-POST {{baseUrl}}/wallets
-Content-Type: application/json
-
-{
-  "userId": "00000000-0000-0000-0000-000000000001",
-  "name": "Carteira Automatizada"
-}
-
-### 11.2 Adicionar ativos (execute 4x ou use os blocos individuais)
-POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "PETR4",
-  "targetAllocationPercent": 35
-}
-
-### 11.3 Adicionar VALE3
-POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "VALE3",
-  "targetAllocationPercent": 30
-}
-
-### 11.4 Adicionar BBDC4
-POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "BBDC4",
-  "targetAllocationPercent": 20
-}
-
-### 11.5 Adicionar ITUB4
-POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/assets
-Content-Type: application/json
-
-{
-  "ticker": "ITUB4",
-  "targetAllocationPercent": 15
-}
-
-### 11.6 Rebalancear com R$ 10.000
-POST {{baseUrl}}/wallets/{{flowWallet.response.body.id}}/rebalance
-Content-Type: application/json
-
-{
-  "availableAmount": 10000
-}
-
-### 11.7 Ver resultado final da carteira
-GET {{baseUrl}}/wallets/{{flowWallet.response.body.id}}
-
-
-###############################################################################
-# 12. ANALYSIS — ANÁLISE DE AÇÕES E FIIs (Onda 2c)
-# Requer header x-api-key (crie uma key na seção 9 e cole abaixo)
-###############################################################################
-
-@apiKey = ur_SUA_CHAVE_AQUI
-
-### 12.1 Score completo da Petrobras
-GET {{baseUrl}}/analysis/stocks/PETR4
-x-api-key: {{apiKey}}
-
-### 12.2 Score da Vale
-GET {{baseUrl}}/analysis/stocks/VALE3
-x-api-key: {{apiKey}}
-
-### 12.3 Score do Bradesco
-GET {{baseUrl}}/analysis/stocks/BBDC4
-x-api-key: {{apiKey}}
-
-### 12.4 Score de FII — HGLG11 (logística defensiva)
-GET {{baseUrl}}/analysis/fiis/HGLG11
-x-api-key: {{apiKey}}
-
-### 12.5 Score de FII — KNCR11 (CDI high-grade, juros sensitive)
-GET {{baseUrl}}/analysis/fiis/KNCR11
-x-api-key: {{apiKey}}
-
-### 12.6 Score de FII — XPML11 (shopping prime cíclico)
-GET {{baseUrl}}/analysis/fiis/XPML11
-x-api-key: {{apiKey}}
-
-### 12.7 Score de FII — MXRF11 (middle risk)
-GET {{baseUrl}}/analysis/fiis/MXRF11
-x-api-key: {{apiKey}}
-
-### 12.8 Ranking de ações (top 5)
-GET {{baseUrl}}/analysis/ranking?type=stock&limit=5
-x-api-key: {{apiKey}}
-
-### 12.9 Ranking de ações com score mínimo 60
-GET {{baseUrl}}/analysis/ranking?type=stock&limit=10&minScore=60
-x-api-key: {{apiKey}}
-
-### 12.10 Ranking de FIIs (top 10)
-GET {{baseUrl}}/analysis/ranking?type=fii&limit=10
-x-api-key: {{apiKey}}
-
-### 12.11 Ranking de FIIs filtrado por score
-GET {{baseUrl}}/analysis/ranking?type=fii&limit=10&minScore=70
-x-api-key: {{apiKey}}
-
-### 12.12 Ticker sem fundamentos → 404
-GET {{baseUrl}}/analysis/stocks/XXXX4
-x-api-key: {{apiKey}}
-
-
-###############################################################################
-# 13. SCREENER COM minScore (Onda 2c)
-###############################################################################
-
-### 13.1 Screener com score mínimo 50
-GET {{baseUrl}}/screener?limit=10&minScore=50
-x-api-key: {{apiKey}}
-
-### 13.2 Screener com score mínimo 70 (só empresas excelentes)
-GET {{baseUrl}}/screener?limit=10&minScore=70
-x-api-key: {{apiKey}}
-
-
-###############################################################################
-# 14. REBALANCE COM POSIÇÃO ATUAL (Onda 3b)
-###############################################################################
-
-### 14.1 Rebalanceamento informando posição atual (sugere SELL se sobrealocado)
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
-Content-Type: application/json
-x-api-key: {{apiKey}}
 
 {
   "availableAmount": 5000,
   "currentPositions": [
     { "ticker": "PETR4", "quantity": 100 },
     { "ticker": "VALE3", "quantity": 50 },
-    { "ticker": "BBDC4", "quantity": 200 },
-    { "ticker": "WEGE3", "quantity": 10 }
+    { "ticker": "HGLG11", "quantity": 10 },
+    { "ticker": "ABEV3", "quantity": 200 },
+    { "ticker": "EGIE3", "quantity": 30 }
   ]
 }
-
-### 14.2 Rebalanceamento sem currentPositions (retrocompatível)
-POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
-Content-Type: application/json
-x-api-key: {{apiKey}}
-
-{
-  "availableAmount": 5000
-}
-
-
-###############################################################################
-# 15. DIVIDENDS ENRIQUECIDO (Onda 1d)
-###############################################################################
-
-### 15.1 Dividendos com análise e histórico mensal
-GET {{baseUrl}}/dividends/PETR4
-x-api-key: {{apiKey}}
-
-### 15.2 Dividendos de FII (proventos mensais)
-GET {{baseUrl}}/dividends/KNCR11
-x-api-key: {{apiKey}}

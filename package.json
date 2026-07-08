@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
-    "worker:sync": "bun run src/infra/workers/cvm-sync-worker.ts"
+    "worker:sync": "bun run src/infra/workers/cvm-sync-worker.ts",
+    "mcp": "bun run src/infra/mcp/server.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -23,6 +24,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.2.0",
     "dotenv": "16",
     "drizzle-orm": "^0.45.2",

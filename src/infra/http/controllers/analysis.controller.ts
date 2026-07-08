@@ -12,12 +12,16 @@ import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
+import { statusInvestScraper } from '../../services/statusinvest-scraper.ts';
+import { fiisScraper } from '../../services/fiis-scraper.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
 import {
   FIIScoreCalculatorV4,
   type FIIScoreInput,
 } from '../../../core/services/fii-score.ts';
+import { AllocationEngine } from '../../../core/services/allocation-engine.ts';
+import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -118,37 +122,91 @@ export async function getStockAnalysisController(
     /* sem cotação */
   }
 
-  // Proventos 12m
+  // DY: busca via scraper (HTML, confiável) com fallback para provider (JSON)
   let dividendsOk = false;
-  let sum12m = 0;
+  let dividendYield: number | null = null;
   try {
-    const proventos = await dividendsProvider.fetchDividends(ticker);
-    if (proventos && proventos.length > 0) {
+    const scraped = await statusInvestScraper.fetchStock(ticker);
+    if (scraped.dy12m > 0 && price > 0) {
+      dividendYield = scraped.dy12m;
       dividendsOk = true;
-      const cutoff = new Date();
-      cutoff.setMonth(cutoff.getMonth() - 12);
-      const cutoffStr = cutoff.toISOString().slice(0, 10);
-      sum12m = proventos
-        .filter((e) => e.date >= cutoffStr)
-        .reduce((s, e) => s + e.value, 0);
     }
   } catch {
-    /* provider indisponível */
+    // Fallback: provider JSON
+    try {
+      const proventos = await dividendsProvider.fetchDividends(ticker);
+      if (proventos && proventos.length > 0 && price > 0) {
+        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+        const cutoffStr = cutoff.toISOString().slice(0, 10);
+        const sum12m = proventos.filter((e) => e.date >= cutoffStr).reduce((s, e) => s + e.value, 0);
+        if (sum12m > 0) {
+          dividendYield = +(sum12m / price * 100).toFixed(2);
+          dividendsOk = true;
+        }
+      }
+    } catch { /* sem dados */ }
   }
 
   // Indicadores
   const indicators = calcAllIndicators(f, price);
 
-  // DY real
-  if (sum12m > 0 && price > 0) {
-    indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+  // Busca dados históricos (todos os anos) para análise de tendências
+  let historical: import('../../../core/services/stock-score.ts').HistoricalData | undefined;
+  try {
+    const histRows = await db
+      .select({
+        fiscalYear: companyFundamentals.fiscalYear,
+        revenue: companyFundamentals.revenue,
+        netIncomeParent: companyFundamentals.netIncomeParent,
+        equity: companyFundamentals.equity,
+        totalLiabilities: companyFundamentals.totalLiabilities,
+        cogs: companyFundamentals.cogs,
+      })
+      .from(companyFundamentals)
+      .innerJoin(companies, eq(companyFundamentals.companyCnpj, companies.cnpj))
+      .where(eq(companies.ticker, ticker))
+      .orderBy(desc(companyFundamentals.fiscalYear));
+
+    if (histRows.length >= 2) {
+      historical = {
+        years: histRows.map((r) => {
+          const rev = Number(r.revenue ?? 0);
+          const inc = Number(r.netIncomeParent ?? 0);
+          const eq = Number(r.equity ?? 0);
+          const cogs = Math.abs(Number(r.cogs ?? 0));
+          return {
+            fiscalYear: r.fiscalYear,
+            revenue: rev,
+            netIncome: inc,
+            roe: eq > 0 ? +(inc / eq * 100).toFixed(2) : 0,
+            netMargin: rev > 0 ? +(inc / rev * 100).toFixed(2) : 0,
+            debtToEquity: eq > 0 ? +(Number(r.totalLiabilities ?? 0) / eq).toFixed(2) : 0,
+            grossMargin: rev > 0 ? +((rev - cogs) / rev * 100).toFixed(2) : 0,
+          };
+        }),
+      };
+    }
+  } catch { /* sem dados históricos */ }
+
+  // Score com dados históricos
+  // DY já foi definido pelo scraper acima
+  if (dividendYield !== null) {
+    indicators.dividendYield = dividendYield;
   }
 
-  // Score
+  // Momentum de mercado
+  let momentum;
+  try {
+    momentum = await marketDataService.getMomentum(ticker);
+  } catch { /* sem momento */ }
+
+  // Score com dados históricos + momentum
   const result = StockScoreCalculator.calculate(
     indicators,
     f.sector,
     f.companyName,
+    historical,
+    momentum,
   );
 
   const response = {
@@ -257,24 +315,35 @@ export async function getFiiAnalysisController(
     /* provider indisponível */
   }
 
-  // DY
-  const dy = sum12m > 0 && price > 0 ? +(sum12m / price * 100).toFixed(2) : 0;
-
-  // P/VP: busca do cache Redis (populado pelo scheduler)
+  // P/VP + DY do cache Redis com fallback para scraper direto
+  let dyFromScraper: number | null = null;
   let pvp: number | null = null;
   let pvpOk = false;
   try {
-    const cachedPvp = await redis.get(`fii:pvp:${ticker}`);
-    if (cachedPvp) {
-      const val = parseFloat(cachedPvp);
-      if (!isNaN(val) && val > 0) {
-        pvp = val;
-        pvpOk = true;
-      }
+    const cachedFii = await redis.get(`fii:full:${ticker}`);
+    if (cachedFii) {
+      const fiiData = JSON.parse(cachedFii);
+      if (fiiData.pvp > 0) { pvp = fiiData.pvp; pvpOk = true; }
+      if (fiiData.dy12m > 0) dyFromScraper = fiiData.dy12m;
     }
-  } catch {
-    /* Redis offline */
+  } catch { /* Redis offline */ }
+
+  // Fallback: chama scraper direto se Redis vazio
+  if (dyFromScraper === null || pvp === null) {
+    try {
+      const fiiData = await fiisScraper.fetchFII(ticker);
+      if (fiiData.pvp > 0 && pvp === null) { pvp = fiiData.pvp; pvpOk = true; }
+      if (fiiData.dy12m > 0 && dyFromScraper === null) dyFromScraper = fiiData.dy12m;
+      // Cacheia para próximas requisições
+      if (fiiData.dividendsHistory.length > 0) {
+        await redis.setex(`dividends:${ticker}`, 86400, JSON.stringify(fiiData.dividendsHistory)).catch(()=>{});
+      }
+      await redis.setex(`fii:full:${ticker}`, 86400, JSON.stringify(fiiData)).catch(()=>{});
+    } catch { /* scraper offline */ }
   }
+
+  // DY: usa scraper se disponível, senão calcula dos proventos
+  const dy = dyFromScraper ?? (sum12m > 0 && price > 0 ? +(sum12m / price * 100).toFixed(2) : 0);
 
   // Score FII
   const input: FIIScoreInput = {
@@ -553,4 +622,29 @@ export async function getRankingController(
 
     reply.send(response);
   }
+}
+
+// ─── POST /v1/analysis/allocate ──────────────────────────────────────────────
+
+const allocateSchema = z.object({
+  totalAmount: z.number().positive().default(10000),
+  riskProfile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado'),
+  stockPercent: z.number().min(0).max(100).optional(),
+  fiiPercent: z.number().min(0).max(100).optional(),
+  minScore: z.number().min(0).max(100).optional(),
+  maxAssets: z.number().int().min(1).max(20).optional(),
+});
+
+export async function getAllocationController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = allocateSchema.safeParse(request.body);
+  if (!parsed.success)
+    return sendZodError(reply, parsed.error, 'Payload inválido.');
+
+  const engine = new AllocationEngine();
+  const result = await engine.buildAllocation(parsed.data);
+
+  reply.send(result);
 }

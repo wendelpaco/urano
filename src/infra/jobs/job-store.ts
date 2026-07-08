@@ -124,23 +124,13 @@ export class JobStore {
     success: boolean,
     errorMessage?: string,
   ): Promise<void> {
-    const completedAt = new Date();
-    const [run] = await db
-      .select({ startedAt: jobRuns.startedAt })
-      .from(jobRuns)
-      .where(eq(jobRuns.id, runId));
-
-    const durationMs = run
-      ? completedAt.getTime() - run.startedAt.getTime()
-      : 0;
-
     await db
       .update(jobRuns)
       .set({
         status: success ? 'success' : 'failed',
-        completedAt,
-        durationMs: Math.round(durationMs),
-        errorMessage: errorMessage ?? null,
+        completedAt: new Date(),
+        durationMs: sql`EXTRACT(EPOCH FROM (NOW() - ${jobRuns.startedAt})) * 1000`,
+        errorMessage: errorMessage || null,
       })
       .where(eq(jobRuns.id, runId));
   }

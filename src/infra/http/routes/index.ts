@@ -14,6 +14,7 @@ import {
   getStockAnalysisController,
   getFiiAnalysisController,
   getRankingController,
+  getAllocationController,
 } from '../controllers/analysis.controller.ts';
 import {
   createWalletController,
@@ -83,4 +84,5 @@ export async function routesPlugin(
   app.get('/analysis/stocks/:ticker', getStockAnalysisController);
   app.get('/analysis/fiis/:ticker', getFiiAnalysisController);
   app.get('/analysis/ranking', getRankingController);
+  app.post('/analysis/allocate', getAllocationController);
 }

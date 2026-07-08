@@ -1,7 +1,23 @@
+/**
+ * Advanced Screener Controller — Filtro de ações por múltiplos indicadores.
+ *
+ * Suporta filtros combinados:
+ *   - minScore, maxScore (score do modelo)
+ *   - minPE, maxPE (P/L)
+ *   - minROE, maxROE
+ *   - minDY, maxDY (dividend yield)
+ *   - maxDE (dívida/equity máximo)
+ *   - sector (setor)
+ *   - year (ano fiscal)
+ *   - sortBy (score, peRatio, roe, dy, ticker)
+ *   - limit, order
+ */
+
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { sql } from 'drizzle-orm';
+import { sql, eq, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
+import { companies, companyFundamentals } from '../../database/schema.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
@@ -16,14 +32,32 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 }
 
 const screenerSchema = z.object({
-  sector: z.string().optional(),
-  minNetIncome: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)),
-  maxNetIncome: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)),
-  year: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)),
-  limit: z.string().optional().default('50').transform(Number).pipe(z.number().int().min(1).max(200)),
-  sortBy: z.enum(['netIncome', 'ticker']).default('netIncome'),
-  order: z.enum(['asc', 'desc']).default('desc'),
+  // Score
   minScore: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().min(0).max(100).optional()),
+  maxScore: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().min(0).max(100).optional()),
+
+  // Valuation
+  minPE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+  maxPE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+
+  // Rentabilidade
+  minROE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().optional()),
+  maxROE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().optional()),
+
+  // Dividendos
+  minDY: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+
+  // Endividamento
+  maxDE: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+
+  // Setor / Ano
+  sector: z.string().optional(),
+  year: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().optional()),
+
+  // Paginação / Ordenação
+  limit: z.string().optional().default('20').transform(Number).pipe(z.number().int().min(1).max(100)),
+  sortBy: z.enum(['score', 'peRatio', 'roe', 'dy', 'ticker']).default('score'),
+  order: z.enum(['asc', 'desc']).default('desc'),
 });
 
 export async function screenerController(
@@ -34,88 +68,117 @@ export async function screenerController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
   const filters = parsed.data;
 
-  const rows = await db.execute(sql`
-    SELECT * FROM (
-      SELECT DISTINCT ON (c.cnpj)
-        c.ticker,
-        c.name,
-        c.sector,
-        c.cnpj,
-        cf.fiscal_year,
-        cf.reference_date,
-        cf.net_income,
-        cf.net_income_parent,
-        cf.equity,
-        cf.source
-      FROM companies c
-      INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-      WHERE 1=1
-        ${filters.sector ? sql`AND c.sector ILIKE ${`%${filters.sector}%`}` : sql``}
-        ${filters.minNetIncome !== undefined ? sql`AND cf.net_income >= ${filters.minNetIncome}` : sql``}
-        ${filters.maxNetIncome !== undefined ? sql`AND cf.net_income <= ${filters.maxNetIncome}` : sql``}
-        ${filters.year !== undefined ? sql`AND cf.fiscal_year = ${filters.year}` : sql``}
-      ORDER BY c.cnpj, cf.reference_date DESC
-    ) sub
-    ORDER BY
-      ${filters.sortBy === 'netIncome'
-        ? sql`sub.net_income ${filters.order === 'desc' ? sql`DESC` : sql`ASC`}`
-        : sql`sub.ticker ${filters.order === 'desc' ? sql`DESC` : sql`ASC`}`
-      }
-    LIMIT ${filters.limit}
-  `);
+  // Busca fundamentals base
+  let query = sql`
+    SELECT DISTINCT ON (c.ticker)
+      c.ticker, c.name, c.sector, c.cnpj,
+      cf.fiscal_year,
+      cf.reference_date AS "referenceDate",
+      cf.net_income_parent AS "netIncomeParent",
+      cf.net_income AS "netIncome",
+      cf.revenue AS "revenue",
+      cf.cogs AS "cogs",
+      cf.ebit AS "ebit",
+      cf.total_assets AS "totalAssets",
+      cf.total_liabilities AS "totalLiabilities",
+      cf.cash AS "cash",
+      cf.operating_cash_flow AS "operatingCashFlow",
+      cf.equity AS "equity",
+      cf.shares_outstanding AS "sharesOutstanding",
+      cf.source
+    FROM companies c
+    INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
+    WHERE c.ticker NOT LIKE '%11' AND LENGTH(c.ticker) >= 5
+  `;
 
-  const rawData = (rows as unknown as Record<string, unknown>[]).map((r) => ({
-    ticker: r.ticker,
-    name: r.name,
-    sector: r.sector ?? null,
-    cnpj: r.cnpj,
-    fiscalYear: Number(r.fiscal_year),
-    referenceDate: String(r.reference_date ?? '').slice(0, 10),
-    netIncome: Number(r.net_income ?? 0),
-    netIncomeParent: Number(r.net_income_parent ?? 0),
-    equity: r.equity ? Number(r.equity) : null,
-    source: r.source,
-  }));
-
-  // Se minScore informado, calcula score para filtrar
-  let data: Array<Record<string, unknown> & { score?: number }> = rawData;
-
-  if (filters.minScore !== undefined) {
-    const scored: typeof data = [];
-    for (const item of rawData) {
-      const ticker = item.ticker as string;
-      let price = 0;
-      try {
-        const quote = await stockQuoteService.getQuote(ticker);
-        price = quote.price;
-      } catch { continue; }
-
-      const indicators = calcAllIndicators(item, price);
-
-      try {
-        const proventos = await dividendsProvider.fetchDividends(ticker);
-        if (proventos && price > 0) {
-          const cutoff = new Date();
-          cutoff.setMonth(cutoff.getMonth() - 12);
-          const cutoffStr = cutoff.toISOString().slice(0, 10);
-          const sum12m = proventos.filter((e) => e.date >= cutoffStr).reduce((s, e) => s + e.value, 0);
-          if (sum12m > 0) {
-            indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
-          }
-        }
-      } catch { /* sem proventos */ }
-
-      const result = StockScoreCalculator.calculate(indicators, item.sector as string | null, item.name as string);
-      if (result.score >= filters.minScore!) {
-        scored.push({ ...item, score: result.score });
-      }
-    }
-    data = scored;
+  if (filters.sector) {
+    query = sql`${query} AND c.sector ILIKE ${`%${filters.sector}%`}`;
+  }
+  if (filters.year) {
+    query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
   }
 
+  query = sql`${query} ORDER BY c.ticker, cf.reference_date DESC LIMIT 30`;
+
+  const rows = await db.execute(query);
+  const rawData = rows as unknown as Record<string, unknown>[];
+
+  // Enriquece com scores
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const r of rawData) {
+    const ticker = String(r.ticker);
+
+    // Preço (Yahoo)
+    let price = 0;
+    try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { continue; }
+    if (price <= 0) continue;
+
+    // Indicadores
+    const indicators = calcAllIndicators(r, price);
+
+    // DY
+    try {
+      const proventos = await dividendsProvider.fetchDividends(ticker);
+      if (proventos && price > 0) {
+        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+        const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
+          .reduce((s, e) => s + e.value, 0);
+        if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+      }
+    } catch { /* ok */ }
+
+    // Score
+    const scoreResult = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
+
+    // Aplica filtros pós-cálculo
+    if (filters.minScore !== undefined && scoreResult.score < filters.minScore) continue;
+    if (filters.maxScore !== undefined && scoreResult.score > filters.maxScore) continue;
+    if (filters.minPE !== undefined && (indicators.peRatio === null || indicators.peRatio < filters.minPE)) continue;
+    if (filters.maxPE !== undefined && (indicators.peRatio === null || indicators.peRatio > filters.maxPE)) continue;
+    if (filters.minROE !== undefined && (indicators.roe === null || indicators.roe < filters.minROE)) continue;
+    if (filters.maxROE !== undefined && (indicators.roe === null || indicators.roe > filters.maxROE)) continue;
+    if (filters.minDY !== undefined && (indicators.dividendYield === null || indicators.dividendYield < filters.minDY)) continue;
+    if (filters.maxDE !== undefined && (indicators.debtToEquity === null || indicators.debtToEquity > filters.maxDE)) continue;
+
+    results.push({
+      ticker,
+      name: r.name,
+      sector: r.sector ?? null,
+      price: Math.round(price * 100) / 100,
+      score: scoreResult.score,
+      peRatio: indicators.peRatio,
+      roe: indicators.roe,
+      dividendYield: indicators.dividendYield,
+      debtToEquity: indicators.debtToEquity,
+      netMargin: indicators.netMargin,
+      diagnosis: scoreResult.diagnosis,
+    });
+  }
+
+  // Ordena
+  const sortMap: Record<string, string> = {
+    score: 'score', peRatio: 'peRatio', roe: 'roe', dy: 'dividendYield', ticker: 'ticker',
+  };
+  const sortKey = sortMap[filters.sortBy] || 'score';
+  results.sort((a, b) => {
+    const va = (a[sortKey] as number) ?? 0;
+    const vb = (b[sortKey] as number) ?? 0;
+    return filters.order === 'desc' ? vb - va : va - vb;
+  });
+
+  const sliced = results.slice(0, filters.limit);
+
   reply.send({
-    filters: { sector: filters.sector ?? null, minNetIncome: filters.minNetIncome ?? null, maxNetIncome: filters.maxNetIncome ?? null, year: filters.year ?? null, minScore: filters.minScore ?? null },
-    total: data.length,
-    data,
+    filters: {
+      sector: filters.sector ?? null,
+      minScore: filters.minScore ?? null, maxScore: filters.maxScore ?? null,
+      minPE: filters.minPE ?? null, maxPE: filters.maxPE ?? null,
+      minROE: filters.minROE ?? null, maxROE: filters.maxROE ?? null,
+      minDY: filters.minDY ?? null, maxDE: filters.maxDE ?? null,
+      year: filters.year ?? null,
+    },
+    total: sliced.length,
+    data: sliced,
   });
 }

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "urano": {
+      "command": "bun",
+      "args": ["run", "mcp"],
+      "cwd": "/caminho/para/seu/urano",
+      "env": {
+        "URANO_API_URL": "http://localhost:3000/v1",
+        "URANO_API_KEY": "sua-chave-api-aqui"
+      }
+    }
+  }
+}
