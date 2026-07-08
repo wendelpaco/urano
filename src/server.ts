@@ -43,12 +43,17 @@ app.addHook('onRequest', rateLimiter);
 
 // Compressão gzip (Bun nativo)
 app.addHook('onSend', async (request, reply, payload) => {
-  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  if (typeof payload !== 'string' && !Buffer.isBuffer(payload)) return payload;
+  const body = typeof payload === 'string' ? payload : payload.toString('utf-8');
   if (body.length < 1024) return payload;
   const accept = request.headers['accept-encoding'] || '';
   if (accept.includes('gzip')) {
+    // Bun.gzipSync retorna Uint8Array puro; Fastify só aceita string/Buffer/Stream
+    // (Buffer.isBuffer(Uint8Array) === false), por isso envolvemos em Buffer.from().
+    const compressed = Buffer.from(Bun.gzipSync(new TextEncoder().encode(body)));
     reply.header('Content-Encoding', 'gzip');
-    return Bun.gzipSync(new TextEncoder().encode(body));
+    reply.header('Content-Length', compressed.byteLength);
+    return compressed;
   }
   return payload;
 });
