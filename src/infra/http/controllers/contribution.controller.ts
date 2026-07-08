@@ -9,6 +9,23 @@ import { deriveHealthWarnings } from '../../../core/services/data-health.ts';
 import { fetchDataHealth } from '../../database/health-queries.ts';
 import { redis } from '../../services/redis.ts';
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function sendZodError(
+  reply: FastifyReply,
+  error: z.ZodError,
+  message: string,
+): void {
+  reply.status(400).send({
+    error: 'ValidationError',
+    message,
+    details: error.issues.map(({ path, message: m }) => ({
+      path: path.join('.'),
+      message: m,
+    })),
+  });
+}
+
 const UNIVERSE_CACHE_KEY = 'advisor:universe';
 const UNIVERSE_CACHE_TTL = 1800;
 
@@ -47,10 +64,7 @@ export async function contributionController(
   reply: FastifyReply,
 ): Promise<void> {
   const parsed = bodySchema.safeParse(request.body);
-  if (!parsed.success) {
-    reply.status(400).send({ error: 'BadRequest', message: parsed.error.issues[0]?.message });
-    return;
-  }
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Payload inválido.');
   const { amount, profile, positions, onlyTypes, excludeSectors } = parsed.data;
 
   // Data health primeiro: recomendação nunca sai silenciosa sobre base degradada
