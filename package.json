@@ -16,7 +16,8 @@
     "seed": "bun run src/infra/jobs/seed.ts",
     "mcp": "bun run src/infra/mcp/server.ts",
     "key:create": "bun run scripts/create-api-key.ts",
-    "warm-cache": "bun run scripts/warm-cache.ts"
+    "warm-cache": "bun run scripts/warm-cache.ts",
+    "backtest": "bun run src/infra/workers/backtest.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

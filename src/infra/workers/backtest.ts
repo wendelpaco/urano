@@ -120,9 +120,36 @@ async function main(): Promise<void> {
   console.log('🧪 Urano Backtest Engine\n');
   console.log('Comparando scores vs retorno real 12 meses depois\n');
 
+  // Detecta anos disponíveis do banco ou usa argumentos da CLI
+  const args = process.argv.slice(2);
+  let years: number[];
+
+  if (args.length >= 2) {
+    // bun run backtest 2015 2024
+    const start = parseInt(args[0]!, 10);
+    const end = parseInt(args[1]!, 10);
+    years = [];
+    for (let y = start; y <= end; y++) years.push(y);
+    console.log(`📅 Anos: ${start}-${end} (via argumentos)`);
+  } else {
+    // Detecta do banco
+    const yearRows = await db.execute(
+      'SELECT DISTINCT fiscal_year FROM company_fundamentals ORDER BY fiscal_year',
+    );
+    years = (yearRows as unknown as Array<{ fiscal_year: number }>)
+      .map((r) => r.fiscal_year)
+      .filter((y) => y >= 2015 && y <= new Date().getFullYear() - 1); // até ano anterior
+    console.log(`📅 Anos detectados: ${years.join(', ')} (${years.length} anos)`);
+  }
+
+  if (years.length === 0) {
+    console.log('❌ Nenhum ano disponível. Execute worker:sync primeiro.');
+    process.exit(1);
+  }
+
   const allResults: BacktestResult[] = [];
 
-  for (const year of [2018, 2019, 2020, 2021, 2022, 2023]) {
+  for (const year of years) {
     const results = await backtestYear(year);
     allResults.push(...results);
     console.log(` ${results.length} ativos analisados`);
