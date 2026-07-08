@@ -273,39 +273,46 @@ export class StockQuoteService {
    * StatusInvest é mais estável para ativos brasileiros.
    */
   private async fetchFromStatusInvest(ticker: string): Promise<StockQuote> {
-    const isFII = ticker.toUpperCase().endsWith('11');
     const scraper = this.statusInvest;
 
-    let result;
+    // Tenta ação primeiro, fallback para FII se preço vier zerado
+    let price = 0;
+    let avgDailyLiquidity = 0;
+    let marketCap: number | null = null;
+
     try {
-      result = isFII
-        ? await scraper.fetchFII(ticker)
-        : await scraper.fetchStock(ticker);
-    } catch (scraperErr: any) {
-      throw new Error(
-        `StatusInvest também falhou para ${ticker}: ${scraperErr.message}`,
-      );
+      const r = await scraper.fetchStock(ticker);
+      price = r.price;
+      avgDailyLiquidity = r.avgDailyLiquidity;
+      marketCap = r.marketCap;
+    } catch { /* ok */ }
+
+    if (price <= 0) {
+      try {
+        const r = await scraper.fetchFII(ticker);
+        price = r.price;
+      } catch { /* ok */ }
     }
 
-    if (!result || result.price <= 0) {
+    if (price <= 0) {
       throw new Error(`StatusInvest: preço não disponível para ${ticker}`);
     }
 
-    console.log(`[quote] ✅ StatusInvest resgatou ${ticker} a R$ ${result.price}`);
+    console.log(`[quote] ✅ StatusInvest resgatou ${ticker} a R$ ${price}`);
 
     return {
       ticker: ticker.toUpperCase(),
       symbol: `${ticker.toUpperCase()}.SA`,
-      price: result.price,
+      price,
       currency: 'BRL',
       change: 0,
       changePercent: 0,
-      previousClose: result.price,
-      open: result.price,
-      dayHigh: result.price,
-      dayLow: result.price,
-      volume: result.avgDailyLiquidity || 0,
-      marketCap: result.marketCap ?? null,
+      previousClose: price,
+      open: price,
+      dayHigh: price,
+      dayLow: price,
+      volume: avgDailyLiquidity || 0,
+      marketCap,
       updatedAt: new Date().toISOString(),
     };
   }
