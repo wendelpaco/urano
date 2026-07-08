@@ -19,6 +19,7 @@ import 'dotenv/config';
 import { SyncCompanyFundamentalsUseCase } from '../../core/use-cases/sync-company-fundamentals.ts';
 import { PgCompanyRepository } from '../database/pg-company-repository.ts';
 import { checkDatabaseConnection, closeDatabaseConnection } from '../database/connection.ts';
+import { CvmStorageService } from '../services/cvm-storage-service.ts';
 import type { ICompanyRepository } from '../../core/repositories/company-repository.ts';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';
 
@@ -170,34 +171,54 @@ async function main(): Promise<void> {
   console.log(`   Ano:     ${year}`);
   console.log(`   Modo:    ${modeLabel}\n`);
 
-  const useCase = new SyncCompanyFundamentalsUseCase(repository);
+  // Compartilha o CvmStorageService para cachear o ZIP em memória
+  const cvmService = new CvmStorageService();
+  const useCase = new SyncCompanyFundamentalsUseCase(repository, cvmService);
   const startTime = performance.now();
 
   let totalSuccess = 0;
   let totalRecords = 0;
   const errors: string[] = [];
 
-  for (const ticker of tickers) {
-    try {
-      const result = await useCase.execute({ ticker, year });
+  // Processa em lotes de 3 concorrentes (ZIP cacheado, CSVs extraídos por ticker)
+  const BATCH = 3;
+  for (let i = 0; i < tickers.length; i += BATCH) {
+    const batch = tickers.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      batch.map((ticker) => useCase.execute({ ticker, year })),
+    );
 
-      if (result.recordsImported > 0) {
-        console.log(`✅ ${ticker.padEnd(8)} | ${result.recordsImported} registros | ${result.fundamentals[0]?.companyName ?? 'N/D'}`);
+    for (let j = 0; j < batch.length; j++) {
+      const ticker = batch[j]!;
+      const r = results[j]!;
 
-        if (result.ttm) {
-          console.log(`   ↳ TTM Lucro Líquido: ${formatCurrency(result.ttm.ttmNetIncome)}`);
+      if (r.status === 'fulfilled') {
+        const result = r.value;
+        if (result.recordsImported > 0) {
+          console.log(`✅ ${ticker.padEnd(8)} | ${result.recordsImported} registros | ${result.fundamentals[0]?.companyName ?? 'N/D'}`);
+          if (result.ttm) {
+            console.log(`   ↳ TTM Lucro Líquido: ${formatCurrency(result.ttm.ttmNetIncome)}`);
+          }
+          totalSuccess++;
+          totalRecords += result.recordsImported;
+        } else {
+          console.log(`⚠️  ${ticker.padEnd(8)} | Nenhum dado encontrado para o ano ${year}`);
         }
-        totalSuccess++;
-        totalRecords += result.recordsImported;
       } else {
-        console.log(`⚠️  ${ticker.padEnd(8)} | Nenhum dado encontrado para o ano ${year}`);
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.error(`❌ ${ticker.padEnd(8)} | Erro: ${msg}`);
+        errors.push(`${ticker}: ${msg}`);
       }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`❌ ${ticker.padEnd(8)} | Erro: ${msg}`);
-      errors.push(`${ticker}: ${msg}`);
+    }
+
+    // Pausa entre lotes para o GC respirar
+    if (i + BATCH < tickers.length) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
+
+  // Libera o cache do ZIP
+  cvmService.clearCache();
 
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
 

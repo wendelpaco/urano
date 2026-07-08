@@ -97,7 +97,7 @@ export interface SyncCompanyFundamentalsOutput {
 export class SyncCompanyFundamentalsUseCase {
   constructor(
     private readonly companyRepository: ICompanyRepository,
-    private readonly cvmService = new CvmStorageService(),
+    private readonly cvmService: CvmStorageService = new CvmStorageService(),
   ) {}
 
   /**

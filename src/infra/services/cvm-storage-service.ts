@@ -103,6 +103,8 @@ interface CvmExtractedData {
 export class CvmStorageService {
   private readonly baseUrl: string;
   private readonly userAgent: string;
+  /** Cache em memória do ZIP por ano — evita baixar 12MB × 69 tickers */
+  private zipCache = new Map<number, ArrayBuffer>();
 
   constructor() {
     this.baseUrl = 'https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC';
@@ -127,9 +129,10 @@ export class CvmStorageService {
     const zipUrl = this.buildDfpZipUrl(year);
     console.log(`[CvmStorageService] Baixando ZIP: ${zipUrl}`);
 
-    const zipBuffer = await this.downloadZip(zipUrl);
+    const zipBuffer = await this.downloadZip(zipUrl, year);
+    const isCached = this.zipCache.has(year);
     console.log(
-      `[CvmStorageService] ZIP baixado (${(zipBuffer.byteLength / 1024 / 1024).toFixed(2)} MB). Extraindo DRE + BPP...`,
+      `[CvmStorageService] ZIP ${isCached ? 'cache hit' : 'baixado'} (${(zipBuffer.byteLength / 1024 / 1024).toFixed(2)} MB). Extraindo DRE + BPP...`,
     );
 
     // Extrai DRE (Lucro Líquido)
@@ -170,9 +173,13 @@ export class CvmStorageService {
     return `${this.baseUrl}/ITR/DADOS/itr_cia_aberta_${year}.zip`;
   }
 
-  /** Faz o download do ZIP com retry e timeout */
-  private async downloadZip(url: string): Promise<ArrayBuffer> {
-    return withRetry(async () => {
+  /** Faz o download do ZIP com retry, timeout e cache em memória por ano */
+  private async downloadZip(url: string, year: number): Promise<ArrayBuffer> {
+    // Cache hit: ZIP já baixado para este ano
+    const cached = this.zipCache.get(year);
+    if (cached) return cached;
+
+    const buffer = await withRetry(async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min
 
@@ -193,6 +200,15 @@ export class CvmStorageService {
         clearTimeout(timeout);
       }
     }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000 });
+
+    // Cache para reuso
+    this.zipCache.set(year, buffer);
+    return buffer;
+  }
+
+  /** Limpa o cache de ZIPs (libera memória após batch) */
+  clearCache(): void {
+    this.zipCache.clear();
   }
 
   /**
