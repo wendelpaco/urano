@@ -209,14 +209,14 @@ export function suggestContribution(
     }
 
     // Ativos selecionados que nunca receberam quantidade em nenhuma das passadas
-    // (orçamento proporcional arredondou para 0 e a 2ª passada não teve sobra)
+    // (fatia igual arredondou para 0 e a 2ª passada não teve sobra suficiente)
     for (const [ticker, target] of zeroQtyTargets) {
       if (purchases.some((p) => p.ticker === ticker)) continue;
       const a = selected.find((s) => s.ticker === ticker);
       if (!a) continue;
       skipped.push({
         ticker,
-        reason: `Orçamento proporcional (R$ ${target.toFixed(2)}) insuficiente para 1 unidade a R$ ${a.price.toFixed(2)}`,
+        reason: `Orçamento disponível (R$ ${target.toFixed(2)}) insuficiente para 1 unidade a R$ ${a.price.toFixed(2)}`,
       });
     }
   }
