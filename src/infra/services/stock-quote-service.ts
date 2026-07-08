@@ -95,15 +95,16 @@ export class StockQuoteService {
    * Se Redis indisponível, busca direto na API.
    */
   async getQuote(ticker: string): Promise<StockQuote> {
-    const symbol = this.toYahooSymbol(ticker);
     const cacheKey = `quote:${ticker.toUpperCase()}`;
 
     return getOrSet(cacheKey, 30, () =>
-      withRetry(() => this.fetchQuote(symbol, ticker), {
-        maxRetries: 0, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
-      }).catch((yahooErr) => {
-        console.warn(`[quote] Yahoo falhou para ${ticker} (${yahooErr.message}), tentando StatusInvest...`);
-        return this.fetchFromStatusInvest(ticker);
+      // StatusInvest como fonte PRIMÁRIA (dados B3 mais confiáveis para ações brasileiras)
+      this.fetchFromStatusInvest(ticker).catch((siErr) => {
+        console.warn(`[quote] StatusInvest falhou para ${ticker} (${(siErr as Error).message}), tentando Yahoo...`);
+        const symbol = this.toYahooSymbol(ticker);
+        return withRetry(() => this.fetchQuote(symbol, ticker), {
+          maxRetries: 0, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+        });
       }));
   }
 

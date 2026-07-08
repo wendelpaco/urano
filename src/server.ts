@@ -1,5 +1,16 @@
 import 'dotenv/config';
 import Fastify, { type FastifyError } from 'fastify';
+
+// ─── Console override para timestamp GMT-3 ────────────────────────────
+const _orig = { log: console.log, warn: console.warn, error: console.error };
+function brTs(): string {
+  const d = new Date(new Date().getTime() - 3 * 3600000);
+  return [String(d.getUTCDate()).padStart(2, '0'), String(d.getUTCMonth() + 1).padStart(2, '0'), d.getUTCFullYear(),
+    String(d.getUTCHours()).padStart(2, '0'), String(d.getUTCMinutes()).padStart(2, '0'), String(d.getUTCSeconds()).padStart(2, '0')].join(' ');
+}
+console.log = (...a: unknown[]) => _orig.log(`${brTs()}`, ...a);
+console.warn = (...a: unknown[]) => _orig.warn(`${brTs()}`, ...a);
+console.error = (...a: unknown[]) => _orig.error(`${brTs()}`, ...a);
 import { env } from './config/env.ts';
 import { routesPlugin } from './infra/http/routes/index.ts';
 import { JobStore } from './infra/jobs/job-store.ts';
@@ -11,15 +22,30 @@ import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
 
 const isDev = process.env.NODE_ENV !== 'production';
 
+// Timestamp GMT-3 (horário de Brasília) no formato dd mm yyyy hh mm ss
+function brtTimestamp(): string {
+  const now = new Date();
+  // Ajusta para GMT-3 manualmente
+  const brt = new Date(now.getTime() - 3 * 3600000);
+  const dd = String(brt.getUTCDate()).padStart(2, '0');
+  const mm = String(brt.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = brt.getUTCFullYear();
+  const hh = String(brt.getUTCHours()).padStart(2, '0');
+  const min = String(brt.getUTCMinutes()).padStart(2, '0');
+  const ss = String(brt.getUTCSeconds()).padStart(2, '0');
+  return `${dd} ${mm} ${yyyy} ${hh} ${min} ${ss}`;
+}
+
 const app = Fastify({
-  logger: isDev
-    ? {
-        transport: {
-          target: 'pino-pretty',
-          options: { colorize: true, translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' },
-        },
-      }
-    : true, // JSON puro em produção (muito mais rápido)
+  logger: {
+    timestamp: () => `,"time":"${brtTimestamp()}"`,
+    ...(isDev ? {
+      transport: {
+        target: 'pino-pretty',
+        options: { colorize: true, ignore: 'pid,hostname', translateTime: false },
+      },
+    } : {}),
+  },
 });
 
 // Rate limiting global (após auth, antes das rotas)
