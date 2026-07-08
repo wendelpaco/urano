@@ -53,14 +53,48 @@ interface FiiDetail extends FiiBasic {
 // ─── FIIs cadastrados ──────────────────────────────────────────────────────
 
 const KNOWN_FIIS: FiiBasic[] = [
+  // Logística
   { ticker: 'HGLG11', name: 'CSHG Logística FII', cnpj: '11364788000160', segment: 'Logística', admin: 'Credit Suisse Hedging-Griffo' },
-  { ticker: 'KNRI11', name: 'Kinea Renda Imobiliária FII', cnpj: '12347360000193', segment: 'Lajes Corporativas', admin: 'Kinea Investimentos' },
   { ticker: 'XPLG11', name: 'XP Log FII', cnpj: '28417139000182', segment: 'Logística', admin: 'XP Asset Management' },
-  { ticker: 'MXRF11', name: 'Maxi Renda FII', cnpj: '14822143000105', segment: 'Títulos e Valores Mobiliários', admin: 'BTG Pactual' },
-  { ticker: 'BCFF11', name: 'BTG Pactual Fundo de Fundos FII', cnpj: '18950282000127', segment: 'FoF', admin: 'BTG Pactual' },
-  { ticker: 'KNIP11', name: 'Kinea Índice de Preços FII', cnpj: '15555444000142', segment: 'Títulos e Valores Mobiliários', admin: 'Kinea Investimentos' },
+  { ticker: 'BTLG11', name: 'BTG Pactual Logística FII', cnpj: '19964177000176', segment: 'Logística', admin: 'BTG Pactual' },
+  { ticker: 'VILG11', name: 'Vinci Logística FII', cnpj: '31476035000182', segment: 'Logística', admin: 'Vinci Partners' },
+  { ticker: 'LVBI11', name: 'VBI Logístico FII', cnpj: '28600898000161', segment: 'Logística', admin: 'VBI Real Estate' },
+  // Lajes Corporativas
+  { ticker: 'KNRI11', name: 'Kinea Renda Imobiliária FII', cnpj: '12347360000193', segment: 'Lajes Corporativas', admin: 'Kinea Investimentos' },
+  { ticker: 'RCRB11', name: 'Rio Bravo Renda Corporativa FII', cnpj: '11171833000170', segment: 'Lajes Corporativas', admin: 'Rio Bravo Investimentos' },
+  { ticker: 'HGRE11', name: 'CSHG Real Estate FII', cnpj: '11364788000160', segment: 'Lajes Corporativas', admin: 'Credit Suisse Hedging-Griffo' },
+  { ticker: 'BRCR11', name: 'BTG Pactual Corporate Office Fund FII', cnpj: '11318266000110', segment: 'Lajes Corporativas', admin: 'BTG Pactual' },
+  // Shopping
   { ticker: 'VISC11', name: 'Vinci Shopping Centers FII', cnpj: '20912855000180', segment: 'Shopping', admin: 'Vinci Partners' },
+  { ticker: 'XPML11', name: 'XP Malls FII', cnpj: '28981855000178', segment: 'Shopping', admin: 'XP Asset Management' },
+  { ticker: 'MALL11', name: 'Malls Brasil Plural FII', cnpj: '20110654000140', segment: 'Shopping', admin: 'Plural Gestão' },
+  { ticker: 'HSML11', name: 'Hedge Shopping Malls FII', cnpj: '36872408000160', segment: 'Shopping', admin: 'Hedge Investments' },
+  // Títulos e Valores Mobiliários (Papel)
+  { ticker: 'KNIP11', name: 'Kinea Índice de Preços FII', cnpj: '15555444000142', segment: 'Títulos e Valores Mobiliários', admin: 'Kinea Investimentos' },
+  { ticker: 'KNCR11', name: 'Kinea Rendimentos Imobiliários FII', cnpj: '18644758000147', segment: 'Títulos e Valores Mobiliários', admin: 'Kinea Investimentos' },
+  { ticker: 'MXRF11', name: 'Maxi Renda FII', cnpj: '14822143000105', segment: 'Títulos e Valores Mobiliários', admin: 'BTG Pactual' },
+  { ticker: 'VGIR11', name: 'Valora CRI Índice de Preço FII', cnpj: '31587635000180', segment: 'Títulos e Valores Mobiliários', admin: 'Valora Investimentos' },
+  { ticker: 'IRDM11', name: 'Iridium Recebíveis Imobiliários FII', cnpj: '29193901000110', segment: 'Títulos e Valores Mobiliários', admin: 'Iridium Gestão' },
+  { ticker: 'URPR11', name: 'Urca Prime Renda FII', cnpj: '33283111000100', segment: 'Títulos e Valores Mobiliários', admin: 'Urca Investments' },
+  { ticker: 'CPTS11', name: 'Capitânia Securities II FII', cnpj: '29414530000136', segment: 'Títulos e Valores Mobiliários', admin: 'Capitânia Investimentos' },
+  { ticker: 'RECR11', name: 'REC Recebíveis Imobiliários FII', cnpj: '27141610000100', segment: 'Títulos e Valores Mobiliários', admin: 'REC Gestão' },
+  { ticker: 'DEVA11', name: 'Devant Recebíveis Imobiliários FII', cnpj: '37173550000109', segment: 'Títulos e Valores Mobiliários', admin: 'Devant Asset' },
+  { ticker: 'RBRR11', name: 'RBR Rendimento High Grade FII', cnpj: '34845460000178', segment: 'Títulos e Valores Mobiliários', admin: 'RBR Asset' },
+  // Fundo de Fundos
+  { ticker: 'BCFF11', name: 'BTG Pactual Fundo de Fundos FII', cnpj: '18950282000127', segment: 'FoF', admin: 'BTG Pactual' },
+  { ticker: 'KISU11', name: 'Kinea FOF FII', cnpj: '36780740000194', segment: 'FoF', admin: 'Kinea Investimentos' },
+  { ticker: 'ITIP11', name: 'Itaú FOF Renda Imobiliária FII', cnpj: '36814918000170', segment: 'FoF', admin: 'Itaú Asset' },
+  // Renda Urbana / Híbrido
   { ticker: 'HGRU11', name: 'CSHG Renda Urbana FII', cnpj: '24872469000100', segment: 'Renda Urbana', admin: 'Credit Suisse Hedging-Griffo' },
+  { ticker: 'TRXF11', name: 'TRX Real Estate FII', cnpj: '30527639000107', segment: 'Renda Urbana', admin: 'TRX Gestão' },
+  // Agro
+  { ticker: 'RZTR11', name: 'Riza Terrax FII', cnpj: '35690013000100', segment: 'Agro', admin: 'Riza Asset' },
+  { ticker: 'SNAG11', name: 'Suno Agro FII', cnpj: '36077366000103', segment: 'Agro', admin: 'Suno Asset' },
+  // Desenvolvimento Imobiliário
+  { ticker: 'VGIP11', name: 'Valora CRI FII', cnpj: '33737372000109', segment: 'Títulos e Valores Mobiliários', admin: 'Valora Investimentos' },
+  // Galpões / Industrial
+  { ticker: 'GARE11', name: 'Guardian Logística FII', cnpj: '38099718000162', segment: 'Logística', admin: 'Guardian Asset' },
+  { ticker: 'PATL11', name: 'Pátria Logístico FII', cnpj: '36157802000183', segment: 'Logística', admin: 'Pátria Investimentos' },
 ];
 
 // ─── Controllers ───────────────────────────────────────────────────────────

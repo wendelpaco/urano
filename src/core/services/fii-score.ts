@@ -131,6 +131,7 @@ export interface FIIScoreInput {
   liquidity: number | null;
   dividendsHistory: Array<{ date: string; value: number; type: string }>;
   vacancy?: number;
+  delinquency?: number;
 }
 
 // ─── Scoring Logic (portado intocado) ────────────────────────────────────────
@@ -145,6 +146,7 @@ export class FIIScoreCalculatorV4 {
       liquidity: rawLiquidity,
       dividendsHistory,
       vacancy = 0,
+      delinquency = 0,
     } = data;
 
     // P/VP e liquidez podem ser null → usa neutro
@@ -172,7 +174,7 @@ export class FIIScoreCalculatorV4 {
     const assetQuality = this.calculateAssetQuality(pvp, liquidity);
 
     // 4. Calcular risk score com limitador distinto (CORREÇÃO V4 #2)
-    const risk = this.calculateRiskScoreV4(type, dyNormalization, vacancy, liquidity, ticker);
+    const risk = this.calculateRiskScoreV4(type, dyNormalization, vacancy, delinquency, liquidity, ticker);
 
     // 5. Calcular overall score com penalização progressiva (CORREÇÃO V4 #3)
     const overallCalc = this.calculateOverallWithProgressivePenalty(
@@ -386,6 +388,7 @@ export class FIIScoreCalculatorV4 {
     type: 'papel' | 'tijolo' | 'hibrido',
     dyNormalization: DYNormalizationV4,
     vacancy: number,
+    delinquency: number,
     liquidity: number,
     ticker: string,
   ): RiskScoreV4 {
@@ -469,8 +472,14 @@ export class FIIScoreCalculatorV4 {
       else if (vacancy < 18) vacanciaRisk = 40;
       else vacanciaRisk = 25;
 
+      // Penalização por inadimplência (delinquency)
+      if (delinquency > 10) vacanciaRisk = Math.max(10, vacanciaRisk - 25);
+      else if (delinquency > 5) vacanciaRisk = Math.max(15, vacanciaRisk - 15);
+      else if (delinquency > 2) vacanciaRisk = Math.max(25, vacanciaRisk - 5);
+
       breakdown.vacancia = vacanciaRisk;
       breakdown.juros = 70;
+      breakdown.estrutura = delinquency > 0 ? 100 - delinquency * 5 : null;
 
       let liquidezRisk = 50;
       if (liquidity >= 5_000_000) liquidezRisk = 80;

@@ -18,6 +18,7 @@ const createKeySchema = z.object({
 });
 
 const deleteParamsSchema = z.object({ id: z.string().uuid() });
+const rotateParamsSchema = z.object({ id: z.string().uuid() });
 
 function generateApiKey(): string {
   const segments = Array.from({ length: 4 }, () =>
@@ -69,6 +70,37 @@ export async function listApiKeysController(
     .orderBy(desc(apiKeys.createdAt));
 
   reply.send({ total: rows.length, data: rows });
+}
+
+/** POST /v1/keys/:id/rotate — Rotaciona uma API key (gera nova, mantém nome) */
+export async function rotateApiKeyController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = rotateParamsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
+
+  const { id } = parsed.data;
+  const newKey = generateApiKey();
+
+  const [updated] = await db
+    .update(apiKeys)
+    .set({ key: newKey })
+    .where(eq(apiKeys.id, id))
+    .returning();
+
+  if (!updated) {
+    reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
+    return;
+  }
+
+  reply.send({
+    id: updated.id,
+    name: updated.name,
+    key: newKey,
+    active: updated.active,
+    message: 'Chave rotacionada. A chave anterior deixou de funcionar. Guarde a nova.',
+  });
 }
 
 /** DELETE /v1/keys/:id */

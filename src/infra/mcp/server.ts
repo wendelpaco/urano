@@ -3,13 +3,17 @@
  * Urano MCP Server — Conecta Claude/ChatGPT aos dados da bolsa brasileira.
  *
  * Ferramentas expostas:
- *   get_stock_analysis  — Score completo de uma ação
- *   get_fii_analysis    — Score completo de um FII
- *   get_allocation      — Carteira recomendada por perfil de risco
- *   get_ranking         — Ranking de ações ou FIIs por score
- *   search_stocks       — Screener por critérios fundamentalistas
- *   compare_stocks      — Comparação lado a lado entre tickers
- *   get_macro           — Indicadores macroeconômicos (Selic, IPCA, etc.)
+ *   get_stock_analysis   — Score completo de uma ação
+ *   get_fii_analysis     — Score completo de um FII
+ *   get_allocation       — Carteira recomendada por perfil de risco
+ *   get_ranking          — Ranking de ações ou FIIs por score
+ *   search_stocks        — Screener por critérios fundamentalistas
+ *   compare_stocks       — Comparação lado a lado entre tickers
+ *   get_macro            — Indicadores macroeconômicos (Selic, IPCA, etc.)
+ *   get_stock_stats      — Estatísticas: 52w range, YTD, volume
+ *   get_corporate_events — Desdobramentos, grupamentos, bonificações
+ *   screen_fiis          — Screener de FIIs por P/VP, DY, classificação
+ *   get_fii_operational  — Dados operacionais: vacância, imóveis, inquilinos
  *
  * Uso:
  *   Claude Desktop: adicionar ao claude_desktop_config.json
@@ -149,6 +153,100 @@ server.tool(
   {},
   async () => {
     const data = await api('/macro');
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
+  'get_stock_stats',
+  'Estatísticas de uma ação: preço atual, máxima/mínima 52 semanas, retorno no ano (YTD), volume médio diário, posição no range 52 semanas.',
+  { ticker: z.string().describe('Ticker da ação (ex: PETR4, VALE3)') },
+  async ({ ticker }) => {
+    const data = await api(`/stocks/${ticker.toUpperCase()}/stats`);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
+  'get_corporate_events',
+  'Eventos corporativos de uma ação: desdobramentos, grupamentos, bonificações. Útil para entender ajustes históricos de preço.',
+  { ticker: z.string().describe('Ticker da ação (ex: MGLU3, PETR4)') },
+  async ({ ticker }) => {
+    const data = await api(`/stocks/${ticker.toUpperCase()}/corporate-events`);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
+  'screen_fiis',
+  'Filtra FIIs por métricas: P/VP máximo, dividend yield mínimo, liquidez mínima, classificação (tijolo/papel/híbrido/fundo_de_fundos), ordenação por DY ou P/VP.',
+  {
+    pvp_lte: z.number().min(0).optional().describe('P/VP máximo (ex: 1.0 = abaixo do valor patrimonial)'),
+    dy_gte: z.number().min(0).optional().describe('Dividend yield mínimo em % a.a. (ex: 8)'),
+    liquidity_gte: z.number().min(0).optional().describe('Liquidez mínima em R$ (ex: 1000000)'),
+    classification: z.enum(['tijolo', 'papel', 'hibrido', 'fundo_de_fundos']).optional().describe('Classificação do FII'),
+    segment: z.string().optional().describe('Segmento (ex: Logística, Shopping, Lajes Corporativas)'),
+    sort: z.enum(['dy', 'pvp', 'price', 'liquidity']).default('dy'),
+    limit: z.number().int().min(1).max(20).default(10),
+  },
+  async (params) => {
+    const qs = new URLSearchParams();
+    if (params.pvp_lte !== undefined) qs.set('pvp_lte', String(params.pvp_lte));
+    if (params.dy_gte !== undefined) qs.set('dy_gte', String(params.dy_gte));
+    if (params.liquidity_gte !== undefined) qs.set('liquidity_gte', String(params.liquidity_gte));
+    if (params.classification) qs.set('classification', params.classification);
+    if (params.segment) qs.set('segment', params.segment);
+    qs.set('sort', params.sort);
+    qs.set('limit', String(params.limit));
+    const data = await api(`/fiis/screener?${qs.toString()}`);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
+  'get_fii_operational',
+  'Dados operacionais completos de um FII: composição de ativos (% em imóveis, CRI, etc.), vacância, inadimplência, principais imóveis, concentração de inquilinos, administrador, data de início, mandato.',
+  { ticker: z.string().describe('Ticker do FII (ex: HGLG11, XPML11, KNCR11)') },
+  async ({ ticker }) => {
+    const data = await api(`/fiis/${ticker.toUpperCase()}/operational`);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
+  'search_stocks',
+  'Filtra ações por múltiplos critérios fundamentalistas: score, P/L, ROE, DY, dívida, setor. Retorna as melhores ações que atendem aos critérios.',
+  {
+    minScore: z.number().int().min(0).max(100).optional().describe('Score mínimo (0-100)'),
+    minROE: z.number().optional().describe('ROE mínimo em % (ex: 15)'),
+    maxPE: z.number().min(0).optional().describe('P/L máximo (ex: 10)'),
+    minDY: z.number().min(0).optional().describe('Dividend yield mínimo em % (ex: 5)'),
+    maxDE: z.number().min(0).optional().describe('Dívida/Equity máximo (ex: 2)'),
+    sector: z.string().optional().describe('Setor (ex: Energia Elétrica, Bancos)'),
+    sortBy: z.enum(['score', 'peRatio', 'roe', 'dy']).default('score'),
+    limit: z.number().int().min(1).max(20).default(10),
+  },
+  async (params) => {
+    const qs = new URLSearchParams();
+    if (params.minScore !== undefined) qs.set('minScore', String(params.minScore));
+    if (params.minROE !== undefined) qs.set('minROE', String(params.minROE));
+    if (params.maxPE !== undefined) qs.set('maxPE', String(params.maxPE));
+    if (params.minDY !== undefined) qs.set('minDY', String(params.minDY));
+    if (params.maxDE !== undefined) qs.set('maxDE', String(params.maxDE));
+    if (params.sector) qs.set('sector', params.sector);
+    qs.set('sortBy', params.sortBy);
+    qs.set('limit', String(params.limit));
+    const data = await api(`/screener?${qs.toString()}`);
     return {
       content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
     };

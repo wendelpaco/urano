@@ -5,12 +5,14 @@
  *   - minScore, maxScore (score do modelo)
  *   - minPE, maxPE (P/L)
  *   - minROE, maxROE
- *   - minDY, maxDY (dividend yield)
+ *   - minDY (dividend yield mínimo)
  *   - maxDE (dívida/equity máximo)
  *   - sector (setor)
  *   - year (ano fiscal)
  *   - sortBy (score, peRatio, roe, dy, ticker)
  *   - limit, order
+ *
+ * Performance: cache Redis 5 min + batch com concorrência controlada.
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -22,6 +24,8 @@ import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
+import { batchWithConcurrency } from '../../../shared/retry.ts';
+import { redis } from '../../services/redis.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -68,6 +72,20 @@ export async function screenerController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
   const filters = parsed.data;
 
+  // Cache key (exclui filtros vazios)
+  const activeFilters = Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => v !== undefined),
+  );
+  const cacheKey = `screener:${JSON.stringify(activeFilters)}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      reply.send(JSON.parse(cached));
+      return;
+    }
+  } catch { /* Redis offline */ }
+
   // Busca fundamentals base
   let query = sql`
     SELECT DISTINCT ON (c.ticker)
@@ -98,62 +116,69 @@ export async function screenerController(
     query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
   }
 
-  query = sql`${query} ORDER BY c.ticker, cf.reference_date DESC LIMIT 30`;
+  query = sql`${query} ORDER BY c.ticker, cf.reference_date DESC LIMIT 100`;
 
   const rows = await db.execute(query);
   const rawData = rows as unknown as Record<string, unknown>[];
 
-  // Enriquece com scores
+  // Enriquece com scores usando batch (concorrência controlada)
   const results: Array<Record<string, unknown>> = [];
 
-  for (const r of rawData) {
-    const ticker = String(r.ticker);
+  const enriched = await batchWithConcurrency(
+    rawData,
+    async (r) => {
+      const ticker = String(r.ticker);
 
-    // Preço (Yahoo)
-    let price = 0;
-    try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { continue; }
-    if (price <= 0) continue;
+      let price = 0;
+      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
+      if (price <= 0) return null;
 
-    // Indicadores
-    const indicators = calcAllIndicators(r, price);
+      const indicators = calcAllIndicators(r, price);
 
-    // DY
-    try {
-      const proventos = await dividendsProvider.fetchDividends(ticker);
-      if (proventos && price > 0) {
-        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-        const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-          .reduce((s, e) => s + e.value, 0);
-        if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
-      }
-    } catch { /* ok */ }
+      // DY
+      try {
+        const proventos = await dividendsProvider.fetchDividends(ticker);
+        if (proventos && price > 0) {
+          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+          const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
+            .reduce((s, e) => s + e.value, 0);
+          if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+        }
+      } catch { /* ok */ }
 
-    // Score
-    const scoreResult = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
+      const scoreResult = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
 
-    // Aplica filtros pós-cálculo
-    if (filters.minScore !== undefined && scoreResult.score < filters.minScore) continue;
-    if (filters.maxScore !== undefined && scoreResult.score > filters.maxScore) continue;
-    if (filters.minPE !== undefined && (indicators.peRatio === null || indicators.peRatio < filters.minPE)) continue;
-    if (filters.maxPE !== undefined && (indicators.peRatio === null || indicators.peRatio > filters.maxPE)) continue;
-    if (filters.minROE !== undefined && (indicators.roe === null || indicators.roe < filters.minROE)) continue;
-    if (filters.maxROE !== undefined && (indicators.roe === null || indicators.roe > filters.maxROE)) continue;
-    if (filters.minDY !== undefined && (indicators.dividendYield === null || indicators.dividendYield < filters.minDY)) continue;
-    if (filters.maxDE !== undefined && (indicators.debtToEquity === null || indicators.debtToEquity > filters.maxDE)) continue;
+      return {
+        ticker,
+        name: r.name,
+        sector: r.sector ?? null,
+        price: Math.round(price * 100) / 100,
+        score: scoreResult.score,
+        peRatio: indicators.peRatio,
+        roe: indicators.roe,
+        dividendYield: indicators.dividendYield,
+        debtToEquity: indicators.debtToEquity,
+        netMargin: indicators.netMargin,
+        diagnosis: scoreResult.diagnosis,
+      };
+    },
+    5,
+  );
 
-    results.push({
-      ticker,
-      name: r.name,
-      sector: r.sector ?? null,
-      price: Math.round(price * 100) / 100,
-      score: scoreResult.score,
-      peRatio: indicators.peRatio,
-      roe: indicators.roe,
-      dividendYield: indicators.dividendYield,
-      debtToEquity: indicators.debtToEquity,
-      netMargin: indicators.netMargin,
-      diagnosis: scoreResult.diagnosis,
-    });
+  // Filtra resultados
+  for (const r of enriched) {
+    if (!r) continue;
+
+    if (filters.minScore !== undefined && (r.score as number) < filters.minScore) continue;
+    if (filters.maxScore !== undefined && (r.score as number) > filters.maxScore) continue;
+    if (filters.minPE !== undefined && (r.peRatio === null || (r.peRatio as number) < filters.minPE)) continue;
+    if (filters.maxPE !== undefined && (r.peRatio === null || (r.peRatio as number) > filters.maxPE)) continue;
+    if (filters.minROE !== undefined && (r.roe === null || (r.roe as number) < filters.minROE)) continue;
+    if (filters.maxROE !== undefined && (r.roe === null || (r.roe as number) > filters.maxROE)) continue;
+    if (filters.minDY !== undefined && (r.dividendYield === null || (r.dividendYield as number) < filters.minDY)) continue;
+    if (filters.maxDE !== undefined && (r.debtToEquity === null || (r.debtToEquity as number) > filters.maxDE)) continue;
+
+    results.push(r);
   }
 
   // Ordena
@@ -169,7 +194,7 @@ export async function screenerController(
 
   const sliced = results.slice(0, filters.limit);
 
-  reply.send({
+  const response = {
     filters: {
       sector: filters.sector ?? null,
       minScore: filters.minScore ?? null, maxScore: filters.maxScore ?? null,
@@ -180,5 +205,10 @@ export async function screenerController(
     },
     total: sliced.length,
     data: sliced,
-  });
+  };
+
+  // Cache 5 min
+  try { await redis.setex(cacheKey, 300, JSON.stringify(response)); } catch { /* ok */ }
+
+  reply.send(response);
 }

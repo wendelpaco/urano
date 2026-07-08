@@ -14,6 +14,7 @@ import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { statusInvestScraper } from '../../services/statusinvest-scraper.ts';
 import { fiisScraper } from '../../services/fiis-scraper.ts';
+import { fiiOperationalService } from '../../services/fii-operational.service.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
 import {
@@ -345,6 +346,17 @@ export async function getFiiAnalysisController(
   // DY: usa scraper se disponível, senão calcula dos proventos
   const dy = dyFromScraper ?? (sum12m > 0 && price > 0 ? +(sum12m / price * 100).toFixed(2) : 0);
 
+  // Dados operacionais (vacância, inadimplência)
+  let vacancy: number | undefined;
+  let delinquency: number | undefined;
+  let operationalOk = false;
+  try {
+    const opData = await fiiOperationalService.fetchOperationalData(ticker);
+    if (opData.vacancyPct !== null) vacancy = opData.vacancyPct;
+    if (opData.delinquencyPct !== null) delinquency = opData.delinquencyPct;
+    operationalOk = opData.source.operational;
+  } catch { /* ok */ }
+
   // Score FII
   const input: FIIScoreInput = {
     ticker,
@@ -353,6 +365,8 @@ export async function getFiiAnalysisController(
     pvp,
     liquidity,
     dividendsHistory: dividendEvents,
+    vacancy,
+    delinquency,
   };
 
   const score = FIIScoreCalculatorV4.calculate(input);
@@ -392,6 +406,7 @@ export async function getFiiAnalysisController(
       quotes: quotesOk,
       dividends: dividendsOk,
       pvp: pvpOk,
+      operational: operationalOk,
       classification: score.type_source !== 'inferred',
     },
     price: price || null,

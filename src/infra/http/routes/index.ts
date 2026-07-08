@@ -4,11 +4,11 @@ import { healthcheckController } from '../controllers/healthcheck.controller.ts'
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
 import { listCompaniesController, listSectorsController, getCompanyByTickerController } from '../controllers/companies.controller.ts';
 import { getLatestFundamentalsController, getFundamentalsHistoryController } from '../controllers/fundamentals.controller.ts';
-import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController } from '../controllers/stocks.controller.ts';
+import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController, getCorporateEventsController } from '../controllers/stocks.controller.ts';
 import { getDividendsController } from '../controllers/dividends.controller.ts';
 import { listFiisController, getFiiByTickerController, getFiiHistoryController, fiiScreenerController, getFiiOperationalController } from '../controllers/fiis.controller.ts';
 import { listMacroController, getMacroSeriesController } from '../controllers/macro.controller.ts';
-import { createApiKeyController, listApiKeysController, deleteApiKeyController } from '../controllers/auth.controller.ts';
+import { createApiKeyController, listApiKeysController, deleteApiKeyController, rotateApiKeyController } from '../controllers/auth.controller.ts';
 import { screenerController } from '../controllers/screener.controller.ts';
 import {
   getStockAnalysisController,
@@ -59,6 +59,7 @@ export async function routesPlugin(
   app.get('/stocks/:ticker/quote', getStockQuoteController);
   app.get('/stocks/:ticker/history', getStockHistoryController);
   app.get('/stocks/:ticker/stats', getStockStatsController);
+  app.get('/stocks/:ticker/corporate-events', getCorporateEventsController);
   app.get('/stocks/quotes', getBatchQuotesController);
 
   // Dividends
@@ -79,6 +80,7 @@ export async function routesPlugin(
   // Auth / API Keys
   app.post('/keys', createApiKeyController);
   app.get('/keys', listApiKeysController);
+  app.post('/keys/:id/rotate', rotateApiKeyController);
   app.delete('/keys/:id', deleteApiKeyController);
 
   // Screener

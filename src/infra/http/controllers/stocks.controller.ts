@@ -141,6 +141,11 @@ const statsQuerySchema = z.object({
   format: z.enum(['json', 'csv']).optional().default('json'),
 });
 
+const corporateEventsSchema = z.object({
+  year: z.string().optional().transform((v) => (v ? parseInt(v, 10) : undefined)).pipe(z.number().int().min(1986).max(2030).optional()),
+  format: z.enum(['json', 'csv']).optional().default('json'),
+});
+
 export interface StockStats {
   ticker: string;
   companyName?: string;
@@ -265,6 +270,137 @@ export async function getStockStatsController(
     reply.status(502).send({
       error: 'StatsUnavailable',
       message: `Estatísticas indisponíveis para "${ticker}".`,
+      detail: message,
+    });
+  }
+}
+
+// ─── Corporate Events ────────────────────────────────────────────────────────
+
+export interface CorporateEvent {
+  ticker: string;
+  date: string;            // data ex
+  type: 'split' | 'reverse_split' | 'dividend' | 'bonus' | 'subscription';
+  description: string;
+  ratio?: number;          // ex: 2.0 = 2 para 1 (split); 0.5 = 1 para 2 (reverse)
+  valuePerShare?: number;  // proventos em R$
+}
+
+/**
+ * GET /v1/stocks/:ticker/corporate-events?year=2025
+ *
+ * Eventos corporativos: splits, bonificações, desdobramentos.
+ * Dados via Yahoo Finance (events API). Cache Redis 24h.
+ */
+export async function getCorporateEventsController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const paramsParsed = paramsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Ticker inválido.');
+
+  const queryParsed = corporateEventsSchema.safeParse(request.query);
+  if (!queryParsed.success) return sendZodError(reply, queryParsed.error, 'Query inválida.');
+
+  const { ticker } = paramsParsed.data;
+  const { year, format } = queryParsed.data;
+  const symbol = `${ticker}.SA`;
+
+  const cacheKey = `events:${ticker}`;
+
+  try {
+    // Tenta cache 24h
+    let events: CorporateEvent[] = [];
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) events = JSON.parse(cached);
+    } catch { /* ok */ }
+
+    if (events.length === 0) {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5y&includePrePost=false&events=div%2Csplit`;
+
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'Urano-FinBot/0.1', Accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Yahoo Finance HTTP ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        chart?: {
+          result?: Array<{
+            events?: {
+              splits?: Record<string, { date: number; numerator: number; denominator: number; splitRatio: string }>;
+              dividends?: Record<string, { date: number; amount: number }>;
+            };
+          }>;
+        };
+      };
+
+      const result = data.chart?.result?.[0];
+      if (result?.events) {
+        // Splits (desdobramentos, grupamentos)
+        if (result.events.splits) {
+          for (const [, split] of Object.entries(result.events.splits)) {
+            const ratio = split.numerator / split.denominator;
+            events.push({
+              ticker,
+              date: new Date(split.date * 1000).toISOString().slice(0, 10),
+              type: ratio > 1 ? 'split' : 'reverse_split',
+              description: ratio > 1
+                ? `Desdobramento ${split.numerator} para ${split.denominator}`
+                : `Grupamento ${split.numerator} para ${split.denominator}`,
+              ratio: +ratio.toFixed(4),
+            });
+          }
+        }
+
+        // Dividendos (da Yahoo, complementar aos dados CVM)
+        if (result.events.dividends) {
+          for (const [, div] of Object.entries(result.events.dividends)) {
+            events.push({
+              ticker,
+              date: new Date(div.date * 1000).toISOString().slice(0, 10),
+              type: 'dividend',
+              description: `Provento de R$ ${div.amount.toFixed(4)} por ação`,
+              valuePerShare: +div.amount.toFixed(4),
+            });
+          }
+        }
+      }
+
+      events.sort((a, b) => b.date.localeCompare(a.date));
+
+      // Cache 24h
+      try { await redis.setex(cacheKey, 86400, JSON.stringify(events)); } catch { /* ok */ }
+    }
+
+    // Filtra por ano
+    let filtered = events;
+    if (year) {
+      const yearStr = String(year);
+      filtered = events.filter((e) => e.date.startsWith(yearStr));
+    }
+
+    // CSV export
+    if (format === 'csv') {
+      reply.header('Content-Type', 'text/csv; charset=utf-8');
+      reply.header('Content-Disposition', `attachment; filename="${ticker}_events.csv"`);
+      const header = 'date,type,description,ratio,value_per_share\n';
+      const rows = filtered.map((e) =>
+        `${e.date},${e.type},"${e.description}",${e.ratio ?? ''},${e.valuePerShare ?? ''}`,
+      ).join('\n');
+      reply.send(header + rows);
+      return;
+    }
+
+    reply.send({ ticker, total: filtered.length, data: filtered });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    reply.status(502).send({
+      error: 'EventsUnavailable',
+      message: `Eventos corporativos indisponíveis para "${ticker}".`,
       detail: message,
     });
   }
