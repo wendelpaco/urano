@@ -188,13 +188,23 @@ export class PgCompanyRepository implements ICompanyRepository {
     name: string,
   ): Promise<void> {
     const now = new Date();
-    await db
-      .insert(companies)
-      .values({ cnpj, ticker, name, sector: null, createdAt: now, updatedAt: now })
-      .onConflictDoUpdate({
-        target: companies.cnpj,
-        set: { ticker, name, updatedAt: now },
-      });
+    try {
+      await db
+        .insert(companies)
+        .values({ cnpj, ticker, name, sector: null, createdAt: now, updatedAt: now })
+        .onConflictDoUpdate({
+          target: companies.cnpj,
+          set: { ticker, name, updatedAt: now },
+        });
+    } catch (err: unknown) {
+      // Enriquecer o erro com a mensagem original do PostgreSQL
+      const cause = (err as { cause?: Error })?.cause;
+      const pgMessage = cause?.message || (err as Error).message;
+      throw new Error(
+        `Falha ao inserir/atualizar empresa ${ticker} (CNPJ ${cnpj}): ${pgMessage}`,
+        { cause: err as Error },
+      );
+    }
   }
 
   /**
