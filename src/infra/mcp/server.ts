@@ -224,23 +224,44 @@ server.tool(
 );
 
 server.tool(
+  'compare_assets',
+  'Comparação lado a lado entre ações ou FIIs. Mostra score, P/L, P/VP, ROE, DY, margens e destaques de cada ativo alinhados para facilitar a análise comparativa. Indica o melhor da lista (bestPick) e a média dos scores.',
+  {
+    tickers: z.array(z.string()).min(2).max(10).describe('Lista de tickers a comparar (ex: ["PETR4", "VALE3", "WEGE3"])'),
+    type: z.enum(['stock', 'fii']).default('stock').describe('Tipo de ativo'),
+  },
+  async ({ tickers, type }) => {
+    const data = await apiPost('/analysis/compare', { tickers, type });
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+  },
+);
+
+server.tool(
   'search_stocks',
-  'Filtra ações por múltiplos critérios fundamentalistas: score, P/L, ROE, DY, dívida, setor. Retorna as melhores ações que atendem aos critérios.',
+  'Filtra ações por múltiplos critérios fundamentalistas: score, P/L, P/VP, EV/EBIT, ROE, ROA, margem líquida, LPA, DY, dívida, setor. Retorna as melhores ações que atendem aos critérios.',
   {
     minScore: z.number().int().min(0).max(100).optional().describe('Score mínimo (0-100)'),
-    minROE: z.number().optional().describe('ROE mínimo em % (ex: 15)'),
     maxPE: z.number().min(0).optional().describe('P/L máximo (ex: 10)'),
+    maxPVP: z.number().min(0).optional().describe('P/VP máximo (ex: 2)'),
+    minROE: z.number().optional().describe('ROE mínimo em % (ex: 15)'),
+    minROA: z.number().optional().describe('ROA mínimo em % (ex: 5)'),
+    minNetMargin: z.number().optional().describe('Margem líquida mínima em % (ex: 10)'),
     minDY: z.number().min(0).optional().describe('Dividend yield mínimo em % (ex: 5)'),
     maxDE: z.number().min(0).optional().describe('Dívida/Equity máximo (ex: 2)'),
     sector: z.string().optional().describe('Setor (ex: Energia Elétrica, Bancos)'),
-    sortBy: z.enum(['score', 'peRatio', 'roe', 'dy']).default('score'),
+    sortBy: z.enum(['score', 'peRatio', 'pvp', 'roe', 'roa', 'dy', 'netMargin']).default('score'),
     limit: z.number().int().min(1).max(20).default(10),
   },
   async (params) => {
     const qs = new URLSearchParams();
     if (params.minScore !== undefined) qs.set('minScore', String(params.minScore));
-    if (params.minROE !== undefined) qs.set('minROE', String(params.minROE));
     if (params.maxPE !== undefined) qs.set('maxPE', String(params.maxPE));
+    if (params.maxPVP !== undefined) qs.set('maxPVP', String(params.maxPVP));
+    if (params.minROE !== undefined) qs.set('minROE', String(params.minROE));
+    if (params.minROA !== undefined) qs.set('minROA', String(params.minROA));
+    if (params.minNetMargin !== undefined) qs.set('minNetMargin', String(params.minNetMargin));
     if (params.minDY !== undefined) qs.set('minDY', String(params.minDY));
     if (params.maxDE !== undefined) qs.set('maxDE', String(params.maxDE));
     if (params.sector) qs.set('sector', params.sector);
