@@ -33,7 +33,7 @@
 **Interfaces:**
 - Produces: export Drizzle `backtestResults` — colunas: `id` uuid PK, `runId` uuid, `scoreVersion` varchar(20), `year` smallint, `ticker` varchar(10), `score/valuation/profitability/growth/dividends/quality/momentum` smallint, `startPrice` decimal(12,2), `endPrice` decimal(12,2) nullable, `return12m` decimal(8,2) nullable, `createdAt` timestamp.
 
-- [ ] **Step 1: Adicionar tabela ao schema**
+- [x] **Step 1: Adicionar tabela ao schema**
 
 Adicionar ao final de `src/infra/database/schema.ts`:
 
@@ -71,17 +71,17 @@ export const backtestResults = pgTable(
 );
 ```
 
-- [ ] **Step 2: Gerar e aplicar migration**
+- [x] **Step 2: Gerar e aplicar migration**
 
 Run: `bun run db:generate && bun run db:migrate`
 Expected: novo arquivo em `db/migrations/` com `CREATE TABLE "backtest_results"`; migrate aplica sem erro.
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `bun run typecheck`
 Expected: sem erros.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/infra/database/schema.ts db/migrations
@@ -106,7 +106,7 @@ git commit -m "feat: tabela backtest_results para persistir rodadas de backtest"
   - `scoreBuckets(rows: BacktestRow[], size?: number): BucketStat[]` com `BucketStat = { label: string; count: number; avgReturn: number; pctPositive: number; best: number; worst: number; bestTicker: string }`
   - `topNStrategy(rows: BacktestRow[], n: number): StrategyResult` com `StrategyResult = { n: number; years: Array<{ year: number; portfolioReturn: number; marketReturn: number }>; avgPortfolio: number; avgMarket: number; winYears: number; totalYears: number }`
 
-- [ ] **Step 1: Escrever testes que falham**
+- [x] **Step 1: Escrever testes que falham**
 
 Criar `tests/core/backtest-analysis.test.ts`:
 
@@ -205,12 +205,12 @@ describe('topNStrategy', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar testes para ver falhar**
+- [x] **Step 2: Rodar testes para ver falhar**
 
 Run: `bun test tests/core/backtest-analysis.test.ts`
 Expected: FAIL — módulo `backtest-analysis.ts` não existe.
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 Criar `src/core/services/backtest-analysis.ts`:
 
@@ -348,12 +348,12 @@ export function topNStrategy(rows: BacktestRow[], n: number): StrategyResult {
 }
 ```
 
-- [ ] **Step 4: Rodar testes**
+- [x] **Step 4: Rodar testes**
 
 Run: `bun test tests/core/backtest-analysis.test.ts`
 Expected: PASS (todos).
 
-- [ ] **Step 5: Typecheck + commit**
+- [x] **Step 5: Typecheck + commit**
 
 Run: `bun run typecheck`
 
@@ -373,7 +373,7 @@ git commit -m "feat: análise estatística de backtest como funções puras em c
 - Consumes: `backtestResults` (Task 1), `pillarCorrelations/scoreBuckets/topNStrategy/percentile/PILLARS` (Task 2).
 - Produces: cada rodada grava linhas em `backtest_results` com `run_id` único e imprime o `run_id` no final.
 
-- [ ] **Step 1: Trocar análise inline pelos imports do core**
+- [x] **Step 1: Trocar análise inline pelos imports do core**
 
 Em `src/infra/workers/backtest.ts`:
 
@@ -399,7 +399,7 @@ const SCORE_VERSION = 'v1';
 
 3. **Remover** a função local `percentile` (linhas ~113-117) e a const local `corr` dentro de `main()` (linhas ~160-165) — substituídas pelos imports.
 
-- [ ] **Step 2: Persistir resultados por ano**
+- [x] **Step 2: Persistir resultados por ano**
 
 Em `main()`, criar o runId antes do loop de anos e gravar após cada ano:
 
@@ -435,7 +435,7 @@ for (const year of years) {
 }
 ```
 
-- [ ] **Step 3: Reescrever as seções de análise usando o core**
+- [x] **Step 3: Reescrever as seções de análise usando o core**
 
 Substituir as seções `CORRELAÇÃO POR PILAR`, `BUCKETS` e `ESTRATÉGIA` de `main()` por:
 
@@ -470,12 +470,12 @@ As variáveis `wr`, `scores` e a seção `DIAGNÓSTICO` continuam como estão (`
   console.log(`\n💾 Resultados gravados em backtest_results (run_id: ${runId})`);
 ```
 
-- [ ] **Step 4: Typecheck + testes existentes**
+- [x] **Step 4: Typecheck + testes existentes**
 
 Run: `bun run typecheck && bun test`
 Expected: sem erros; testes existentes passam.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/infra/workers/backtest.ts
@@ -494,7 +494,7 @@ git commit -m "feat: backtest persiste rodadas em backtest_results e reusa anál
 **Interfaces:**
 - Consumes: `HistoricalData` de `src/core/services/stock-score.ts` — `{ years: Array<{ fiscalYear: number; revenue: number; netIncome: number; roe: number; netMargin: number; debtToEquity: number; grossMargin: number }> }`.
 
-- [ ] **Step 1: Buscar 5 anos de fundamentals por ticker**
+- [x] **Step 1: Buscar 5 anos de fundamentals por ticker**
 
 Substituir a query de `backtestYear` (a atual usa `DISTINCT ON` de um único ano) por:
 
@@ -514,7 +514,7 @@ Substituir a query de `backtestYear` (a atual usa `DISTINCT ON` de um único ano
   );
 ```
 
-- [ ] **Step 2: Agrupar por ticker e montar HistoricalData**
+- [x] **Step 2: Agrupar por ticker e montar HistoricalData**
 
 Adicionar acima de `backtestYear`:
 
@@ -603,17 +603,17 @@ E reestruturar o corpo do loop de `backtestYear`:
   }
 ```
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `bun run typecheck`
 Expected: sem erros.
 
-- [ ] **Step 4: Smoke test com 1 ano**
+- [x] **Step 4: Smoke test com 1 ano**
 
 Run: `bun run backtest 2023 2023` (requer Postgres via `docker-compose up -d` e rede)
 Expected: roda sem exceção; pilar growth deixa de ser constante (valores variados no diagnóstico); linhas gravadas em `backtest_results`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/infra/workers/backtest.ts
@@ -634,7 +634,7 @@ git commit -m "feat: backtest calcula pilar growth com histórico real de fundam
 - Produces: `SCORE_VALIDATION: ScoreValidation` — consumido pelo endpoint de validação (Task 9). Shape:
   `interface ScoreValidation { scoreVersion: string; validatedAt: string | null; yearsTested: number[]; verdict: 'edge' | 'quality-filter' | 'pending'; summary: string; topN: { n: number; avgPortfolio: number; avgMarket: number; winYears: number; totalYears: number } | null; pillarCorrelations: Record<string, number> | null; }`
 
-- [ ] **Step 1: Rodar backtest completo em background**
+- [x] **Step 1: Rodar backtest completo em background**
 
 ```bash
 mkdir -p docs/backtest
@@ -643,7 +643,7 @@ bun run backtest 2>&1 | tee docs/backtest/2026-07-08-run-v1.log
 
 Expected: log termina com `💾 Resultados gravados em backtest_results (run_id: <uuid>)`. Anotar o run_id.
 
-- [ ] **Step 2: Criar arquivo de dados de validação (inicialmente pending)**
+- [x] **Step 2: Criar arquivo de dados de validação (inicialmente pending)**
 
 Criar `src/core/data/score-validation.data.ts`:
 
@@ -681,7 +681,7 @@ export const SCORE_VALIDATION: ScoreValidation = {
 };
 ```
 
-- [ ] **Step 3: Escrever o relatório de veredito**
+- [x] **Step 3: Escrever o relatório de veredito**
 
 Criar `docs/backtest/2026-07-08-veredito-v1.md` respondendo, com os números do log e queries no banco, as perguntas da spec (seção 0b). Template obrigatório:
 
@@ -744,15 +744,15 @@ FROM (
 ) t GROUP BY decil ORDER BY decil;
 ```
 
-- [ ] **Step 4: Preencher `score-validation.data.ts` com os números reais**
+- [x] **Step 4: Preencher `score-validation.data.ts` com os números reais**
 
 Atualizar `SCORE_VALIDATION`: `validatedAt` = data da análise, `yearsTested`, `verdict` conforme relatório, `summary` (linguagem de leigo, ex.: "Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi X% ao ano contra Y% da média do mercado. A estratégia ganhou em N de M anos."), `topN` do top 10, `pillarCorrelations` do log.
 
-- [ ] **Step 5: GATE — apresentar veredito ao usuário**
+- [x] **Step 5: GATE — apresentar veredito ao usuário**
 
 Apresentar relatório e discutir: prosseguir para Fase 1 como está, ou iterar pesos (0c, máx. 2 iterações, cada uma = mudança justificada economicamente + re-rodada + atualização do relatório). **Não prosseguir para as tasks da Fase 1 sem decisão explícita do usuário.**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/backtest src/core/data/score-validation.data.ts
@@ -779,7 +779,7 @@ git commit -m "docs: veredito do backtest v1 + dados de validação do score"
   - `fetchDataHealth(): Promise<DataHealth>` (em `infra/database/health-queries.ts`)
   - `GET /v1/health/data` → `DataHealth & { warnings: string[] }` (autenticado, cache Redis 300s, chave `health:data`)
 
-- [ ] **Step 1: Testes dos warnings (falhando)**
+- [x] **Step 1: Testes dos warnings (falhando)**
 
 Criar `tests/core/data-health.test.ts`:
 
@@ -837,12 +837,12 @@ describe('deriveHealthWarnings', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar para ver falhar**
+- [x] **Step 2: Rodar para ver falhar**
 
 Run: `bun test tests/core/data-health.test.ts`
 Expected: FAIL — módulo não existe.
 
-- [ ] **Step 3: Implementar core puro**
+- [x] **Step 3: Implementar core puro**
 
 Criar `src/core/services/data-health.ts`:
 
@@ -904,12 +904,12 @@ export function deriveHealthWarnings(h: DataHealth): string[] {
 }
 ```
 
-- [ ] **Step 4: Rodar testes**
+- [x] **Step 4: Rodar testes**
 
 Run: `bun test tests/core/data-health.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Queries de infra**
+- [x] **Step 5: Queries de infra**
 
 Criar `src/infra/database/health-queries.ts`:
 
@@ -963,7 +963,7 @@ export async function fetchDataHealth(): Promise<DataHealth> {
 }
 ```
 
-- [ ] **Step 6: Controller + rota**
+- [x] **Step 6: Controller + rota**
 
 Criar `src/infra/http/controllers/health.controller.ts`:
 
@@ -1012,13 +1012,13 @@ import { getDataHealthController } from '../controllers/health.controller.ts';
   app.get('/health/data', getDataHealthController);
 ```
 
-- [ ] **Step 7: Verificação manual**
+- [x] **Step 7: Verificação manual**
 
 Run: `bun run typecheck && bun test`. Com o server rodando (`bun run dev`) e uma api-key válida:
 `curl -s -H "x-api-key: <KEY>" localhost:3000/v1/health/data`
 Expected: JSON com `fundamentals`, `jobs`, `warnings`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/core/services/data-health.ts src/infra/database/health-queries.ts src/infra/http/controllers/health.controller.ts src/infra/http/routes/index.ts tests/core/data-health.test.ts
@@ -1040,7 +1040,7 @@ git commit -m "feat: data health — cobertura/frescor de dados com warnings e e
   - `RISK_CONFIGS: Record<RiskProfile, { stockPercent: number; fiiPercent: number; minScore: number; maxAssets: number }>` e `type RiskProfile = 'conservador' | 'moderado' | 'agressivo'` (em `core/data/risk-profiles.ts`)
   - `suggestContribution(universe: AdvisorAsset[], positions: CurrentPosition[], config: AdvisorConfig, warnings?: string[]): ContributionSuggestion` — tipos abaixo no código. Usado pela Task 8.
 
-- [ ] **Step 1: Extrair perfis de risco**
+- [x] **Step 1: Extrair perfis de risco**
 
 Criar `src/core/data/risk-profiles.ts`:
 
@@ -1070,7 +1070,7 @@ Em `src/core/services/allocation-engine.ts`:
 
 Run: `bun run typecheck` — sem erros.
 
-- [ ] **Step 2: Testes do advisor (falhando)**
+- [x] **Step 2: Testes do advisor (falhando)**
 
 Criar `tests/core/contribution-advisor.test.ts`:
 
@@ -1169,12 +1169,12 @@ describe('suggestContribution', () => {
 });
 ```
 
-- [ ] **Step 3: Rodar para ver falhar**
+- [x] **Step 3: Rodar para ver falhar**
 
 Run: `bun test tests/core/contribution-advisor.test.ts`
 Expected: FAIL — módulo não existe.
 
-- [ ] **Step 4: Implementar o advisor**
+- [x] **Step 4: Implementar o advisor**
 
 Criar `src/core/services/contribution-advisor.ts`:
 
@@ -1404,12 +1404,12 @@ export function suggestContribution(
 }
 ```
 
-- [ ] **Step 5: Rodar testes**
+- [x] **Step 5: Rodar testes**
 
 Run: `bun test tests/core/contribution-advisor.test.ts && bun test && bun run typecheck`
 Expected: PASS em tudo (inclusive suíte inteira — allocation-engine continua compilando).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/data/risk-profiles.ts src/core/services/allocation-engine.ts src/core/services/contribution-advisor.ts tests/core/contribution-advisor.test.ts
@@ -1429,11 +1429,11 @@ git commit -m "feat: contribution-advisor puro — sugestão de aporte com justi
 - Consumes: `suggestContribution` (Task 7), `fetchDataHealth` + `deriveHealthWarnings` (Task 6), `AllocationEngine.analyzeAllStocks(): Promise<Array<{ticker; name; score; price; reasons; alerts; sector}>>` e `analyzeAllFiis()` (mesmo shape).
 - Produces: `POST /v1/analysis/contribution` — body `{ amount: number; profile?: 'conservador'|'moderado'|'agressivo'; positions?: Array<{ticker: string; quantity: number}>; onlyTypes?: Array<'stock'|'fii'>; excludeSectors?: string[] }` → `ContributionSuggestion & { profile, amount, generatedAt }`. Universo cacheado no Redis (`advisor:universe`, TTL 1800s).
 
-- [ ] **Step 1: Tornar públicos os analisadores do AllocationEngine**
+- [x] **Step 1: Tornar públicos os analisadores do AllocationEngine**
 
 Em `src/core/services/allocation-engine.ts`, trocar `private async analyzeAllStocks` por `async analyzeAllStocks` e `private async analyzeAllFiis` por `async analyzeAllFiis` (assinaturas e corpos inalterados).
 
-- [ ] **Step 2: Controller**
+- [x] **Step 2: Controller**
 
 Criar `src/infra/http/controllers/contribution.controller.ts`:
 
@@ -1518,7 +1518,7 @@ export async function contributionController(
 }
 ```
 
-- [ ] **Step 3: Rota**
+- [x] **Step 3: Rota**
 
 Em `src/infra/http/routes/index.ts`:
 
@@ -1530,7 +1530,7 @@ import { contributionController } from '../controllers/contribution.controller.t
   app.post('/analysis/contribution', contributionController);
 ```
 
-- [ ] **Step 4: Verificação**
+- [x] **Step 4: Verificação**
 
 Run: `bun run typecheck && bun test`. Com server + banco de pé:
 
@@ -1542,7 +1542,7 @@ curl -s -X POST -H "x-api-key: <KEY>" -H "Content-Type: application/json" \
 
 Expected: JSON com `purchases` (cada um com `why[]`), `skipped`, `warnings`, `totals`. Segunda chamada responde rápido (universo cacheado).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/core/services/allocation-engine.ts src/infra/http/controllers/contribution.controller.ts src/infra/http/routes/index.ts
@@ -1562,7 +1562,7 @@ git commit -m "feat: POST /v1/analysis/contribution — sugestão de aporte com 
 - Consumes: `SCORE_VALIDATION` (Task 5), `POST /v1/analysis/contribution` (Task 8), `GET /v1/health/data` (Task 6), `GET /v1/analysis/stocks/:ticker` e `GET /v1/analysis/fiis/:ticker` (existentes).
 - Produces: `GET /v1/analysis/validation` → `ScoreValidation`; tools MCP `suggest_contribution`, `explain_score`, `get_data_health`.
 
-- [ ] **Step 1: Endpoint de validação**
+- [x] **Step 1: Endpoint de validação**
 
 Em `src/infra/http/controllers/analysis.controller.ts`, adicionar import e controller no fim do arquivo:
 
@@ -1585,7 +1585,7 @@ Em `src/infra/http/routes/index.ts`, adicionar `getValidationController` ao impo
   app.get('/analysis/validation', getValidationController);
 ```
 
-- [ ] **Step 2: Tools MCP**
+- [x] **Step 2: Tools MCP**
 
 Em `src/infra/mcp/server.ts`, antes da seção `─── Start ───`, adicionar:
 
@@ -1656,7 +1656,7 @@ Atualizar o comentário de cabeçalho do arquivo (lista de ferramentas) incluind
  *   get_data_health      — Saúde da base: cobertura, frescor, jobs
 ```
 
-- [ ] **Step 3: Verificação**
+- [x] **Step 3: Verificação**
 
 Run: `bun run typecheck && bun test`
 Com server + banco de pé, testar o MCP manualmente:
@@ -1667,7 +1667,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | URANO_API_KE
 
 Expected: lista inclui `suggest_contribution`, `explain_score`, `get_data_health` (total 15 tools).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/infra/http/controllers/analysis.controller.ts src/infra/http/routes/index.ts src/infra/mcp/server.ts
