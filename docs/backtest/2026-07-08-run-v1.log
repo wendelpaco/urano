@@ -1,0 +1,81 @@
+$ bun run src/infra/workers/backtest.ts
+🧪 Urano Backtest Engine V2
+
+Comparando scores vs retorno real 12 meses depois
+
+📅 Anos detectados: 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025 (11 anos)
+🔖 Run ID: 0d7a0fa1-7eb4-491f-93ee-38de455ca635 (score v1)
+
+
+📅 Backtesting 2015...
+. 19 ativos
+
+📅 Backtesting 2016...
+. 19 ativos
+
+📅 Backtesting 2017...
+. 19 ativos
+
+📅 Backtesting 2018...
+.. 20 ativos
+
+📅 Backtesting 2019...
+.. 21 ativos
+
+📅 Backtesting 2020...
+.. 22 ativos
+
+📅 Backtesting 2021...
+.. 21 ativos
+
+📅 Backtesting 2022...
+.. 22 ativos
+
+📅 Backtesting 2023...
+.. 22 ativos
+
+📅 Backtesting 2024...
+.. 22 ativos
+
+📅 Backtesting 2025...
+.. 22 ativos
+
+═══ DISTRIBUIÇÃO DOS SCORES ═══
+Mín: 37  P25: 52  Mediana: 61  P75: 63  Máx: 67
+
+═══ CORRELAÇÃO SCORE vs RETORNO 12M ═══
+  score          : -0.047
+  valuation      : 0.017
+  profitability  : -0.179
+  growth         : -0.094
+  dividends      : 0
+  quality        : -0.026
+  momentum       : 0
+
+═══ RESULTADOS POR FAIXA DE SCORE ═══
+Faixa      | Casos | Retorno Méd | % Pos | Melhor  | Pior    | Top Ticker
+───────────|───────|─────────────|──────|─────────|─────────|───────────
+30-40      |     8 |       -3.7% |  63% |   47.6% |  -55.3% | BBAS3 2017
+40-50      |    42 |       32.8% |  74% |  179.4% |  -66.5% | USIM5 2015
+50-60      |    34 |       38.4% |  74% |  523.7% |  -25.3% | MGLU3 2016
+60-70      |   123 |       18.5% |  53% |  466.6% |  -73.3% | MGLU3 2015
+
+═══ SIMULAÇÃO DE ESTRATÉGIA ═══
+Compra top N por score a cada ano, vende 12 meses depois
+
+  Top  3: Retorno médio 28.3%  |  vs Mercado 2.9pp  |  ganha em 6/10 anos
+  Top  5: Retorno médio 22.3%  |  vs Mercado -3.1pp  |  ganha em 6/10 anos
+  Top 10: Retorno médio 28.4%  |  vs Mercado 3.0pp  |  ganha em 6/10 anos
+
+═══ DIAGNÓSTICO ═══
+  Score médio: 57.0
+  Scores >= 60: 123 (59.4%)
+  Scores < 40: 8 (3.9%)
+  valuation      : média 71.4  min 20  max 85
+  profitability  : média 24.6  min 12  max 50
+  growth         : média 60.5  min 17  max 90
+  dividends      : média 30.0  min 30  max 30
+  quality        : média 89.8  min 50  max 90
+  momentum       : média 45.0  min 45  max 45
+
+💾 Resultados gravados em backtest_results (run_id: 0d7a0fa1-7eb4-491f-93ee-38de455ca635)
