@@ -169,6 +169,17 @@ export class CvmStorageService {
     console.log(`[CvmStorageService] ${processedCount} linhas processadas, ${byCnpj.size} CNPJs encontrados.`);
 
     // 5. Enriquece com BPP, BPA, DFC, DMPL, Capital
+    // CRÍTICO: parseia cada CSV UMA vez, depois filtra por CNPJ.
+    // Antes parseava N vezes (N=CNPJs), gerando milhões de objetos e estourando memória.
+    const bppRows = csvs[`BPP_con_${year}.csv`] ? this.parseCsv(csvs[`BPP_con_${year}.csv`]!) : [];
+    const bpaRows = csvs[`BPA_con_${year}.csv`] ? this.parseCsv(csvs[`BPA_con_${year}.csv`]!) : [];
+    const dfcRows = csvs[`DFC_MI_con_${year}.csv`] ? this.parseCsv(csvs[`DFC_MI_con_${year}.csv`]!) : [];
+    const dmplRows = csvs[`DMPL_con_${year}.csv`] ? this.parseCsv(csvs[`DMPL_con_${year}.csv`]!) : [];
+    const capitalCsv = csvs[`composicao_capital_${year}.csv`];
+
+    // Libera strings CSV (já parseadas, ~30 MB)
+    for (const k of Object.keys(csvs)) csvs[k] = null;
+
     const result = new Map<string, CompanyFundamentals[]>();
 
     for (const [cnpj, pmap] of byCnpj) {
@@ -186,17 +197,12 @@ export class CvmStorageService {
         });
       }
 
-      // Enriquece cada CSV (parseia sob demanda, filtra por CNPJ)
-      // Usa arrow wrapper para preservar o `this` nos callbacks
-      this.enrichFromCsv(csvs[`BPP_con_${year}.csv`], cnpj, fundamentals,
-        (rows, c, f) => this.enrichBpp(rows, c, f));
-      this.enrichFromCsv(csvs[`BPA_con_${year}.csv`], cnpj, fundamentals,
-        (rows, c, f) => this.enrichBpa(rows, c, f));
-      this.enrichFromCsv(csvs[`DFC_MI_con_${year}.csv`], cnpj, fundamentals,
-        (rows, c, f) => this.enrichDfc(rows, c, f));
-      this.enrichFromCsv(csvs[`DMPL_con_${year}.csv`], cnpj, fundamentals,
-        (rows, c, f) => this.enrichDmpl(rows, c, f));
-      this.enrichCapital(csvs[`composicao_capital_${year}.csv`], cnpj, fundamentals);
+      // Filtra dos arrays já parseados (zero alocações grandes)
+      if (bppRows.length > 0) this.enrichBpp(bppRows, cnpj, fundamentals);
+      if (bpaRows.length > 0) this.enrichBpa(bpaRows, cnpj, fundamentals);
+      if (dfcRows.length > 0) this.enrichDfc(dfcRows, cnpj, fundamentals);
+      if (dmplRows.length > 0) this.enrichDmpl(dmplRows, cnpj, fundamentals);
+      if (capitalCsv) this.enrichCapital(capitalCsv, cnpj, fundamentals);
 
       result.set(cnpj, fundamentals);
     }
@@ -217,17 +223,6 @@ export class CvmStorageService {
   // ═══════════════════════════════════════════════════════════════════════
   // ENRICHMENT — parse do CSV filtrado por CNPJ (métodos reutilizáveis)
   // ═══════════════════════════════════════════════════════════════════════
-
-  private enrichFromCsv(
-    csv: string | null | undefined,
-    targetCnpj: string,
-    fundamentals: CompanyFundamentals[],
-    fn: (rows: CvmDreRow[], cnpj: string, f: CompanyFundamentals[]) => void,
-  ): void {
-    if (!csv || fundamentals.length === 0) return;
-    const rows = this.parseCsv(csv);
-    fn(rows, targetCnpj, fundamentals);
-  }
 
   private enrichBpp(rows: CvmDreRow[], cnpj: string, fundamentals: CompanyFundamentals[]): void {
     const eq = this.extractAccountFromCsv(rows, cnpj, ACCOUNT_EQUITY_CONSOLIDATED);
