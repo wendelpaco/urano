@@ -89,4 +89,38 @@ describe('suggestContribution', () => {
     expect(result.purchases.every((p) => p.ticker !== 'CCCC3')).toBe(true);
     expect(result.skipped.some((s) => s.ticker === 'CCCC3' && s.reason.includes('excluído'))).toBe(true);
   });
+
+  it('aporte pequeno sem posição prévia: motivo é preço vs. teto, não "já representa"', () => {
+    // Sem posições, capPerAsset = 25% de R$200 = R$50, menor que qualquer preço de FII (90/100/110).
+    // Nenhum desses ativos tem posição existente — o motivo não pode ser "concentração já existente".
+    const result = suggestContribution(universe(), [], {
+      amount: 200, profile: 'moderado', onlyTypes: ['fii'],
+    });
+    expect(result.purchases).toEqual([]);
+    expect(result.skipped.length).toBeGreaterThan(0);
+    for (const s of result.skipped) {
+      expect(s.reason).not.toContain('Já representa');
+      expect(s.reason).toContain('não cabe');
+    }
+  });
+
+  it('ativo cujo orçamento proporcional arredonda para 0 unidades aparece em skipped (não some)', () => {
+    const customUniverse: AdvisorAsset[] = [
+      asset({ ticker: 'HIGH3', score: 90, price: 79, sector: 'setor a' }),
+      asset({ ticker: 'LOW3', score: 45, price: 50, sector: 'setor b' }),
+    ];
+    // target proporcional de LOW3 = (45/135) * 120 = R$40 < R$50 (seu preço) → 0 unidades na 1ª passada.
+    // Sobra de orçamento após comprar HIGH3 (R$41) também é menor que R$50 → 2ª passada não resgata.
+    const result = suggestContribution(customUniverse, [], {
+      amount: 120,
+      profile: 'agressivo',
+      onlyTypes: ['stock'],
+      maxAssetPercent: 100,
+    });
+    expect(result.purchases.some((p) => p.ticker === 'HIGH3')).toBe(true);
+    expect(result.purchases.some((p) => p.ticker === 'LOW3')).toBe(false);
+    const lowSkip = result.skipped.find((s) => s.ticker === 'LOW3');
+    expect(lowSkip).toBeDefined();
+    expect(lowSkip?.reason).toContain('insuficiente');
+  });
 });

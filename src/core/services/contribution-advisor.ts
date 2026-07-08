@@ -171,19 +171,30 @@ export function suggestContribution(
 
     // 1ª passada: alocação proporcional ao score, respeitando teto por ativo
     const totalScore = selected.reduce((s, a) => s + a.score, 0);
+    const zeroQtyTargets = new Map<string, number>();
     for (const a of selected) {
       const room = roomFor(a);
       if (room < a.price) {
         const held = heldValue.get(a.ticker) ?? 0;
-        skipped.push({
-          ticker: a.ticker,
-          reason: `Já representa ${((held / finalValue) * 100).toFixed(0)}% da carteira — teto de ${maxAssetPct}% por ativo`,
-        });
+        if (held > 0) {
+          skipped.push({
+            ticker: a.ticker,
+            reason: `Já representa ${((held / finalValue) * 100).toFixed(0)}% da carteira — teto de ${maxAssetPct}% por ativo`,
+          });
+        } else {
+          skipped.push({
+            ticker: a.ticker,
+            reason: `Preço R$ ${a.price.toFixed(2)} não cabe no teto de ${maxAssetPct}% do aporte para este ativo`,
+          });
+        }
         continue;
       }
       const target = Math.min((a.score / totalScore) * budgetFor(type), room, budget);
       const quantity = Math.floor(target / a.price);
-      if (quantity === 0) continue;
+      if (quantity === 0) {
+        zeroQtyTargets.set(a.ticker, target);
+        continue;
+      }
       addPurchase(a, quantity);
       budget -= quantity * a.price;
     }
@@ -194,6 +205,18 @@ export function suggestContribution(
         addPurchase(a, 1);
         budget -= a.price;
       }
+    }
+
+    // Ativos selecionados que nunca receberam quantidade em nenhuma das passadas
+    // (orçamento proporcional arredondou para 0 e a 2ª passada não teve sobra)
+    for (const [ticker, target] of zeroQtyTargets) {
+      if (purchases.some((p) => p.ticker === ticker)) continue;
+      const a = selected.find((s) => s.ticker === ticker);
+      if (!a) continue;
+      skipped.push({
+        ticker,
+        reason: `Orçamento proporcional (R$ ${target.toFixed(2)}) insuficiente para 1 unidade a R$ ${a.price.toFixed(2)}`,
+      });
     }
   }
 
