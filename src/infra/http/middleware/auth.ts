@@ -64,9 +64,9 @@ export async function authMiddleware(
   let row: { key: string; active: boolean } | undefined;
   try {
     const result = await db
-      .select({ key: apiKeys.key, active: apiKeys.active })
+      .select({ key: apiKeys.keyHash, active: apiKeys.active })
       .from(apiKeys)
-      .where(and(eq(apiKeys.key, key), eq(apiKeys.active, true)));
+      .where(and(eq(apiKeys.keyHash, key), eq(apiKeys.active, true)));
     row = result[0];
   } catch {
     // DB indisponível → deixa passar (degradado).
@@ -106,7 +106,7 @@ async function updateLastUsed(key: string): Promise<void> {
     await db
       .update(apiKeys)
       .set({ lastUsedAt: new Date() })
-      .where(eq(apiKeys.key, key));
+      .where(eq(apiKeys.keyHash, key));
   } catch {
     // Silencioso — last_used_at é métrica secundária
   }

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   pgTable,
+  pgEnum,
   char,
   varchar,
   smallint,
@@ -14,6 +15,27 @@ import {
   check,
   boolean,
 } from 'drizzle-orm/pg-core';
+
+export const planEnum = pgEnum('plan', ['free', 'pro', 'business']);
+export const planStatusEnum = pgEnum('plan_status', ['active', 'past_due', 'canceled']);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// users — Contas de clientes da API
+// ═══════════════════════════════════════════════════════════════════════════
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: varchar('email', { length: 255 }).notNull().unique(),
+    name: varchar('name', { length: 100 }),
+    stripeCustomerId: varchar('stripe_customer_id', { length: 64 }).unique(),
+    plan: planEnum('plan').notNull().default('free'),
+    planStatus: planStatusEnum('plan_status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // companies — Cadastro de empresas listadas na B3
@@ -292,8 +314,12 @@ export const apiKeys = pgTable(
   'api_keys',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 100 }).notNull(),
-    key: varchar('key', { length: 128 }).notNull().unique(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+    keyPrefix: varchar('key_prefix', { length: 16 }).notNull(),
     active: boolean('active').notNull().default(true),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
@@ -301,6 +327,45 @@ export const apiKeys = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_api_keys_key').on(table.key),
+    index('idx_api_keys_user_id').on(table.userId),
   ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// usage_monthly — Uso agregado por key/mês/endpoint (flush do Redis a cada 5min)
+// endpoint '_total' representa o agregado do mês da key
+// ═══════════════════════════════════════════════════════════════════════════
+export const usageMonthly = pgTable(
+  'usage_monthly',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    keyId: uuid('key_id')
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull(),
+    month: char('month', { length: 7 }).notNull(),
+    endpoint: varchar('endpoint', { length: 160 }).notNull(),
+    count: integer('count').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_usage_key_month_endpoint').on(table.keyId, table.month, table.endpoint),
+    index('idx_usage_user_month').on(table.userId, table.month),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// stripe_events — Idempotência de webhooks Stripe
+// ═══════════════════════════════════════════════════════════════════════════
+export const stripeEvents = pgTable(
+  'stripe_events',
+  {
+    id: varchar('id', { length: 64 }).primaryKey(),
+    type: varchar('type', { length: 64 }).notNull(),
+    processedAt: timestamp('processed_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
 );
