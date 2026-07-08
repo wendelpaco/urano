@@ -19,6 +19,7 @@ import { backtestResults, companies, companyFundamentals } from '../database/sch
 import { stockQuoteService } from '../services/stock-quote-service.ts';
 import { calcAllIndicators } from '../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../core/services/stock-score.ts';
+import type { HistoricalData } from '../../core/services/stock-score.ts';
 import {
   PILLARS,
   percentile,
@@ -62,11 +63,36 @@ async function getPriceAtDate(ticker: string, date: string): Promise<number | nu
   } catch { return null; }
 }
 
+function toNum(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildHistorical(yearRows: Record<string, unknown>[]): HistoricalData | undefined {
+  const years = yearRows.map((r) => {
+    const revenue = toNum(r.revenue);
+    const netIncome = toNum(r.net_income_parent);
+    const equity = toNum(r.equity);
+    const liabilities = toNum(r.total_liabilities);
+    const cogs = Math.abs(toNum(r.cogs));
+    return {
+      fiscalYear: Number(r.fiscal_year),
+      revenue,
+      netIncome,
+      roe: equity > 0 ? (netIncome / equity) * 100 : 0,
+      netMargin: revenue > 0 ? (netIncome / revenue) * 100 : 0,
+      debtToEquity: equity > 0 ? liabilities / equity : 0,
+      grossMargin: revenue > 0 ? ((revenue - cogs) / revenue) * 100 : 0,
+    };
+  });
+  return years.length >= 2 ? { years } : undefined;
+}
+
 async function backtestYear(year: number): Promise<BacktestResult[]> {
   console.log(`\n📅 Backtesting ${year}...`);
 
   const rows = await db.execute(
-    `SELECT DISTINCT ON (c.ticker)
+    `SELECT DISTINCT ON (c.ticker, cf.fiscal_year)
       c.ticker, c.name, c.sector,
       cf.revenue, cf.cogs, cf.ebit, cf.net_income_parent,
       cf.total_assets, cf.total_liabilities, cf.cash,
@@ -74,18 +100,28 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
       cf.reference_date, cf.fiscal_year
      FROM company_fundamentals cf
      JOIN companies c ON c.cnpj = cf.company_cnpj
-     WHERE cf.fiscal_year = ${year}
+     WHERE cf.fiscal_year BETWEEN ${year - 4} AND ${year}
        AND c.ticker NOT LIKE '%11'
-     ORDER BY c.ticker, cf.reference_date DESC`,
+     ORDER BY c.ticker, cf.fiscal_year, cf.reference_date DESC`,
   );
+
+  // Agrupa linhas por ticker (cada linha = um ano fiscal)
+  const byTicker = new Map<string, Record<string, unknown>[]>();
+  for (const r of rows as unknown as Record<string, unknown>[]) {
+    const t = String(r.ticker);
+    if (!byTicker.has(t)) byTicker.set(t, []);
+    byTicker.get(t)!.push(r);
+  }
 
   const results: BacktestResult[] = [];
   let count = 0;
 
-  for (const r of rows as unknown as Record<string, unknown>[]) {
-    const ticker = String(r.ticker);
-    const refDate = String(r.reference_date || `${year}-12-31`);
+  for (const [ticker, tickerRows] of byTicker) {
+    // Linha do ano do backtest = a mais recente daquele fiscal_year
+    const current = tickerRows.find((r) => Number(r.fiscal_year) === year);
+    if (!current) continue;
 
+    const refDate = String(current.reference_date || `${year}-12-31`);
     const startPrice = await getPriceAtDate(ticker, refDate);
     if (!startPrice || startPrice <= 0) continue;
 
@@ -93,8 +129,14 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
     endDate.setFullYear(endDate.getFullYear() + 1);
     const endPrice = await getPriceAtDate(ticker, endDate.toISOString().slice(0, 10));
 
-    const indicators = calcAllIndicators(r, startPrice);
-    const scoreResult = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
+    const indicators = calcAllIndicators(current, startPrice);
+    const historical = buildHistorical(tickerRows);
+    const scoreResult = StockScoreCalculator.calculate(
+      indicators,
+      (current.sector as string) || null,
+      String(current.name),
+      historical,
+    );
 
     results.push({
       year, ticker,
