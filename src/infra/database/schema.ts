@@ -304,3 +304,35 @@ export const apiKeys = pgTable(
     index('idx_api_keys_key').on(table.key),
   ],
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// backtest_results — Resultados persistidos do backtest (score vs retorno 12m)
+// ═══════════════════════════════════════════════════════════════════════════
+export const backtestResults = pgTable(
+  'backtest_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull(),
+    scoreVersion: varchar('score_version', { length: 20 }).notNull(),
+    year: smallint('year').notNull(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    score: smallint('score').notNull(),
+    valuation: smallint('valuation').notNull(),
+    profitability: smallint('profitability').notNull(),
+    growth: smallint('growth').notNull(),
+    dividends: smallint('dividends').notNull(),
+    quality: smallint('quality').notNull(),
+    momentum: smallint('momentum').notNull(),
+    startPrice: decimal('start_price', { precision: 12, scale: 2 }).notNull(),
+    endPrice: decimal('end_price', { precision: 12, scale: 2 }),
+    return12m: decimal('return_12m', { precision: 8, scale: 2 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_backtest_run_year_ticker').on(table.runId, table.year, table.ticker),
+    index('idx_backtest_run').on(table.runId),
+    index('idx_backtest_ticker').on(table.ticker),
+  ],
+);
