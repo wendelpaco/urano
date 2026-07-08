@@ -5,8 +5,9 @@ import Fastify, { type FastifyError } from 'fastify';
 const _orig = { log: console.log, warn: console.warn, error: console.error };
 function brTs(): string {
   const d = new Date(new Date().getTime() - 3 * 3600000);
-  return [String(d.getUTCDate()).padStart(2, '0'), String(d.getUTCMonth() + 1).padStart(2, '0'), d.getUTCFullYear(),
-    String(d.getUTCHours()).padStart(2, '0'), String(d.getUTCMinutes()).padStart(2, '0'), String(d.getUTCSeconds()).padStart(2, '0')].join(' ');
+  const date = [String(d.getUTCDate()).padStart(2, '0'), String(d.getUTCMonth() + 1).padStart(2, '0'), d.getUTCFullYear()].join('/');
+  const time = [String(d.getUTCHours()).padStart(2, '0'), String(d.getUTCMinutes()).padStart(2, '0'), String(d.getUTCSeconds()).padStart(2, '0')].join(':');
+  return `[${date} ${time}]`;
 }
 console.log = (...a: unknown[]) => _orig.log(`${brTs()}`, ...a);
 console.warn = (...a: unknown[]) => _orig.warn(`${brTs()}`, ...a);

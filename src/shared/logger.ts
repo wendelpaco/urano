@@ -11,14 +11,9 @@ function brTz(date: Date): Date {
 
 function fmt(date: Date): string {
   const d = brTz(date);
-  return [
-    String(d.getUTCDate()).padStart(2, '0'),
-    String(d.getUTCMonth() + 1).padStart(2, '0'),
-    d.getUTCFullYear(),
-    String(d.getUTCHours()).padStart(2, '0'),
-    String(d.getUTCMinutes()).padStart(2, '0'),
-    String(d.getUTCSeconds()).padStart(2, '0'),
-  ].join(' ');
+  const dateStr = [String(d.getUTCDate()).padStart(2, '0'), String(d.getUTCMonth() + 1).padStart(2, '0'), d.getUTCFullYear()].join('/');
+  const timeStr = [String(d.getUTCHours()).padStart(2, '0'), String(d.getUTCMinutes()).padStart(2, '0'), String(d.getUTCSeconds()).padStart(2, '0')].join(':');
+  return `[${dateStr} ${timeStr}]`;
 }
 
 export function log(tag: string, message: string): void {
