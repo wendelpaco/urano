@@ -163,7 +163,7 @@ export const jobs = pgTable(
     assetType: varchar('asset_type', { length: 10 }).notNull().default('stock'),
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     priority: smallint('priority').notNull().default(0),
-    runInterval: smallint('run_interval').notNull().default(3600), // segundos
+    runInterval: integer('run_interval').notNull().default(3600), // segundos
     nextRunAt: timestamp('next_run_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
