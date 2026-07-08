@@ -14,14 +14,14 @@ function brt(d = new Date()): string {
   const t = new Date(d.getTime() - 3 * 3600000);
   const date = [String(t.getUTCDate()).padStart(2, '0'), String(t.getUTCMonth() + 1).padStart(2, '0'), t.getUTCFullYear()].join('/');
   const time = [String(t.getUTCHours()).padStart(2, '0'), String(t.getUTCMinutes()).padStart(2, '0'), String(t.getUTCSeconds()).padStart(2, '0')].join(':');
-  return `[${date} ${time}]`;
+  return `${date} ${time}`;
 }
 
 // Aplica timestamp GMT-3 em todos os console.*
 const _c = { log: console.log, warn: console.warn, error: console.error };
-console.log = (...a: unknown[]) => _c.log(brt(), ...a);
-console.warn = (...a: unknown[]) => _c.warn(brt(), ...a);
-console.error = (...a: unknown[]) => _c.error(brt(), ...a);
+console.log = (...a: unknown[]) => _c.log(`[${brt()}]`, ...a);
+console.warn = (...a: unknown[]) => _c.warn(`[${brt()}]`, ...a);
+console.error = (...a: unknown[]) => _c.error(`[${brt()}]`, ...a);
 
 // ─── Fastify ────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV !== 'production';
