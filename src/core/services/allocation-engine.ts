@@ -182,10 +182,15 @@ export class AllocationEngine {
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (c.ticker)
         c.ticker, c.name, c.sector,
-        cf.net_income_parent, cf.revenue, cf.cogs, cf.ebit,
-        cf.total_assets, cf.total_liabilities, cf.cash,
-        cf.operating_cash_flow, cf.equity, cf.shares_outstanding,
-        cf.reference_date
+        cf.net_income_parent AS "netIncomeParent",
+        cf.revenue, cf.cogs, cf.ebit,
+        cf.total_assets AS "totalAssets",
+        cf.total_liabilities AS "totalLiabilities",
+        cf.cash,
+        cf.operating_cash_flow AS "operatingCashFlow",
+        cf.equity,
+        cf.shares_outstanding AS "sharesOutstanding",
+        cf.reference_date AS "referenceDate"
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
       WHERE c.ticker NOT LIKE '%11'
