@@ -187,12 +187,13 @@ export class PgCompanyRepository implements ICompanyRepository {
     ticker: string,
     name: string,
   ): Promise<void> {
+    const now = new Date();
     await db
       .insert(companies)
-      .values({ cnpj, ticker, name })
+      .values({ cnpj, ticker, name, sector: null, createdAt: now, updatedAt: now })
       .onConflictDoUpdate({
         target: companies.cnpj,
-        set: { name, updatedAt: new Date() },
+        set: { ticker, name, updatedAt: now },
       });
   }
 
