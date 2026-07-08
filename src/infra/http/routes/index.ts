@@ -19,6 +19,7 @@ import {
   compareController,
 } from '../controllers/analysis.controller.ts';
 import { getDataHealthController } from '../controllers/health.controller.ts';
+import { contributionController } from '../controllers/contribution.controller.ts';
 import {
   createWalletController,
   listWalletsController,
@@ -96,6 +97,7 @@ export async function routesPlugin(
   app.get('/analysis/ranking', getRankingController);
   app.post('/analysis/allocate', getAllocationController);
   app.post('/analysis/compare', compareController);
+  app.post('/analysis/contribution', contributionController);
 
   // Data health
   app.get('/health/data', getDataHealthController);

@@ -153,7 +153,7 @@ export class AllocationEngine {
 
   // ─── Análise ──────────────────────────────────────────────────────────
 
-  private async analyzeAllStocks(): Promise<Array<{
+  async analyzeAllStocks(): Promise<Array<{
     ticker: string; name: string; score: number; price: number;
     reasons: string[]; alerts: string[]; sector: string | null;
   }>> {
@@ -211,7 +211,7 @@ export class AllocationEngine {
     return results;
   }
 
-  private async analyzeAllFiis(): Promise<Array<{
+  async analyzeAllFiis(): Promise<Array<{
     ticker: string; name: string; score: number; price: number;
     reasons: string[]; alerts: string[]; sector: string | null;
   }>> {
