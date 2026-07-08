@@ -13,12 +13,22 @@
  */
 
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import { db } from '../database/connection.ts';
-import { companies, companyFundamentals } from '../database/schema.ts';
+import { backtestResults, companies, companyFundamentals } from '../database/schema.ts';
 import { stockQuoteService } from '../services/stock-quote-service.ts';
 import { calcAllIndicators } from '../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../core/services/stock-score.ts';
+import {
+  PILLARS,
+  percentile,
+  pillarCorrelations,
+  scoreBuckets,
+  topNStrategy,
+} from '../../core/services/backtest-analysis.ts';
 import { eq, desc } from 'drizzle-orm';
+
+const SCORE_VERSION = 'v1';
 
 interface BacktestResult {
   year: number;
@@ -110,12 +120,6 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
 
 // ─── Análise ────────────────────────────────────────────────────────────────
 
-function percentile(arr: number[], p: number): number {
-  const sorted = [...arr].sort((a, b) => a - b);
-  const idx = Math.ceil(p / 100 * sorted.length) - 1;
-  return sorted[Math.max(0, idx)]!;
-}
-
 async function main(): Promise<void> {
   console.log('🧪 Urano Backtest Engine V2\n');
   console.log('Comparando scores vs retorno real 12 meses depois\n');
@@ -141,10 +145,34 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const runId = randomUUID();
+  console.log(`🔖 Run ID: ${runId} (score ${SCORE_VERSION})\n`);
+
   const allResults: BacktestResult[] = [];
   for (const year of years) {
     const results = await backtestYear(year);
     allResults.push(...results);
+
+    if (results.length > 0) {
+      await db.insert(backtestResults).values(
+        results.map((r) => ({
+          runId,
+          scoreVersion: SCORE_VERSION,
+          year: r.year,
+          ticker: r.ticker,
+          score: r.score,
+          valuation: r.valuation,
+          profitability: r.profitability,
+          growth: r.growth,
+          dividends: r.dividends,
+          quality: r.quality,
+          momentum: r.momentum,
+          startPrice: String(r.startPrice),
+          endPrice: r.endPrice === null ? null : String(r.endPrice),
+          return12m: r.return12m === null ? null : String(r.return12m),
+        })),
+      );
+    }
   }
 
   const wr = allResults.filter(r => r.return12m !== null);
@@ -156,55 +184,25 @@ async function main(): Promise<void> {
 
   // ═══ CORRELAÇÃO POR PILAR ═══
   console.log('\n═══ CORRELAÇÃO SCORE vs RETORNO 12M ═══');
-  const returns = wr.map(r => r.return12m ?? 0);
-  const corr = (a: number[], b: number[]) => {
-    const ma = a.reduce((s, v) => s + v, 0) / a.length, mb = b.reduce((s, v) => s + v, 0) / b.length;
-    let cov = 0, va = 0, vb = 0;
-    for (let i = 0; i < a.length; i++) { const ai = a[i] ?? 0; const bi = b[i] ?? 0; cov += (ai - ma) * (bi - mb); va += (ai - ma) ** 2; vb += (bi - mb) ** 2; }
-    return va > 0 && vb > 0 ? +(cov / Math.sqrt(va * vb)).toFixed(3) : 0;
-  };
-  for (const p of ['score', 'valuation', 'profitability', 'growth', 'dividends', 'quality', 'momentum']) {
-    const pairs = wr.map(r => ({ v: (r as unknown as Record<string, number>)[p] ?? 0, r: r.return12m ?? 0 }));
-    console.log(`  ${p.padEnd(15)}: ${corr(pairs.map(x => x.v), pairs.map(x => x.r))}`);
+  const corrs = pillarCorrelations(allResults);
+  for (const p of PILLARS) {
+    console.log(`  ${p.padEnd(15)}: ${corrs[p]}`);
   }
 
   // ═══ BUCKETS ═══
   console.log('\n═══ RESULTADOS POR FAIXA DE SCORE ═══');
-  const buckets: Record<string, BacktestResult[]> = {};
-  for (let lo = 0; lo < 100; lo += 10) {
-    const hi = lo + 10;
-    const bucket = wr.filter(r => r.score >= lo && r.score < hi);
-    if (bucket.length > 0) buckets[`${lo}-${hi}`] = bucket;
-  }
   console.log('Faixa      | Casos | Retorno Méd | % Pos | Melhor  | Pior    | Top Ticker');
   console.log('───────────|───────|─────────────|──────|─────────|─────────|───────────');
-  for (const [label, items] of Object.entries(buckets)) {
-    const avg = items.reduce((s, r) => s + (r.return12m ?? 0), 0) / items.length;
-    const pct = (items.filter(r => (r.return12m ?? 0) > 0).length / items.length) * 100;
-    const best = Math.max(...items.map(r => r.return12m ?? 0));
-    const worst = Math.min(...items.map(r => r.return12m ?? 0));
-    const bestTicker = [...items].sort((a, b) => (b.return12m ?? 0) - (a.return12m ?? 0))[0]!;
-    console.log(`${label.padEnd(10)} | ${String(items.length).padStart(5)} | ${String(avg.toFixed(1) + '%').padStart(11)} | ${String(pct.toFixed(0) + '%').padStart(4)} | ${String(best.toFixed(1) + '%').padStart(7)} | ${String(worst.toFixed(1) + '%').padStart(7)} | ${bestTicker.ticker} ${bestTicker.year}`);
+  for (const b of scoreBuckets(allResults)) {
+    console.log(`${b.label.padEnd(10)} | ${String(b.count).padStart(5)} | ${String(b.avgReturn.toFixed(1) + '%').padStart(11)} | ${String(b.pctPositive.toFixed(0) + '%').padStart(4)} | ${String(b.best.toFixed(1) + '%').padStart(7)} | ${String(b.worst.toFixed(1) + '%').padStart(7)} | ${b.bestTicker}`);
   }
 
   // ═══ ESTRATÉGIA: TOP N POR SCORE ═══
   console.log('\n═══ SIMULAÇÃO DE ESTRATÉGIA ═══');
   console.log('Compra top N por score a cada ano, vende 12 meses depois\n');
   for (const n of [3, 5, 10]) {
-    const portfolio: number[] = [];
-    const market: number[] = [];
-    for (const year of years) {
-      const yr = wr.filter(r => r.year === year).sort((a, b) => b.score - a.score).slice(0, n);
-      if (yr.length === 0) continue;
-      const avgRet = yr.reduce((s, r) => s + (r.return12m ?? 0), 0) / yr.length;
-      portfolio.push(avgRet);
-      const allRet = wr.filter(r => r.year === year).reduce((s, r) => s + (r.return12m ?? 0), 0) / wr.filter(r => r.year === year).length;
-      market.push(allRet);
-    }
-    const avgPort = portfolio.length > 0 ? portfolio.reduce((a, b) => a + b, 0) / portfolio.length : 0;
-    const avgMkt = market.length > 0 ? market.reduce((a, b) => a + b, 0) / market.length : 0;
-    const cagr = (avg: number, nY: number) => (Math.pow(1 + avg / 100, nY) - 1) * 100;
-    console.log(`  Top ${String(n).padStart(2)}: Retorno médio ${avgPort.toFixed(1)}%  |  CAGR ${cagr(avgPort, years.length).toFixed(1)}%  |  vs Mercado ${(avgPort - avgMkt).toFixed(1)}pp`);
+    const s = topNStrategy(allResults, n);
+    console.log(`  Top ${String(n).padStart(2)}: Retorno médio ${s.avgPortfolio.toFixed(1)}%  |  vs Mercado ${(s.avgPortfolio - s.avgMarket).toFixed(1)}pp  |  ganha em ${s.winYears}/${s.totalYears} anos`);
   }
 
   // ═══ DIAGNÓSTICO DO MODELO ═══
@@ -220,6 +218,8 @@ async function main(): Promise<void> {
     const vals = wr.map(r => (r as unknown as Record<string, number>)[p] ?? 0);
     console.log(`  ${p.padEnd(15)}: média ${(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)}  min ${Math.min(...vals)}  max ${Math.max(...vals)}`);
   }
+
+  console.log(`\n💾 Resultados gravados em backtest_results (run_id: ${runId})`);
 
   process.exit(0);
 }
