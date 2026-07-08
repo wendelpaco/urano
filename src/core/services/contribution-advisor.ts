@@ -169,8 +169,8 @@ export function suggestContribution(
       usedSectors.add(sector);
     }
 
-    // 1ª passada: alocação proporcional ao score, respeitando teto por ativo
-    const totalScore = selected.reduce((s, a) => s + a.score, 0);
+    // 1ª passada: peso igual entre os selecionados (score já filtrou elegibilidade —
+    // backtest mostrou que score não ordena retorno, só filtra fracos), respeitando teto por ativo
     const zeroQtyTargets = new Map<string, number>();
     for (const a of selected) {
       const room = roomFor(a);
@@ -189,7 +189,8 @@ export function suggestContribution(
         }
         continue;
       }
-      const target = Math.min((a.score / totalScore) * budgetFor(type), room, budget);
+      const equalShare = budgetFor(type) / selected.length;
+      const target = Math.min(equalShare, room, budget);
       const quantity = Math.floor(target / a.price);
       if (quantity === 0) {
         zeroQtyTargets.set(a.ticker, target);

@@ -104,23 +104,50 @@ describe('suggestContribution', () => {
     }
   });
 
-  it('ativo cujo orçamento proporcional arredonda para 0 unidades aparece em skipped (não some)', () => {
+  it('ativo cujo orçamento por peso igual arredonda para 0 unidades aparece em skipped (não some)', () => {
     const customUniverse: AdvisorAsset[] = [
       asset({ ticker: 'HIGH3', score: 90, price: 79, sector: 'setor a' }),
       asset({ ticker: 'LOW3', score: 45, price: 50, sector: 'setor b' }),
     ];
-    // target proporcional de LOW3 = (45/135) * 120 = R$40 < R$50 (seu preço) → 0 unidades na 1ª passada.
-    // Sobra de orçamento após comprar HIGH3 (R$41) também é menor que R$50 → 2ª passada não resgata.
+    // Peso igual: cada um recebe budgetFor(stock) / 2 = R$60.
+    // HIGH3 (preço R$79) não cabe em R$60 → 0 unidades na 1ª passada, entra em zeroQtyTargets.
+    // LOW3 (preço R$50) cabe em R$60 → 1 unidade comprada; sobra (R$70) permite +1 unidade na 2ª
+    // passada (total 2, R$100). Sobra final (R$20) não cobre os R$79 de HIGH3 → HIGH3 fica em
+    // skipped, não some silenciosamente.
     const result = suggestContribution(customUniverse, [], {
       amount: 120,
       profile: 'agressivo',
       onlyTypes: ['stock'],
       maxAssetPercent: 100,
     });
-    expect(result.purchases.some((p) => p.ticker === 'HIGH3')).toBe(true);
-    expect(result.purchases.some((p) => p.ticker === 'LOW3')).toBe(false);
-    const lowSkip = result.skipped.find((s) => s.ticker === 'LOW3');
-    expect(lowSkip).toBeDefined();
-    expect(lowSkip?.reason).toContain('insuficiente');
+    expect(result.purchases.some((p) => p.ticker === 'LOW3')).toBe(true);
+    expect(result.purchases.some((p) => p.ticker === 'HIGH3')).toBe(false);
+    const highSkip = result.skipped.find((s) => s.ticker === 'HIGH3');
+    expect(highSkip).toBeDefined();
+    expect(highSkip?.reason).toContain('insuficiente');
+  });
+
+  it('peso igual entre selecionados: score bem diferente não gera alocação proporcional', () => {
+    // Backtest (docs/backtest/2026-07-08-veredito-v1.md): score é quality-filter, não preditor de
+    // retorno — não deve pesar o tamanho da posição. Dois ativos elegíveis (score 90 e 46, ambos
+    // ≥ minScore 45 do perfil agressivo), mesmo preço, orçamento para 2 unidades de cada.
+    // Proporcional-ao-score (comportamento antigo) daria ~3x mais para o de score 90 (R$300 vs
+    // R$100); peso igual dá o mesmo valor investido em cada (R$200 e R$200).
+    const customUniverse: AdvisorAsset[] = [
+      asset({ ticker: 'HISCORE3', score: 90, price: 100, sector: 'setor a' }),
+      asset({ ticker: 'LOSCORE3', score: 46, price: 100, sector: 'setor b' }),
+    ];
+    const result = suggestContribution(customUniverse, [], {
+      amount: 400,
+      profile: 'agressivo',
+      onlyTypes: ['stock'],
+      maxAssetPercent: 100,
+    });
+    const hi = result.purchases.find((p) => p.ticker === 'HISCORE3');
+    const lo = result.purchases.find((p) => p.ticker === 'LOSCORE3');
+    expect(hi).toBeDefined();
+    expect(lo).toBeDefined();
+    expect(hi?.cost).toBeCloseTo(lo?.cost ?? -1, 5);
+    expect(hi?.quantity).toBe(lo?.quantity);
   });
 });
