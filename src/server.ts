@@ -9,21 +9,33 @@ import { checkRedisConnection } from './infra/services/redis.ts';
 import { checkDatabaseConnection } from './infra/database/connection.ts';
 import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
 
+const isDev = process.env.NODE_ENV !== 'production';
+
 const app = Fastify({
-  logger: {
-    transport: {
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-        translateTime: 'HH:MM:ss Z',
-        ignore: 'pid,hostname',
-      },
-    },
-  },
+  logger: isDev
+    ? {
+        transport: {
+          target: 'pino-pretty',
+          options: { colorize: true, translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' },
+        },
+      }
+    : true, // JSON puro em produção (muito mais rápido)
 });
 
 // Rate limiting global (após auth, antes das rotas)
 app.addHook('onRequest', rateLimiter);
+
+// Compressão gzip para respostas JSON > 1KB (Bun nativo, zero overhead)
+app.addHook('onSend', async (request, reply, payload) => {
+  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  if (body.length < 1024) return payload; // não comprime respostas pequenas
+  const accept = request.headers['accept-encoding'] || '';
+  if (accept.includes('gzip')) {
+    reply.header('Content-Encoding', 'gzip');
+    return Bun.gzipSync(new TextEncoder().encode(body));
+  }
+  return payload;
+});
 
 // Registra rotas globais sob o prefixo /v1
 await app.register(routesPlugin, { prefix: '/v1' });

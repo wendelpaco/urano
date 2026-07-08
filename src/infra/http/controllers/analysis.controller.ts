@@ -113,49 +113,10 @@ export async function getStockAnalysisController(
 
   const f = rows[0]!;
 
-  // Cotação
-  let price = 0;
-  let quotesOk = false;
-  try {
-    const quote = await stockQuoteService.getQuote(ticker);
-    price = quote.price;
-    quotesOk = true;
-  } catch {
-    /* sem cotação */
-  }
-
-  // DY: busca via scraper (HTML, confiável) com fallback para provider (JSON)
-  let dividendsOk = false;
-  let dividendYield: number | null = null;
-  try {
-    const scraped = await statusInvestScraper.fetchStock(ticker);
-    if (scraped.dy12m > 0 && price > 0) {
-      dividendYield = scraped.dy12m;
-      dividendsOk = true;
-    }
-  } catch {
-    // Fallback: provider JSON
-    try {
-      const proventos = await dividendsProvider.fetchDividends(ticker);
-      if (proventos && proventos.length > 0 && price > 0) {
-        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-        const cutoffStr = cutoff.toISOString().slice(0, 10);
-        const sum12m = proventos.filter((e) => e.date >= cutoffStr).reduce((s, e) => s + e.value, 0);
-        if (sum12m > 0) {
-          dividendYield = +(sum12m / price * 100).toFixed(2);
-          dividendsOk = true;
-        }
-      }
-    } catch { /* sem dados */ }
-  }
-
-  // Indicadores
-  const indicators = calcAllIndicators(f, price);
-
-  // Busca dados históricos (todos os anos) para análise de tendências
-  let historical: import('../../../core/services/stock-score.ts').HistoricalData | undefined;
-  try {
-    const histRows = await db
+  // Paraleliza: cotação + histórico DB (independentes)
+  const [quoteResult, histRows] = await Promise.all([
+    stockQuoteService.getQuote(ticker).catch(() => null),
+    db
       .select({
         fiscalYear: companyFundamentals.fiscalYear,
         revenue: companyFundamentals.revenue,
@@ -167,48 +128,66 @@ export async function getStockAnalysisController(
       .from(companyFundamentals)
       .innerJoin(companies, eq(companyFundamentals.companyCnpj, companies.cnpj))
       .where(eq(companies.ticker, ticker))
-      .orderBy(desc(companyFundamentals.fiscalYear));
+      .orderBy(desc(companyFundamentals.fiscalYear))
+      .catch((): Array<{ fiscalYear: number; revenue: string | null; netIncomeParent: string | null; equity: string | null; totalLiabilities: string | null; cogs: string | null }> => []),
+  ]);
 
-    if (histRows.length >= 2) {
-      historical = {
-        years: histRows.map((r) => {
-          const rev = Number(r.revenue ?? 0);
-          const inc = Number(r.netIncomeParent ?? 0);
-          const eq = Number(r.equity ?? 0);
-          const cogs = Math.abs(Number(r.cogs ?? 0));
-          return {
-            fiscalYear: r.fiscalYear,
-            revenue: rev,
-            netIncome: inc,
-            roe: eq > 0 ? +(inc / eq * 100).toFixed(2) : 0,
-            netMargin: rev > 0 ? +(inc / rev * 100).toFixed(2) : 0,
-            debtToEquity: eq > 0 ? +(Number(r.totalLiabilities ?? 0) / eq).toFixed(2) : 0,
-            grossMargin: rev > 0 ? +((rev - cogs) / rev * 100).toFixed(2) : 0,
-          };
-        }),
-      };
-    }
-  } catch { /* sem dados históricos */ }
+  let price = 0;
+  let quotesOk = false;
+  if (quoteResult) { price = quoteResult.price; quotesOk = true; }
 
-  // Score com dados históricos
-  // DY já foi definido pelo scraper acima
-  if (dividendYield !== null) {
-    indicators.dividendYield = dividendYield;
+  // Paraleliza: dividendos + momentum (precisam de price, mas independentes entre si)
+  const [dividendResult, momentum] = await Promise.all([
+    (async (): Promise<{ ok: boolean; dy: number | null }> => {
+      let ok = false; let dy: number | null = null;
+      try {
+        const scraped = await statusInvestScraper.fetchStock(ticker);
+        if (scraped.dy12m > 0 && price > 0) { dy = scraped.dy12m; ok = true; }
+      } catch {
+        try {
+          const proventos = await dividendsProvider.fetchDividends(ticker);
+          if (proventos && proventos.length > 0 && price > 0) {
+            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+            const c = cutoff.toISOString().slice(0, 10);
+            const s = proventos.filter((e) => e.date >= c).reduce((a, e) => a + e.value, 0);
+            if (s > 0) { dy = +(s / price * 100).toFixed(2); ok = true; }
+          }
+        } catch { /* fallback offline */ }
+      }
+      return { ok, dy };
+    })(),
+    marketDataService.getMomentum(ticker).catch(() => undefined),
+  ]);
+
+  const dividendsOk = dividendResult.ok;
+  const dividendYield = dividendResult.dy;
+
+  // Indicadores + Score (síncrono, rápido)
+  const indicators = calcAllIndicators(f, price);
+  if (dividendYield !== null) indicators.dividendYield = dividendYield;
+
+  let historical: import('../../../core/services/stock-score.ts').HistoricalData | undefined;
+  if (histRows.length >= 2) {
+    historical = {
+      years: histRows.map((r) => {
+        const rev = Number(r.revenue ?? 0);
+        const inc = Number(r.netIncomeParent ?? 0);
+        const eqVal = Number(r.equity ?? 0);
+        const cogsVal = Math.abs(Number(r.cogs ?? 0));
+        return {
+          fiscalYear: r.fiscalYear,
+          revenue: rev, netIncome: inc,
+          roe: eqVal > 0 ? +(inc / eqVal * 100).toFixed(2) : 0,
+          netMargin: rev > 0 ? +(inc / rev * 100).toFixed(2) : 0,
+          debtToEquity: eqVal > 0 ? +(Number(r.totalLiabilities ?? 0) / eqVal).toFixed(2) : 0,
+          grossMargin: rev > 0 ? +((rev - cogsVal) / rev * 100).toFixed(2) : 0,
+        };
+      }),
+    };
   }
 
-  // Momentum de mercado
-  let momentum;
-  try {
-    momentum = await marketDataService.getMomentum(ticker);
-  } catch { /* sem momento */ }
-
-  // Score com dados históricos + momentum
   const result = StockScoreCalculator.calculate(
-    indicators,
-    f.sector,
-    f.companyName,
-    historical,
-    momentum,
+    indicators, f.sector, f.companyName, historical, momentum,
   );
 
   const response = {
@@ -483,50 +462,37 @@ export async function getRankingController(
       LIMIT 200
     `);
 
-    const results: Array<{
-      ticker: string;
-      name: string;
-      score: number;
-    }> = [];
+    // Processa em batch (concorrência 5) em vez de sequencial
+    const scored = await batchWithConcurrency(
+      rows as unknown as Record<string, unknown>[],
+      async (r) => {
+        const ticker = String(r.ticker);
+        let price = 0;
+        try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
+        if (price <= 0) return null;
 
-    for (const r of rows as unknown as Record<string, unknown>[]) {
-      const ticker = String(r.ticker);
-      let price = 0;
-      try {
-        const quote = await stockQuoteService.getQuote(ticker);
-        price = quote.price;
-      } catch {
-        continue; // Sem cotação → pula
-      }
+        const indicators = calcAllIndicators(r, price);
 
-      const indicators = calcAllIndicators(r, price);
-
-      // Tenta buscar DY
-      try {
-        const proventos = await dividendsProvider.fetchDividends(ticker);
-        if (proventos && price > 0) {
-          const cutoff = new Date();
-          cutoff.setMonth(cutoff.getMonth() - 12);
-          const cutoffStr = cutoff.toISOString().slice(0, 10);
-          const sum12m = proventos
-            .filter((e) => e.date >= cutoffStr)
-            .reduce((s, e) => s + e.value, 0);
-          if (sum12m > 0) {
-            indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+        try {
+          const proventos = await dividendsProvider.fetchDividends(ticker);
+          if (proventos && price > 0) {
+            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+            const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
+              .reduce((s, e) => s + e.value, 0);
+            if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
           }
-        }
-      } catch {
-        /* sem proventos */
-      }
+        } catch { /* ok */ }
 
-      const result = StockScoreCalculator.calculate(
-        indicators,
-        (r.sector as string) || null,
-        String(r.name),
-      );
+        const result = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
+        if (minScore !== undefined && result.score < minScore) return null;
+        return { ticker, name: String(r.name), score: result.score };
+      },
+      8, // concorrência maior para ranking (usa cache interno do quote service)
+    );
 
-      if (minScore !== undefined && result.score < minScore) continue;
-      results.push({ ticker, name: String(r.name), score: result.score });
+    const results: Array<{ ticker: string; name: string; score: number }> = [];
+    for (const r of scored) {
+      if (r) results.push(r);
     }
 
     results.sort((a, b) => b.score - a.score);
@@ -556,69 +522,42 @@ export async function getRankingController(
       LIMIT 200
     `);
 
-    const results: Array<{
-      ticker: string;
-      name: string;
-      score: number;
-      recommendation?: string;
-      type?: string;
-    }> = [];
+    // Batch concorrente (igual ao ranking de stocks)
+    const scoredFii = await batchWithConcurrency(
+      fiiTickers as unknown as Record<string, unknown>[],
+      async (r) => {
+        const ticker = String(r.ticker);
+        let price = 0; let liquidity: number | null = null;
+        try { const q = await stockQuoteService.getQuote(ticker); price = q.price; liquidity = q.volume; } catch { return null; }
+        if (price <= 0) return null;
 
-    for (const r of fiiTickers as unknown as Record<string, unknown>[]) {
-      const ticker = String(r.ticker);
-      let price = 0;
-      let liquidity: number | null = null;
-      try {
-        const quote = await stockQuoteService.getQuote(ticker);
-        price = quote.price;
-        liquidity = quote.volume;
-      } catch {
-        continue;
-      }
-
-      let dy = 0;
-      let dividendEvents: Array<{ date: string; value: number; type: string }> =
-        [];
-      try {
-        const proventos = await dividendsProvider.fetchDividends(ticker);
-        if (proventos && price > 0) {
-          const cutoff = new Date();
-          cutoff.setMonth(cutoff.getMonth() - 12);
-          const cutoffStr = cutoff.toISOString().slice(0, 10);
-          dividendEvents = proventos.filter((e) => e.date >= cutoffStr);
-          const sum12m = dividendEvents.reduce((s, e) => s + e.value, 0);
-          if (sum12m > 0) {
-            dy = +(sum12m / price * 100).toFixed(2);
+        let dy = 0;
+        let dividendEvents: Array<{ date: string; value: number; type: string }> = [];
+        try {
+          const proventos = await dividendsProvider.fetchDividends(ticker);
+          if (proventos && price > 0) {
+            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+            const c = cutoff.toISOString().slice(0, 10);
+            dividendEvents = proventos.filter((e) => e.date >= c);
+            const s = dividendEvents.reduce((a, e) => a + e.value, 0);
+            if (s > 0) dy = +(s / price * 100).toFixed(2);
           }
-        }
-      } catch {
-        /* sem proventos */
-      }
+        } catch { /* ok */ }
 
-      const score = FIIScoreCalculatorV4.calculate({
-        ticker,
-        price,
-        dy,
-        pvp: null,
-        liquidity,
-        dividendsHistory: dividendEvents,
-      });
+        const score = FIIScoreCalculatorV4.calculate({ ticker, price, dy, pvp: null, liquidity, dividendsHistory: dividendEvents });
+        if (minScore !== undefined && score.overall_score < minScore) return null;
+        return {
+          ticker, name: String(r.name), score: score.overall_score,
+          recommendation: score.overall_rating === 'excelente' || score.overall_rating === 'bom' ? 'conservador'
+            : score.overall_rating === 'regular' ? 'moderado' : 'arriscado',
+          type: score.subclasse_tijolo || score.subclasse_papel || score.type,
+        };
+      },
+      8,
+    );
 
-      if (minScore !== undefined && score.overall_score < minScore) continue;
-
-      results.push({
-        ticker,
-        name: String(r.name),
-        score: score.overall_score,
-        recommendation:
-          score.overall_rating === 'excelente' || score.overall_rating === 'bom'
-            ? 'conservador'
-            : score.overall_rating === 'regular'
-              ? 'moderado'
-              : 'arriscado',
-        type: score.subclasse_tijolo || score.subclasse_papel || score.type,
-      });
-    }
+    const results: Array<{ ticker: string; name: string; score: number; recommendation?: string; type?: string }> = [];
+    for (const r of scoredFii) { if (r) results.push(r); }
 
     results.sort((a, b) => b.score - a.score);
     const sliced = results.slice(0, limit);
