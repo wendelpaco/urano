@@ -187,10 +187,15 @@ export class CvmStorageService {
       }
 
       // Enriquece cada CSV (parseia sob demanda, filtra por CNPJ)
-      this.enrichFromCsv(csvs[`BPP_con_${year}.csv`], cnpj, fundamentals, this.enrichBpp);
-      this.enrichFromCsv(csvs[`BPA_con_${year}.csv`], cnpj, fundamentals, this.enrichBpa);
-      this.enrichFromCsv(csvs[`DFC_MI_con_${year}.csv`], cnpj, fundamentals, this.enrichDfc);
-      this.enrichFromCsv(csvs[`DMPL_con_${year}.csv`], cnpj, fundamentals, this.enrichDmpl);
+      // Usa arrow wrapper para preservar o `this` nos callbacks
+      this.enrichFromCsv(csvs[`BPP_con_${year}.csv`], cnpj, fundamentals,
+        (rows, c, f) => this.enrichBpp(rows, c, f));
+      this.enrichFromCsv(csvs[`BPA_con_${year}.csv`], cnpj, fundamentals,
+        (rows, c, f) => this.enrichBpa(rows, c, f));
+      this.enrichFromCsv(csvs[`DFC_MI_con_${year}.csv`], cnpj, fundamentals,
+        (rows, c, f) => this.enrichDfc(rows, c, f));
+      this.enrichFromCsv(csvs[`DMPL_con_${year}.csv`], cnpj, fundamentals,
+        (rows, c, f) => this.enrichDmpl(rows, c, f));
       this.enrichCapital(csvs[`composicao_capital_${year}.csv`], cnpj, fundamentals);
 
       result.set(cnpj, fundamentals);
