@@ -11,8 +11,7 @@ export function ScoreBadge({
   size?: "sm" | "md" | "lg";
 }) {
   const s = typeof score === "number" ? score : null;
-  const tone =
-    s === null ? "muted" : s >= 70 ? "positive" : s >= 50 ? "warning" : "negative";
+  const tone = s === null ? "muted" : s >= 70 ? "positive" : s >= 50 ? "warning" : "negative";
   const sizes = {
     sm: "h-5 min-w-9 text-[11px] px-1.5",
     md: "h-6 min-w-11 text-xs px-2",
@@ -34,13 +33,7 @@ export function ScoreBadge({
   );
 }
 
-export function TickerBadge({
-  ticker,
-  className,
-}: {
-  ticker: string;
-  className?: string;
-}) {
+export function TickerBadge({ ticker, className }: { ticker: string; className?: string }) {
   return (
     <span
       className={cn(
@@ -88,11 +81,7 @@ export function DeltaPill({
   );
 }
 
-export function HealthBadge({
-  status,
-}: {
-  status: "ok" | "warn" | "error" | string;
-}) {
+export function HealthBadge({ status }: { status: "ok" | "warn" | "error" | string }) {
   const map: Record<string, { label: string; cls: string; dot: string }> = {
     ok: {
       label: "OK",

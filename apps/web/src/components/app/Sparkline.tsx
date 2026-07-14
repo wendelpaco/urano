@@ -14,8 +14,7 @@ export function Sparkline({
   }
   const first = data[0];
   const last = data[data.length - 1];
-  const t =
-    tone === "auto" ? (last >= first ? "positive" : "negative") : tone;
+  const t = tone === "auto" ? (last >= first ? "positive" : "negative") : tone;
   const color =
     t === "positive"
       ? "var(--color-positive)"

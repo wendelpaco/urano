@@ -72,7 +72,10 @@ function SettingsPage() {
           <PanelHeader title="Conexão com a API" />
           <form onSubmit={save} className="p-4 space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="baseUrl" className="text-xs uppercase tracking-wider text-muted-foreground">
+              <Label
+                htmlFor="baseUrl"
+                className="text-xs uppercase tracking-wider text-muted-foreground"
+              >
                 API Base URL
               </Label>
               <Input
@@ -90,7 +93,10 @@ function SettingsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="key" className="text-xs uppercase tracking-wider text-muted-foreground">
+              <Label
+                htmlFor="key"
+                className="text-xs uppercase tracking-wider text-muted-foreground"
+              >
                 API Key
               </Label>
               <Input
@@ -104,8 +110,9 @@ function SettingsPage() {
                 spellCheck={false}
               />
               <p className="text-[11px] text-muted-foreground">
-                Enviada como <code className="px-1 rounded bg-surface-2">x-api-key</code> em cada requisição.
-                Guardada apenas em <code className="px-1 rounded bg-surface-2">localStorage</code>.
+                Enviada como <code className="px-1 rounded bg-surface-2">x-api-key</code> em cada
+                requisição. Guardada apenas em{" "}
+                <code className="px-1 rounded bg-surface-2">localStorage</code>.
               </p>
             </div>
 
@@ -119,11 +126,7 @@ function SettingsPage() {
                   "Salvar configurações"
                 )}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => health.refetch()}
-              >
+              <Button type="button" variant="outline" onClick={() => health.refetch()}>
                 Testar conexão
               </Button>
             </div>
@@ -141,7 +144,7 @@ function SettingsPage() {
                     ? "warn"
                     : health.isError
                       ? "error"
-                      : health.data?.status ?? "ok"
+                      : (health.data?.status ?? "ok")
                 }
               />
             </div>
@@ -149,9 +152,7 @@ function SettingsPage() {
               {baseUrl || "não configurado"}
             </div>
             {health.isError ? (
-              <div className="text-xs text-negative">
-                {(health.error as Error).message}
-              </div>
+              <div className="text-xs text-negative">{(health.error as Error).message}</div>
             ) : null}
             {health.data?.sources?.length ? (
               <div className="space-y-1.5 pt-2 border-t border-border">

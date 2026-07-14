@@ -1,13 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 
-export function Panel({
-  className,
-  children,
-}: {
-  className?: string;
-  children: ReactNode;
-}) {
+export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cn("panel overflow-hidden", className)}>{children}</div>;
 }
 
@@ -41,9 +35,7 @@ export function SectionHeader({
     <div className="flex items-end justify-between gap-4 pb-3">
       <div>
         <h1 className="text-lg font-semibold tracking-tight text-foreground">{title}</h1>
-        {subtitle ? (
-          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
-        ) : null}
+        {subtitle ? <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
     </div>
@@ -77,9 +69,7 @@ export function MetricCard({
       >
         {value}
       </div>
-      {hint ? (
-        <div className="text-[11px] text-muted-foreground mt-1 tabular">{hint}</div>
-      ) : null}
+      {hint ? <div className="text-[11px] text-muted-foreground mt-1 tabular">{hint}</div> : null}
     </div>
   );
 }

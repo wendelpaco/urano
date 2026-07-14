@@ -104,15 +104,12 @@ export async function apiFetch<T = unknown>(req: ApiRequest): Promise<T> {
   }
 
   if (!res.ok) {
-    const payload =
-      (data as ApiErrorShape) ?? {
-        error: `http_${res.status}`,
-        message: res.statusText,
-      };
+    const payload = (data as ApiErrorShape) ?? {
+      error: `http_${res.status}`,
+      message: res.statusText,
+    };
     if (res.status === 401 && typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("urano:unauthorized", { detail: payload }),
-      );
+      window.dispatchEvent(new CustomEvent("urano:unauthorized", { detail: payload }));
     }
     throw new ApiError(res.status, payload);
   }

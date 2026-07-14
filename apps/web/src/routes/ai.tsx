@@ -3,7 +3,16 @@ import { Panel, PanelHeader } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useRef, useState } from "react";
-import { Send, Sparkles, MessageSquare, Wallet, TrendingUp, Compass, Info, Plus } from "lucide-react";
+import {
+  Send,
+  Sparkles,
+  MessageSquare,
+  Wallet,
+  TrendingUp,
+  Compass,
+  Info,
+  Plus,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { asArray, useWallets } from "@/lib/queries";
 
@@ -151,13 +160,7 @@ export function AIPage() {
           ) : (
             <div className="max-w-3xl mx-auto py-6 px-4 space-y-4">
               {active?.messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "flex gap-3",
-                    m.role === "user" && "justify-end",
-                  )}
-                >
+                <div key={i} className={cn("flex gap-3", m.role === "user" && "justify-end")}>
                   {m.role === "assistant" ? (
                     <div className="h-6 w-6 rounded bg-primary/15 grid place-items-center shrink-0">
                       <Sparkles className="h-3 w-3 text-primary" />
@@ -231,7 +234,8 @@ export function AIPage() {
             </div>
           </Panel>
           <div className="text-[11px] text-muted-foreground leading-relaxed px-1">
-            O copiloto usará o contexto das suas carteiras, ativos favoritos e histórico de análises para responder de forma personalizada.
+            O copiloto usará o contexto das suas carteiras, ativos favoritos e histórico de análises
+            para responder de forma personalizada.
           </div>
         </div>
       </div>

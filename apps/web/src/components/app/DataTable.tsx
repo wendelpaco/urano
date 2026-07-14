@@ -55,9 +55,7 @@ export function DataTable<T>({
                       canSort && "cursor-pointer select-none hover:text-foreground",
                     )}
                     style={{ width: h.getSize() !== 150 ? h.getSize() : undefined }}
-                    onClick={
-                      canSort ? h.column.getToggleSortingHandler() : undefined
-                    }
+                    onClick={canSort ? h.column.getToggleSortingHandler() : undefined}
                   >
                     <span className="inline-flex items-center gap-1">
                       {flexRender(h.column.columnDef.header, h.getContext())}
@@ -93,10 +91,7 @@ export function DataTable<T>({
                 )}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className={cn("px-3 align-middle", dense ? "h-8" : "h-10")}
-                  >
+                  <td key={cell.id} className={cn("px-3 align-middle", dense ? "h-8" : "h-10")}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

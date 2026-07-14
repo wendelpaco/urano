@@ -35,9 +35,7 @@ export function useHealthData() {
 export function HealthBanner() {
   const { data } = useHealthData();
   const [dismissed, setDismissed] = useState<string[]>([]);
-  const warnings = (data?.warnings ?? []).filter(
-    (w) => !dismissed.includes(w.message),
-  );
+  const warnings = (data?.warnings ?? []).filter((w) => !dismissed.includes(w.message));
   if (warnings.length === 0) return null;
   return (
     <div className="border-b border-warning/30 bg-warning/8">

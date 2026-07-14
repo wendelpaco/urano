@@ -47,12 +47,16 @@ function HealthPage() {
                   {sources.map((s) => (
                     <tr key={s.name} className="border-b border-border/60">
                       <td className="px-3 h-9">{s.name}</td>
-                      <td className="px-3 h-9"><HealthBadge status={s.status ?? "ok"} /></td>
+                      <td className="px-3 h-9">
+                        <HealthBadge status={s.status ?? "ok"} />
+                      </td>
                       <td className="px-3 h-9 text-right tabular">
                         {typeof s.coverage === "number" ? fmtPct(s.coverage) : "—"}
                       </td>
                       <td className="px-3 h-9 text-right tabular">{s.freshness ?? "—"}</td>
-                      <td className="px-3 h-9 text-right tabular text-muted-foreground">{s.lastUpdate ?? "—"}</td>
+                      <td className="px-3 h-9 text-right tabular text-muted-foreground">
+                        {s.lastUpdate ?? "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -63,7 +67,9 @@ function HealthPage() {
           <Panel className="col-span-12 xl:col-span-5">
             <PanelHeader
               title="Warnings"
-              actions={<span className="tabular text-[11px] text-muted-foreground">{warnings.length}</span>}
+              actions={
+                <span className="tabular text-[11px] text-muted-foreground">{warnings.length}</span>
+              }
             />
             {warnings.length === 0 ? (
               <EmptyState title="Sem warnings" description="Nenhum alerta ativo no momento." />
@@ -78,7 +84,9 @@ function HealthPage() {
                     <div className="text-foreground/90">{w.message}</div>
                     {w.details ? (
                       <pre className="mt-2 tabular text-[11px] text-muted-foreground max-h-40 overflow-auto">
-                        {typeof w.details === "string" ? w.details : JSON.stringify(w.details, null, 2)}
+                        {typeof w.details === "string"
+                          ? w.details
+                          : JSON.stringify(w.details, null, 2)}
                       </pre>
                     ) : null}
                   </div>

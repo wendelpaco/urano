@@ -3,7 +3,13 @@ import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { useState } from "react";
@@ -74,7 +80,9 @@ function ContributionPage() {
             </Field>
             <Field label="Perfil">
               <Select value={profile} onValueChange={setProfile}>
-                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="conservative">Conservador</SelectItem>
                   <SelectItem value="balanced">Moderado</SelectItem>
@@ -84,7 +92,9 @@ function ContributionPage() {
             </Field>
             <Field label="Tipos permitidos">
               <Select value={onlyTypes} onValueChange={setOnlyTypes}>
-                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Ações + FIIs</SelectItem>
                   <SelectItem value="stock">Somente Ações</SelectItem>
@@ -138,7 +148,9 @@ function ContributionPage() {
               <Panel>
                 <PanelHeader
                   title="Compras sugeridas"
-                  actions={<span className="tabular text-[11px] text-muted-foreground">{buys.length}</span>}
+                  actions={
+                    <span className="tabular text-[11px] text-muted-foreground">{buys.length}</span>
+                  }
                 />
                 {buys.length === 0 ? (
                   <EmptyState title="Sem sugestões de compra" />
@@ -157,12 +169,18 @@ function ContributionPage() {
                     <tbody>
                       {buys.map((b: any, i: number) => (
                         <tr key={i} className="border-b border-border/60">
-                          <td className="px-3 h-9"><TickerBadge ticker={b.ticker} /></td>
+                          <td className="px-3 h-9">
+                            <TickerBadge ticker={b.ticker} />
+                          </td>
                           <td className="px-3 h-9 text-right tabular">{b.quantity ?? b.qty}</td>
                           <td className="px-3 h-9 text-right tabular">{fmtBRL(b.price)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtBRL(b.total ?? b.value)}</td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtBRL(b.total ?? b.value)}
+                          </td>
                           <td className="px-3 h-9 text-right tabular">{fmtPct(b.weight, true)}</td>
-                          <td className="px-3 h-9 text-xs text-muted-foreground truncate max-w-[280px]">{b.reason ?? b.justification ?? "—"}</td>
+                          <td className="px-3 h-9 text-xs text-muted-foreground truncate max-w-[280px]">
+                            {b.reason ?? b.justification ?? "—"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -176,7 +194,9 @@ function ContributionPage() {
                     {discards.map((d: any, i: number) => (
                       <div key={i} className="flex items-center gap-3 px-3 py-2 text-xs">
                         <TickerBadge ticker={d.ticker} />
-                        <span className="text-muted-foreground flex-1">{d.reason ?? d.justification}</span>
+                        <span className="text-muted-foreground flex-1">
+                          {d.reason ?? d.justification}
+                        </span>
                       </div>
                     ))}
                   </div>

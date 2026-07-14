@@ -42,10 +42,7 @@ function SearchPage() {
 
   return (
     <div className="p-3 md:p-4 space-y-3">
-      <SectionHeader
-        title="Pesquisa"
-        subtitle="Busque por ticker, nome ou setor."
-      />
+      <SectionHeader title="Pesquisa" subtitle="Busque por ticker, nome ou setor." />
       <Panel>
         <div className="p-3 border-b border-border">
           <div className="relative">
@@ -80,7 +77,9 @@ function SearchPage() {
                 </span>
                 <SectorBadge sector={a.sector} />
                 <span className="tabular text-xs w-20 text-right">{fmtBRL(a.price)}</span>
-                <div className="w-16 text-right"><DeltaPill value={a.changePct} alreadyPct /></div>
+                <div className="w-16 text-right">
+                  <DeltaPill value={a.changePct} alreadyPct />
+                </div>
                 <ScoreBadge score={a.score} size="sm" />
               </button>
             ))}

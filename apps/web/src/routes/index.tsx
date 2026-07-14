@@ -64,8 +64,8 @@ function NotConfigured() {
         </div>
         <h1 className="text-2xl font-semibold">Bem-vindo</h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Antes de iniciar, configure o endereço da API e sua API Key para conectar
-          o terminal ao backend.
+          Antes de iniciar, configure o endereço da API e sua API Key para conectar o terminal ao
+          backend.
         </p>
         <Link
           to="/settings"
@@ -94,33 +94,50 @@ function MarketSummary() {
   const losers = withChange.filter((a) => (a.changePct ?? 0) < 0).length;
   const scored = all.filter((a) => typeof a.score === "number");
   const avgScore =
-    scored.length > 0
-      ? scored.reduce((acc, a) => acc + (a.score ?? 0), 0) / scored.length
-      : null;
+    scored.length > 0 ? scored.reduce((acc, a) => acc + (a.score ?? 0), 0) / scored.length : null;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-      <MetricCard label="Ações cobertas" value={<span className="tabular">{fmtNum(s.length)}</span>} />
-      <MetricCard label="FIIs cobertos" value={<span className="tabular">{fmtNum(f.length)}</span>} />
+      <MetricCard
+        label="Ações cobertas"
+        value={<span className="tabular">{fmtNum(s.length)}</span>}
+      />
+      <MetricCard
+        label="FIIs cobertos"
+        value={<span className="tabular">{fmtNum(f.length)}</span>}
+      />
       <MetricCard
         label="Variação média"
         value={avgChange !== null ? fmtPct(avgChange) : "—"}
-        tone={avgChange && avgChange > 0 ? "positive" : avgChange && avgChange < 0 ? "negative" : "neutral"}
+        tone={
+          avgChange && avgChange > 0
+            ? "positive"
+            : avgChange && avgChange < 0
+              ? "negative"
+              : "neutral"
+        }
       />
       <MetricCard
         label="Em alta"
         value={<span className="text-positive tabular">{fmtNum(gainers)}</span>}
-        hint={<span className="inline-flex items-center gap-1"><TrendingUp className="h-3 w-3" />hoje</span>}
+        hint={
+          <span className="inline-flex items-center gap-1">
+            <TrendingUp className="h-3 w-3" />
+            hoje
+          </span>
+        }
       />
       <MetricCard
         label="Em queda"
         value={<span className="text-negative tabular">{fmtNum(losers)}</span>}
-        hint={<span className="inline-flex items-center gap-1"><TrendingDown className="h-3 w-3" />hoje</span>}
+        hint={
+          <span className="inline-flex items-center gap-1">
+            <TrendingDown className="h-3 w-3" />
+            hoje
+          </span>
+        }
       />
-      <MetricCard
-        label="Score médio"
-        value={avgScore !== null ? avgScore.toFixed(1) : "—"}
-      />
+      <MetricCard label="Score médio" value={avgScore !== null ? avgScore.toFixed(1) : "—"} />
     </div>
   );
 }
@@ -144,7 +161,11 @@ function TopAssets({ type, title }: { type: "stock" | "fii"; title: string }) {
         }
       />
       {q.isLoading ? <LoadingState /> : null}
-      {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+      {q.isError ? (
+        <div className="p-3">
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        </div>
+      ) : null}
       {q.isSuccess && items.length === 0 ? <EmptyState /> : null}
       {items.length > 0 ? (
         <div className="divide-y divide-border">
@@ -181,13 +202,20 @@ function RankingResumido() {
       <PanelHeader
         title="Ranking Geral · Top 12"
         actions={
-          <Link to="/market" className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+          <Link
+            to="/market"
+            className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          >
             ranking completo <ArrowRight className="h-3 w-3" />
           </Link>
         }
       />
       {q.isLoading ? <LoadingState /> : null}
-      {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+      {q.isError ? (
+        <div className="p-3">
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        </div>
+      ) : null}
       {items.length > 0 ? (
         <table className="w-full text-[12.5px]">
           <thead>
@@ -218,10 +246,14 @@ function RankingResumido() {
                   {a.sector ?? "—"}
                 </td>
                 <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
-                <td className="px-3 h-8 text-right"><DeltaPill value={a.changePct} alreadyPct /></td>
+                <td className="px-3 h-8 text-right">
+                  <DeltaPill value={a.changePct} alreadyPct />
+                </td>
                 <td className="px-3 h-8 text-right tabular">{fmtPct(a.dy, true)}</td>
                 <td className="px-3 h-8 text-right tabular">{fmtNum(a.pe)}</td>
-                <td className="px-3 h-8 text-right"><ScoreBadge score={a.score} size="sm" /></td>
+                <td className="px-3 h-8 text-right">
+                  <ScoreBadge score={a.score} size="sm" />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -249,7 +281,10 @@ function DataHealthPanel() {
         {h.isError ? <ErrorState error={h.error} onRetry={() => h.refetch()} /> : null}
         {sources.length === 0 && h.isSuccess ? <EmptyState title="Sem fontes reportadas" /> : null}
         {sources.map((s) => (
-          <div key={s.name} className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0">
+          <div
+            key={s.name}
+            className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0"
+          >
             <div className="flex items-center gap-2 min-w-0">
               <HealthBadge status={s.status ?? "ok"} />
               <span className="truncate">{s.name}</span>
@@ -272,7 +307,9 @@ function WarningsPanel() {
     <Panel>
       <PanelHeader
         title="Últimos warnings"
-        actions={<span className="tabular text-[11px] text-muted-foreground">{warnings.length}</span>}
+        actions={
+          <span className="tabular text-[11px] text-muted-foreground">{warnings.length}</span>
+        }
       />
       {warnings.length === 0 ? (
         <EmptyState title="Nenhum warning" description="A qualidade dos dados está estável." />
@@ -311,9 +348,16 @@ function WalletsPanel() {
         }
       />
       {q.isLoading ? <LoadingState /> : null}
-      {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+      {q.isError ? (
+        <div className="p-3">
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        </div>
+      ) : null}
       {q.isSuccess && wallets.length === 0 ? (
-        <EmptyState title="Nenhuma carteira" description="Crie sua primeira carteira em Portfolio." />
+        <EmptyState
+          title="Nenhuma carteira"
+          description="Crie sua primeira carteira em Portfolio."
+        />
       ) : null}
       {wallets.length > 0 ? (
         <div className="divide-y divide-border">

@@ -36,14 +36,25 @@ function PortfolioIndex() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard label="Carteiras" value={wallets.length} />
         <MetricCard label="Patrimônio total" value={fmtBRL(total)} />
-        <MetricCard label="Variação média" value={fmtPct(avgChange, true)} tone={avgChange > 0 ? "positive" : avgChange < 0 ? "negative" : "neutral"} />
-        <MetricCard label="Ativos consolidados" value={wallets.reduce((a: number, w: any) => a + (asArray(w.positions).length ?? 0), 0)} />
+        <MetricCard
+          label="Variação média"
+          value={fmtPct(avgChange, true)}
+          tone={avgChange > 0 ? "positive" : avgChange < 0 ? "negative" : "neutral"}
+        />
+        <MetricCard
+          label="Ativos consolidados"
+          value={wallets.reduce((a: number, w: any) => a + (asArray(w.positions).length ?? 0), 0)}
+        />
       </div>
 
       <Panel>
         <PanelHeader title="Suas carteiras" />
         {q.isLoading ? <LoadingState /> : null}
-        {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+        {q.isError ? (
+          <div className="p-3">
+            <ErrorState error={q.error} onRetry={() => q.refetch()} />
+          </div>
+        ) : null}
         {q.isSuccess && wallets.length === 0 ? (
           <EmptyState
             icon={<Wallet className="h-8 w-8" />}
@@ -62,7 +73,9 @@ function PortfolioIndex() {
               >
                 <div className="col-span-4 flex items-center gap-2 min-w-0">
                   <Wallet className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-sm font-medium truncate">{w.name ?? `Carteira #${w.id}`}</span>
+                  <span className="text-sm font-medium truncate">
+                    {w.name ?? `Carteira #${w.id}`}
+                  </span>
                 </div>
                 <div className="col-span-2 text-xs text-muted-foreground tabular">
                   {asArray(w.positions).length} ativos
@@ -70,9 +83,19 @@ function PortfolioIndex() {
                 <div className="col-span-3 text-xs text-muted-foreground tabular truncate">
                   {w.strategy ?? w.profile ?? "—"}
                 </div>
-                <div className="col-span-2 tabular text-sm text-right">{fmtBRL(w.value ?? w.total)}</div>
+                <div className="col-span-2 tabular text-sm text-right">
+                  {fmtBRL(w.value ?? w.total)}
+                </div>
                 <div className="col-span-1 text-right tabular text-xs">
-                  <span className={w.changePct > 0 ? "text-positive" : w.changePct < 0 ? "text-negative" : "text-muted-foreground"}>
+                  <span
+                    className={
+                      w.changePct > 0
+                        ? "text-positive"
+                        : w.changePct < 0
+                          ? "text-negative"
+                          : "text-muted-foreground"
+                    }
+                  >
                     {fmtPct(w.changePct, true)}
                   </span>
                 </div>

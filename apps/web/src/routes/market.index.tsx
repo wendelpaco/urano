@@ -72,19 +72,28 @@ function RankingPage() {
             </div>
           }
           actions={
-            <span className="tabular text-[11px] text-muted-foreground">
-              {items.length} ativos
-            </span>
+            <span className="tabular text-[11px] text-muted-foreground">{items.length} ativos</span>
           }
         />
         {q.isLoading ? <SkeletonRows rows={14} /> : null}
-        {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+        {q.isError ? (
+          <div className="p-3">
+            <ErrorState error={q.error} onRetry={() => q.refetch()} />
+          </div>
+        ) : null}
         {items.length > 0 ? (
           <table className="w-full text-[12.5px]">
             <thead className="sticky top-0 bg-surface z-10">
               <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="text-left px-3 h-8 w-10">#</th>
-                <SortH label="Ticker" col="ticker" sort={sort} order={order} onClick={setSort} align="left" />
+                <SortH
+                  label="Ticker"
+                  col="ticker"
+                  sort={sort}
+                  order={order}
+                  onClick={setSort}
+                  align="left"
+                />
                 <th className="text-left px-3 h-8">Setor</th>
                 <SortH label="Preço" col="price" sort={sort} order={order} onClick={setSort} />
                 <SortH label="Var %" col="changePct" sort={sort} order={order} onClick={setSort} />
@@ -108,15 +117,23 @@ function RankingPage() {
                   }
                 >
                   <td className="px-3 h-8 tabular text-muted-foreground">{i + 1}</td>
-                  <td className="px-3 h-8"><TickerBadge ticker={a.ticker} /></td>
-                  <td className="px-3 h-8"><SectorBadge sector={a.sector} /></td>
+                  <td className="px-3 h-8">
+                    <TickerBadge ticker={a.ticker} />
+                  </td>
+                  <td className="px-3 h-8">
+                    <SectorBadge sector={a.sector} />
+                  </td>
                   <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
-                  <td className="px-3 h-8 text-right"><DeltaPill value={a.changePct} alreadyPct /></td>
+                  <td className="px-3 h-8 text-right">
+                    <DeltaPill value={a.changePct} alreadyPct />
+                  </td>
                   <td className="px-3 h-8 text-right tabular">{fmtPct(a.dy, true)}</td>
                   <td className="px-3 h-8 text-right tabular">{fmtNum(a.pe)}</td>
                   <td className="px-3 h-8 text-right tabular">{fmtNum(a.pvp)}</td>
                   <td className="px-3 h-8 text-right tabular">{fmtPct(a.roe, true)}</td>
-                  <td className="px-3 h-8 text-right"><ScoreBadge score={a.score} size="sm" /></td>
+                  <td className="px-3 h-8 text-right">
+                    <ScoreBadge score={a.score} size="sm" />
+                  </td>
                 </tr>
               ))}
             </tbody>

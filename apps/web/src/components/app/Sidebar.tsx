@@ -23,9 +23,7 @@ type NavItem = {
 const groups: { label: string; items: NavItem[] }[] = [
   {
     label: "Terminal",
-    items: [
-      { to: "/", label: "Overview", icon: LayoutDashboard, match: (p) => p === "/" },
-    ],
+    items: [{ to: "/", label: "Overview", icon: LayoutDashboard, match: (p) => p === "/" }],
   },
   {
     label: "Market",

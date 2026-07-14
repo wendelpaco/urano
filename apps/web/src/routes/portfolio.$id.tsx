@@ -9,14 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  Legend,
-} from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { useMemo } from "react";
 
 export const Route = createFileRoute("/portfolio/$id")({
@@ -67,7 +60,9 @@ function WalletDetail() {
               <Link to="/portfolio">Voltar</Link>
             </Button>
             <Button size="sm" onClick={() => rebalance.mutate()} disabled={rebalance.isPending}>
-              <RefreshCw className={"h-3.5 w-3.5 mr-1.5 " + (rebalance.isPending ? "animate-spin" : "")} />
+              <RefreshCw
+                className={"h-3.5 w-3.5 mr-1.5 " + (rebalance.isPending ? "animate-spin" : "")}
+              />
               Rebalancear
             </Button>
           </div>
@@ -120,13 +115,23 @@ function WalletDetail() {
                             <TickerBadge ticker={p.ticker} />
                           </Link>
                         </td>
-                        <td className="px-3 h-8"><SectorBadge sector={p.sector} /></td>
-                        <td className="px-3 h-8 text-right tabular">{p.quantity ?? p.qty ?? "—"}</td>
+                        <td className="px-3 h-8">
+                          <SectorBadge sector={p.sector} />
+                        </td>
+                        <td className="px-3 h-8 text-right tabular">
+                          {p.quantity ?? p.qty ?? "—"}
+                        </td>
                         <td className="px-3 h-8 text-right tabular">{fmtBRL(p.price)}</td>
-                        <td className="px-3 h-8 text-right tabular">{fmtBRL(p.value ?? p.total)}</td>
+                        <td className="px-3 h-8 text-right tabular">
+                          {fmtBRL(p.value ?? p.total)}
+                        </td>
                         <td className="px-3 h-8 text-right tabular">{fmtPct(p.weight, true)}</td>
-                        <td className="px-3 h-8 text-right"><DeltaPill value={p.changePct} alreadyPct /></td>
-                        <td className="px-3 h-8 text-right"><ScoreBadge score={p.score} size="sm" /></td>
+                        <td className="px-3 h-8 text-right">
+                          <DeltaPill value={p.changePct} alreadyPct />
+                        </td>
+                        <td className="px-3 h-8 text-right">
+                          <ScoreBadge score={p.score} size="sm" />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -152,7 +157,11 @@ function WalletDetail() {
                           strokeWidth={1}
                         >
                           {sectors.map((_, i) => (
-                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="var(--color-surface)" />
+                            <Cell
+                              key={i}
+                              fill={CHART_COLORS[i % CHART_COLORS.length]}
+                              stroke="var(--color-surface)"
+                            />
                           ))}
                         </Pie>
                         <Tooltip

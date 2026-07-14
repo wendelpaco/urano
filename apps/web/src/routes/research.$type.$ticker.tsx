@@ -1,6 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useAssetDetail, useDividends, useHistory } from "@/lib/queries";
-import { MetricCard, MetricRow, Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
+import {
+  MetricCard,
+  MetricRow,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+} from "@/components/app/primitives";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { ErrorState, LoadingState, EmptyState } from "@/components/app/states";
@@ -46,11 +52,11 @@ function getReasons(d: any): Array<{ kind: "pro" | "con" | "info"; text: string 
   if (!Array.isArray(raw)) return [];
   return raw.map((r: any) => {
     if (typeof r === "string") return { kind: "info", text: r };
-    const kind =
-      r.kind ??
-      r.type ??
-      (r.positive ? "pro" : r.negative ? "con" : "info");
-    return { kind: kind === "positive" ? "pro" : kind === "negative" ? "con" : kind, text: r.text ?? r.message ?? r.reason ?? "" };
+    const kind = r.kind ?? r.type ?? (r.positive ? "pro" : r.negative ? "con" : "info");
+    return {
+      kind: kind === "positive" ? "pro" : kind === "negative" ? "con" : kind,
+      text: r.text ?? r.message ?? r.reason ?? "",
+    };
   });
 }
 
@@ -102,7 +108,11 @@ function ResearchPage() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <MetricCard label="Score" value={<ScoreBadge score={score} size="lg" />} />
-            <MetricCard label="Preço" value={fmtBRL(data.price)} hint={<DeltaPill value={data.changePct} alreadyPct />} />
+            <MetricCard
+              label="Preço"
+              value={fmtBRL(data.price)}
+              hint={<DeltaPill value={data.changePct} alreadyPct />}
+            />
             <MetricCard label="DY 12m" value={fmtPct(data.dy, true)} />
             <MetricCard label="P/L" value={fmtNum(data.pe)} />
             <MetricCard label="P/VP" value={fmtNum(data.pvp)} />
@@ -122,13 +132,36 @@ function ResearchPage() {
                         <AreaChart data={priceSeries}>
                           <defs>
                             <linearGradient id="gPrice" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.35} />
-                              <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0} />
+                              <stop
+                                offset="0%"
+                                stopColor="var(--color-primary)"
+                                stopOpacity={0.35}
+                              />
+                              <stop
+                                offset="100%"
+                                stopColor="var(--color-primary)"
+                                stopOpacity={0}
+                              />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid stroke="var(--color-border)" strokeDasharray="2 4" vertical={false} />
-                          <XAxis dataKey="d" tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }} tickLine={false} axisLine={false} />
-                          <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }} tickLine={false} axisLine={false} width={40} domain={["auto", "auto"]} />
+                          <CartesianGrid
+                            stroke="var(--color-border)"
+                            strokeDasharray="2 4"
+                            vertical={false}
+                          />
+                          <XAxis
+                            dataKey="d"
+                            tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+                            tickLine={false}
+                            axisLine={false}
+                          />
+                          <YAxis
+                            tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+                            tickLine={false}
+                            axisLine={false}
+                            width={40}
+                            domain={["auto", "auto"]}
+                          />
                           <Tooltip
                             contentStyle={{
                               background: "var(--color-popover)",
@@ -138,7 +171,14 @@ function ResearchPage() {
                             }}
                             labelStyle={{ color: "var(--color-muted-foreground)" }}
                           />
-                          <Area type="monotone" dataKey="v" stroke="var(--color-primary)" strokeWidth={1.5} fill="url(#gPrice)" isAnimationActive={false} />
+                          <Area
+                            type="monotone"
+                            dataKey="v"
+                            stroke="var(--color-primary)"
+                            strokeWidth={1.5}
+                            fill="url(#gPrice)"
+                            isAnimationActive={false}
+                          />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -183,9 +223,23 @@ function ResearchPage() {
                   <div className="p-3" style={{ height: 200 }}>
                     <ResponsiveContainer>
                       <BarChart data={divSeries}>
-                        <CartesianGrid stroke="var(--color-border)" strokeDasharray="2 4" vertical={false} />
-                        <XAxis dataKey="d" tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }} tickLine={false} axisLine={false} width={40} />
+                        <CartesianGrid
+                          stroke="var(--color-border)"
+                          strokeDasharray="2 4"
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="d"
+                          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <YAxis
+                          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          width={40}
+                        />
                         <Tooltip
                           contentStyle={{
                             background: "var(--color-popover)",
@@ -194,7 +248,12 @@ function ResearchPage() {
                             fontSize: 12,
                           }}
                         />
-                        <Bar dataKey="v" fill="var(--color-chart-3)" radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                        <Bar
+                          dataKey="v"
+                          fill="var(--color-chart-3)"
+                          radius={[2, 2, 0, 0]}
+                          isAnimationActive={false}
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -210,8 +269,14 @@ function ResearchPage() {
                 ) : (
                   <div className="p-3 space-y-2">
                     {reasons.map((r, i) => {
-                      const Icon = r.kind === "pro" ? CheckCircle2 : r.kind === "con" ? XCircle : MinusCircle;
-                      const cls = r.kind === "pro" ? "text-positive" : r.kind === "con" ? "text-negative" : "text-muted-foreground";
+                      const Icon =
+                        r.kind === "pro" ? CheckCircle2 : r.kind === "con" ? XCircle : MinusCircle;
+                      const cls =
+                        r.kind === "pro"
+                          ? "text-positive"
+                          : r.kind === "con"
+                            ? "text-negative"
+                            : "text-muted-foreground";
                       return (
                         <div key={i} className="flex items-start gap-2 text-xs">
                           <Icon className={"h-3.5 w-3.5 mt-0.5 shrink-0 " + cls} />

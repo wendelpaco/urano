@@ -9,7 +9,13 @@ import { ErrorState, SkeletonRows, EmptyState } from "@/components/app/states";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { RotateCcw } from "lucide-react";
 
 const numOpt = () => fallback(z.string(), "").default("");
@@ -40,7 +46,11 @@ export const Route = createFileRoute("/market/screener")({
   component: ScreenerPage,
 });
 
-const filterDefs: { key: keyof z.infer<typeof searchSchema>; label: string; kind: "range" | "min" | "text" }[] = [
+const filterDefs: {
+  key: keyof z.infer<typeof searchSchema>;
+  label: string;
+  kind: "range" | "min" | "text";
+}[] = [
   { key: "peMin", label: "P/L", kind: "range" },
   { key: "pvpMin", label: "P/VP", kind: "range" },
   { key: "dyMin", label: "DY %", kind: "range" },
@@ -59,8 +69,7 @@ function ScreenerPage() {
   const q = useScreener(params);
   const items = asArray(q.data);
 
-  const set = (k: string, v: string) =>
-    navigate({ search: (p: any) => ({ ...p, [k]: v }) });
+  const set = (k: string, v: string) => navigate({ search: (p: any) => ({ ...p, [k]: v }) });
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -71,9 +80,7 @@ function ScreenerPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() =>
-              navigate({ search: () => searchSchema.parse({}) as any })
-            }
+            onClick={() => navigate({ search: () => searchSchema.parse({}) as any })}
           >
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Limpar
           </Button>
@@ -86,7 +93,9 @@ function ScreenerPage() {
           <div className="p-3 space-y-4">
             <FilterField label="Tipo">
               <Select value={search.type} onValueChange={(v) => set("type", v)}>
-                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="stock">Ações</SelectItem>
@@ -149,9 +158,16 @@ function ScreenerPage() {
               }
             />
             {q.isLoading ? <SkeletonRows rows={16} /> : null}
-            {q.isError ? <div className="p-3"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div> : null}
+            {q.isError ? (
+              <div className="p-3">
+                <ErrorState error={q.error} onRetry={() => q.refetch()} />
+              </div>
+            ) : null}
             {q.isSuccess && items.length === 0 ? (
-              <EmptyState title="Nenhum ativo atende aos filtros" description="Ajuste os parâmetros para relaxar a busca." />
+              <EmptyState
+                title="Nenhum ativo atende aos filtros"
+                description="Ajuste os parâmetros para relaxar a busca."
+              />
             ) : null}
             {items.length > 0 ? (
               <table className="w-full text-[12.5px]">
@@ -180,15 +196,23 @@ function ScreenerPage() {
                         })
                       }
                     >
-                      <td className="px-3 h-8"><TickerBadge ticker={a.ticker} /></td>
-                      <td className="px-3 h-8"><SectorBadge sector={a.sector} /></td>
+                      <td className="px-3 h-8">
+                        <TickerBadge ticker={a.ticker} />
+                      </td>
+                      <td className="px-3 h-8">
+                        <SectorBadge sector={a.sector} />
+                      </td>
                       <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
-                      <td className="px-3 h-8 text-right"><DeltaPill value={a.changePct} alreadyPct /></td>
+                      <td className="px-3 h-8 text-right">
+                        <DeltaPill value={a.changePct} alreadyPct />
+                      </td>
                       <td className="px-3 h-8 text-right tabular">{fmtPct(a.dy, true)}</td>
                       <td className="px-3 h-8 text-right tabular">{fmtNum(a.pe)}</td>
                       <td className="px-3 h-8 text-right tabular">{fmtNum(a.pvp)}</td>
                       <td className="px-3 h-8 text-right tabular">{fmtPct(a.roe, true)}</td>
-                      <td className="px-3 h-8 text-right"><ScoreBadge score={a.score} size="sm" /></td>
+                      <td className="px-3 h-8 text-right">
+                        <ScoreBadge score={a.score} size="sm" />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -204,9 +228,7 @@ function ScreenerPage() {
 function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </Label>
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</Label>
       {children}
     </div>
   );

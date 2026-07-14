@@ -40,8 +40,7 @@ export function ErrorState({
 }) {
   const isApi = error instanceof ApiError;
   const status = isApi ? error.status : undefined;
-  const title =
-    isApi && error.payload.error ? error.payload.error : "Erro ao carregar dados";
+  const title = isApi && error.payload.error ? error.payload.error : "Erro ao carregar dados";
   const message =
     (isApi && error.payload.message) ||
     (error instanceof Error ? error.message : "Erro desconhecido");
@@ -60,19 +59,13 @@ export function ErrorState({
           <div className="text-sm font-semibold text-foreground">
             {title}
             {status ? (
-              <span className="ml-2 tabular text-xs text-muted-foreground">
-                [HTTP {status}]
-              </span>
+              <span className="ml-2 tabular text-xs text-muted-foreground">[HTTP {status}]</span>
             ) : null}
           </div>
-          <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
-            {message}
-          </div>
+          <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{message}</div>
           {details ? (
             <pre className="tabular text-[11px] text-muted-foreground mt-2 max-h-40 overflow-auto">
-              {typeof details === "string"
-                ? details
-                : JSON.stringify(details, null, 2)}
+              {typeof details === "string" ? details : JSON.stringify(details, null, 2)}
             </pre>
           ) : null}
         </div>
