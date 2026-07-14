@@ -5,7 +5,7 @@ import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, Check, ExternalLink } from "lucide-react";
+import { AlertCircle, Check, ExternalLink, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { useHealthData } from "@/components/app/HealthBanner";
 import { HealthBadge } from "@/components/app/badges";
@@ -25,6 +25,7 @@ function SettingsPage() {
   const [key, setKey] = useState("");
   const [authMsg, setAuthMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setBaseUrl(apiSettings.getBaseUrl());
@@ -40,7 +41,13 @@ function SettingsPage() {
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
-    apiSettings.setBaseUrl(baseUrl);
+    try {
+      apiSettings.setBaseUrl(baseUrl);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "URL inválida.");
+      return;
+    }
+    setSaveError(null);
     apiSettings.setKey(key);
     setSaved(true);
     toast.success("Configurações salvas");
@@ -48,11 +55,16 @@ function SettingsPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl">
-      <SectionHeader
-        title="Settings"
-        subtitle="Configurações locais desta sessão. Nenhum dado é enviado a terceiros."
-      />
+    <div className="p-6 md:p-10 max-w-5xl">
+      <div className="flex items-center gap-3 pb-6">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 border border-border">
+          <Settings2 className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <SectionHeader
+          title="Settings"
+          subtitle="Configurações locais desta sessão. Nenhum dado é enviado a terceiros."
+        />
+      </div>
 
       {authMsg ? (
         <div className="mb-4 flex items-start gap-2 rounded border border-negative/40 bg-negative/10 p-3 text-sm">
@@ -67,10 +79,20 @@ function SettingsPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {saveError ? (
+        <div className="mb-4 flex items-start gap-2 rounded border border-negative/40 bg-negative/10 p-3 text-sm">
+          <AlertCircle className="h-4 w-4 text-negative mt-0.5" />
+          <div>
+            <div className="font-semibold text-negative">Base URL inválida</div>
+            <div className="text-muted-foreground mt-0.5">{saveError}</div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Panel className="lg:col-span-2">
           <PanelHeader title="Conexão com a API" />
-          <form onSubmit={save} className="p-4 space-y-4">
+          <form onSubmit={save} className="p-6 space-y-5">
             <div className="space-y-1.5">
               <Label
                 htmlFor="baseUrl"
@@ -135,7 +157,7 @@ function SettingsPage() {
 
         <Panel>
           <PanelHeader title="Status da API" />
-          <div className="p-4 space-y-3">
+          <div className="p-6 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Endpoint</span>
               <HealthBadge

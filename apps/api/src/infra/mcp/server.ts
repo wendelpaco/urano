@@ -36,20 +36,24 @@ import { z } from 'zod';
 
 const API_BASE = process.env.URANO_API_URL || 'http://localhost:3000/v1';
 
+if (!process.env.URANO_API_KEY) {
+  console.error('❌ URANO_API_KEY não definida. Configure a variável de ambiente antes de iniciar o MCP server.');
+  process.exit(1);
+}
+const API_KEY = process.env.URANO_API_KEY;
+
 async function api(path: string): Promise<unknown> {
-  const key = process.env.URANO_API_KEY || 'dev';
   const r = await fetch(`${API_BASE}${path}`, {
-    headers: { 'x-api-key': key, Accept: 'application/json' },
+    headers: { 'x-api-key': API_KEY, Accept: 'application/json' },
   });
   if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);
   return r.json();
 }
 
 async function apiPost(path: string, body: unknown): Promise<unknown> {
-  const key = process.env.URANO_API_KEY || 'dev';
   const r = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+    headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);

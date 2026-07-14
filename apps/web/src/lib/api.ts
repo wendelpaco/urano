@@ -15,7 +15,18 @@ export const apiSettings = {
     return localStorage.getItem(LS_KEY) ?? "";
   },
   setBaseUrl(v: string) {
-    localStorage.setItem(LS_BASE, v.replace(/\/+$/, ""));
+    const trimmed = v.replace(/\/+$/, "");
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error("URL inválida. Use um endereço completo, ex.: https://api.exemplo.com");
+    }
+    const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLocal)) {
+      throw new Error("Use https:// (ou http:// apenas para localhost).");
+    }
+    localStorage.setItem(LS_BASE, trimmed);
     window.dispatchEvent(new Event("urano:settings"));
   },
   setKey(v: string) {
@@ -51,8 +62,11 @@ export type ApiRequest = {
   signal?: AbortSignal;
 };
 
+const API_VERSION = "v1";
+
 function buildUrl(base: string, path: string, query?: ApiRequest["query"]) {
-  const url = new URL(path.startsWith("/") ? path.slice(1) : path, base + "/");
+  const cleanPath = path.startsWith("/") ? path.slice(1) : path;
+  const url = new URL(`${API_VERSION}/${cleanPath}`, base + "/");
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v === undefined || v === null || v === "") continue;
