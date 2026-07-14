@@ -81,6 +81,13 @@ export async function rotateApiKeyController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
 
   const { id } = parsed.data;
+  if (id !== request.apiKeyId) {
+    reply.status(403).send({
+      error: 'Forbidden',
+      message: 'Só é possível rotacionar a própria API key.',
+    });
+    return;
+  }
   const newKey = generateApiKey();
 
   const [updated] = await db
@@ -112,6 +119,13 @@ export async function deleteApiKeyController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
 
   const { id } = parsed.data;
+  if (id !== request.apiKeyId) {
+    reply.status(403).send({
+      error: 'Forbidden',
+      message: 'Só é possível remover a própria API key.',
+    });
+    return;
+  }
 
   const [updated] = await db
     .update(apiKeys)
