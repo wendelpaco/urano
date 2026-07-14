@@ -1,0 +1,12 @@
+{
+  "name": "urano",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "bun --filter urano-api dev",
+    "dev:web": "bun --filter urano-web dev",
+    "typecheck": "bun --filter '*' typecheck"
+  }
+}
