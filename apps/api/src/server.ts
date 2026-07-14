@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import Fastify, { type FastifyError } from 'fastify';
+import cors from '@fastify/cors';
 import { env } from './config/env.ts';
 import { routesPlugin } from './infra/http/routes/index.ts';
 import { JobStore } from './infra/jobs/job-store.ts';
@@ -37,6 +38,8 @@ const app = Fastify({
     } : {}),
   },
 });
+
+await app.register(cors, { origin: [env.CORS_ORIGIN] });
 
 // Rate limiting
 app.addHook('onRequest', rateLimiter);

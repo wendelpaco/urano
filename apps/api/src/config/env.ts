@@ -14,6 +14,10 @@ const envSchema = z.object({
   REDIS_URL: z
     .string()
     .default('redis://localhost:6379'),
+
+  CORS_ORIGIN: z
+    .string()
+    .default('http://localhost:8080'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -23,6 +27,7 @@ function parseEnv(): Env {
     PORT: process.env.PORT,
     DATABASE_URL: process.env.DATABASE_URL,
     REDIS_URL: process.env.REDIS_URL,
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
   };
 
   const result = envSchema.safeParse(raw);
