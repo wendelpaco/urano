@@ -4,7 +4,6 @@ import tailwindcss from "@tailwindcss/vite";
 import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import { defineConfig, loadEnv } from "vite";
-import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig(({ command, mode }) => {
   const isDevBuild = command === "build" && mode === "development";
@@ -36,6 +35,7 @@ export default defineConfig(({ command, mode }) => {
     css: { transformer: "lightningcss" },
     resolve: {
       alias: { "@": `${process.cwd()}/src` },
+      tsconfigPaths: true,
       dedupe: [
         "react",
         "react-dom",
@@ -78,7 +78,6 @@ export default defineConfig(({ command, mode }) => {
           ]
         : []),
       tailwindcss(),
-      tsConfigPaths({ projects: ["./tsconfig.json"] }),
       tanstackStart({
         importProtection: {
           behavior: "error",

@@ -35,7 +35,7 @@ const SUGGESTIONS = [
   { icon: Sparkles, text: "Quais FIIs apresentam melhor relação risco/retorno?" },
 ];
 
-export function AIPage() {
+function AIPage() {
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
