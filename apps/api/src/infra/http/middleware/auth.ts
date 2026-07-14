@@ -48,8 +48,12 @@ export async function authMiddleware(
     return;
   }
 
+  // Hash da key: usado tanto para lookup no banco quanto como chave de cache
+  // no Redis — nunca guardamos a key em texto plano em nenhum dos dois (V-06).
+  const keyHash = createHash('sha256').update(key).digest('hex');
+
   try {
-    const cached = await redis.get(`apikey:valid:${key}`);
+    const cached = await redis.get(`apikey:valid:${keyHash}`);
     if (cached === 'false') {
       reply.status(401).send({
         error: 'Unauthorized',
@@ -70,7 +74,6 @@ export async function authMiddleware(
   // Consulta o banco
   let row: { key: string; active: boolean; id: string } | undefined;
   try {
-    const keyHash = createHash('sha256').update(key).digest('hex');
     const result = await db
       .select({ key: apiKeys.key, active: apiKeys.active, id: apiKeys.id })
       .from(apiKeys)
@@ -91,7 +94,7 @@ export async function authMiddleware(
   if (!row) {
     // Cache negativo (60s) para evitar repeated DB hits com key inválida
     try {
-      await redis.setex(`apikey:valid:${key}`, 60, 'false');
+      await redis.setex(`apikey:valid:${keyHash}`, 60, 'false');
     } catch { /* ok */ }
 
     reply.status(401).send({
@@ -105,7 +108,7 @@ export async function authMiddleware(
 
   // Cache positivo (60s) — guarda o id, não um booleano
   try {
-    await redis.setex(`apikey:valid:${key}`, 60, row.id);
+    await redis.setex(`apikey:valid:${keyHash}`, 60, row.id);
   } catch { /* ok */ }
 
   // Atualiza last_used_at em background
