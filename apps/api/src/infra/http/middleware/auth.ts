@@ -69,9 +69,14 @@ export async function authMiddleware(
       .where(and(eq(apiKeys.key, key), eq(apiKeys.active, true)));
     row = result[0];
   } catch {
-    // DB indisponível → deixa passar (degradado).
-    // Em produção isso não deve acontecer; o risco é aceitável.
-    console.warn('[auth] Banco indisponível — auth operando em modo degradado');
+    // DB indisponível → nega a request (fail-closed). Uma vez que a API é
+    // chamada direto do browser (sem proxy), deixar passar sem validar a
+    // key equivale a desligar a autenticação inteira durante a indisponibilidade.
+    console.error('[auth] Banco indisponível — negando acesso (fail-closed)');
+    reply.status(503).send({
+      error: 'ServiceUnavailable',
+      message: 'Serviço de autenticação indisponível. Tente novamente em instantes.',
+    });
     return;
   }
 
