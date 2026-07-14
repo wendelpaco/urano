@@ -27,7 +27,7 @@ import {
   scoreBuckets,
   topNStrategy,
 } from '../../core/services/backtest-analysis.ts';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 
 const SCORE_VERSION = 'v1';
 
@@ -91,8 +91,8 @@ function buildHistorical(yearRows: Record<string, unknown>[]): HistoricalData | 
 async function backtestYear(year: number): Promise<BacktestResult[]> {
   console.log(`\n📅 Backtesting ${year}...`);
 
-  const rows = await db.execute(
-    `SELECT DISTINCT ON (c.ticker, cf.fiscal_year)
+  const rows = await db.execute(sql`
+    SELECT DISTINCT ON (c.ticker, cf.fiscal_year)
       c.ticker, c.name, c.sector,
       cf.revenue, cf.cogs, cf.ebit, cf.net_income_parent,
       cf.total_assets, cf.total_liabilities, cf.cash,
@@ -101,9 +101,9 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
      FROM company_fundamentals cf
      JOIN companies c ON c.cnpj = cf.company_cnpj
      WHERE cf.fiscal_year BETWEEN ${year - 4} AND ${year}
-       AND c.ticker NOT LIKE '%11'
-     ORDER BY c.ticker, cf.fiscal_year, cf.reference_date DESC`,
-  );
+       AND (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))
+     ORDER BY c.ticker, cf.fiscal_year, cf.reference_date DESC
+  `);
 
   // Agrupa linhas por ticker (cada linha = um ano fiscal)
   const byTicker = new Map<string, Record<string, unknown>[]>();

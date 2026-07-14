@@ -20,7 +20,7 @@
     "backtest": "bun run src/infra/workers/backtest.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.3.14",
     "@types/ioredis": "^5.0.0",
     "drizzle-kit": "^0.31.10"
   },

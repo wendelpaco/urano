@@ -38,7 +38,9 @@ export async function routesPlugin(
   // Auth middleware — todas as rotas exceto healthcheck
   app.addHook('onRequest', authMiddleware);
 
-  // Healthcheck + Docs (rotas públicas, sem auth)
+  // Healthcheck é público; docs (openapi.json) exige auth como qualquer outra rota
+  // — corrigido em V-13 (o comentário antigo dizia "pública" mas isPublicRoute
+  // nunca incluiu esta rota, então isso nunca foi um vazamento real).
   app.get('/healthcheck', healthcheckController);
   app.get('/docs/openapi.json', openApiController);
 
