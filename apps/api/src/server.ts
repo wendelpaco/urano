@@ -39,7 +39,7 @@ const app = Fastify({
   },
 });
 
-await app.register(cors, { origin: [env.CORS_ORIGIN] });
+await app.register(cors, { origin: [env.CORS_ORIGIN], methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] });
 
 // Rate limiting
 app.addHook('onRequest', rateLimiter);
