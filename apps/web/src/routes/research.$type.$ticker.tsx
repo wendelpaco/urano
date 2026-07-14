@@ -1,5 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useAssetDetail, useDividends, useHistory } from "@/lib/queries";
+import {
+  useAssetDetail,
+  useDividends,
+  useHistory,
+  type Asset,
+  type HistoryResponse,
+  type DividendsResponse,
+} from "@/lib/queries";
 import {
   MetricCard,
   MetricRow,
@@ -30,32 +37,39 @@ export const Route = createFileRoute("/research/$type/$ticker")({
   component: ResearchPage,
 });
 
-function getScore(d: any): number | null {
+function getScore(d: Asset | undefined): number | null {
   if (!d) return null;
-  return d.score ?? d.overallScore ?? d.pontuacao ?? d.pontos ?? null;
+  return (d.score ?? d.overallScore ?? d.pontuacao ?? d.pontos ?? null) as number | null;
 }
 
-function getPillars(d: any): Array<{ name: string; score: number; weight?: number }> {
+function getPillars(d: Asset | undefined): Array<{ name: string; score: number; weight?: number }> {
   if (!d) return [];
   const raw = d.pillars ?? d.pilares ?? d.scores ?? [];
-  if (Array.isArray(raw)) return raw;
-  return Object.entries(raw).map(([name, v]: any) => ({
+  if (Array.isArray(raw)) return raw as Array<{ name: string; score: number; weight?: number }>;
+  return Object.entries(raw as Record<string, unknown>).map(([name, v]) => ({
     name,
-    score: typeof v === "number" ? v : v.score,
-    weight: typeof v === "object" ? v.weight : undefined,
+    score: (typeof v === "number" ? v : (v as Record<string, unknown>).score) as number,
+    weight:
+      typeof v === "object"
+        ? ((v as Record<string, unknown>).weight as number | undefined)
+        : undefined,
   }));
 }
 
-function getReasons(d: any): Array<{ kind: "pro" | "con" | "info"; text: string }> {
+function getReasons(d: Asset | undefined): Array<{ kind: "pro" | "con" | "info"; text: string }> {
   if (!d) return [];
   const raw = d.reasons ?? d.motivos ?? [];
   if (!Array.isArray(raw)) return [];
-  return raw.map((r: any) => {
-    if (typeof r === "string") return { kind: "info", text: r };
-    const kind = r.kind ?? r.type ?? (r.positive ? "pro" : r.negative ? "con" : "info");
+  return raw.map((r: unknown) => {
+    if (typeof r === "string") return { kind: "info" as const, text: r };
+    const rec = r as Record<string, unknown>;
+    const kind = (rec.kind ??
+      rec.type ??
+      (rec.positive ? "pro" : rec.negative ? "con" : "info")) as string;
     return {
-      kind: kind === "positive" ? "pro" : kind === "negative" ? "con" : kind,
-      text: r.text ?? r.message ?? r.reason ?? "",
+      kind: (kind === "positive" ? "pro" : kind === "negative" ? "con" : kind) as
+        "pro" | "con" | "info",
+      text: (rec.text ?? rec.message ?? rec.reason ?? "") as string,
     };
   });
 }
@@ -67,7 +81,7 @@ function ResearchPage() {
   const history = useHistory(ticker);
   const dividends = useDividends(ticker);
 
-  const data: any = detail.data ?? {};
+  const data: Asset = detail.data ?? ({ ticker } as Asset);
   const score = getScore(data);
   const pillars = getPillars(data);
   const reasons = getReasons(data);
@@ -312,24 +326,24 @@ function ResearchPage() {
   );
 }
 
-function normalizeSeries(raw: any): { d: string; v: number }[] {
+function normalizeSeries(raw: HistoryResponse | undefined): { d: string; v: number }[] {
   if (!raw) return [];
   const arr = Array.isArray(raw) ? raw : (raw.data ?? raw.items ?? raw.history ?? []);
   if (!Array.isArray(arr)) return [];
   return arr
-    .map((p: any) => ({
+    .map((p) => ({
       d: (p.date ?? p.d ?? p.time ?? "").toString().slice(0, 10),
       v: Number(p.close ?? p.price ?? p.value ?? p.v),
     }))
     .filter((p) => p.d && !Number.isNaN(p.v));
 }
 
-function normalizeDividends(raw: any): { d: string; v: number }[] {
+function normalizeDividends(raw: DividendsResponse | undefined): { d: string; v: number }[] {
   if (!raw) return [];
   const arr = Array.isArray(raw) ? raw : (raw.data ?? raw.items ?? raw.dividends ?? []);
   if (!Array.isArray(arr)) return [];
   return arr
-    .map((p: any) => ({
+    .map((p) => ({
       d: (p.date ?? p.paymentDate ?? p.d ?? "").toString().slice(0, 10),
       v: Number(p.value ?? p.amount ?? p.v),
     }))

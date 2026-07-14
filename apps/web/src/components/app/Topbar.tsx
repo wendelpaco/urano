@@ -9,11 +9,11 @@ import { cn } from "@/lib/utils";
 function useCrumbs() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const parts = pathname.split("/").filter(Boolean);
-  const crumbs = [{ label: "Home", to: "/" as const }];
+  const crumbs: { label: string; to: string }[] = [{ label: "Home", to: "/" }];
   let acc = "";
   for (const p of parts) {
     acc += "/" + p;
-    crumbs.push({ label: p, to: acc as any });
+    crumbs.push({ label: p, to: acc });
   }
   return crumbs;
 }

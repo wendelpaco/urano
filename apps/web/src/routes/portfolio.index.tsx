@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { asArray, useWallets } from "@/lib/queries";
+import { asArray, useWallets, type Wallet as WalletData } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader, MetricCard } from "@/components/app/primitives";
 import { LoadingState, ErrorState, EmptyState } from "@/components/app/states";
 import { fmtBRL, fmtPct } from "@/lib/format";
@@ -13,10 +13,10 @@ export const Route = createFileRoute("/portfolio/")({
 
 function PortfolioIndex() {
   const q = useWallets();
-  const wallets = asArray(q.data);
-  const total = wallets.reduce((acc: number, w: any) => acc + Number(w.value ?? w.total ?? 0), 0);
+  const wallets = asArray<WalletData>(q.data);
+  const total = wallets.reduce((acc, w) => acc + Number(w.value ?? w.total ?? 0), 0);
   const avgChange = wallets.length
-    ? wallets.reduce((a: number, w: any) => a + Number(w.changePct ?? 0), 0) / wallets.length
+    ? wallets.reduce((a, w) => a + Number(w.changePct ?? 0), 0) / wallets.length
     : 0;
 
   return (
@@ -43,7 +43,7 @@ function PortfolioIndex() {
         />
         <MetricCard
           label="Ativos consolidados"
-          value={wallets.reduce((a: number, w: any) => a + (asArray(w.positions).length ?? 0), 0)}
+          value={wallets.reduce((a, w) => a + asArray(w.positions).length, 0)}
         />
       </div>
 
@@ -64,7 +64,7 @@ function PortfolioIndex() {
         ) : null}
         {wallets.length > 0 ? (
           <div className="divide-y divide-border">
-            {wallets.map((w: any) => (
+            {wallets.map((w) => (
               <Link
                 key={w.id}
                 to="/portfolio/$id"
@@ -89,9 +89,9 @@ function PortfolioIndex() {
                 <div className="col-span-1 text-right tabular text-xs">
                   <span
                     className={
-                      w.changePct > 0
+                      (w.changePct ?? 0) > 0
                         ? "text-positive"
-                        : w.changePct < 0
+                        : (w.changePct ?? 0) < 0
                           ? "text-negative"
                           : "text-muted-foreground"
                     }

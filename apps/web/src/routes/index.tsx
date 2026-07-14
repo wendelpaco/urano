@@ -1,6 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Panel, PanelHeader, MetricCard, SectionHeader } from "@/components/app/primitives";
-import { asArray, useRanking, useWallets } from "@/lib/queries";
+import {
+  asArray,
+  useRanking,
+  useWallets,
+  type Wallet as WalletData,
+  type Asset,
+} from "@/lib/queries";
 import { useHealthData } from "@/components/app/HealthBanner";
 import { LoadingState, ErrorState, EmptyState } from "@/components/app/states";
 import { DeltaPill, HealthBadge, ScoreBadge, TickerBadge } from "@/components/app/badges";
@@ -82,8 +88,8 @@ function MarketSummary() {
   const stocks = useRanking({ type: "stock", limit: 100 });
   const fiis = useRanking({ type: "fii", limit: 100 });
 
-  const s = asArray(stocks.data);
-  const f = asArray(fiis.data);
+  const s = asArray<Asset>(stocks.data);
+  const f = asArray<Asset>(fiis.data);
   const all = [...s, ...f];
   const withChange = all.filter((a) => typeof a.changePct === "number");
   const avgChange =
@@ -144,7 +150,7 @@ function MarketSummary() {
 
 function TopAssets({ type, title }: { type: "stock" | "fii"; title: string }) {
   const q = useRanking({ type, limit: 8, sort: "score", order: "desc" });
-  const items = asArray(q.data).slice(0, 8);
+  const items = asArray<Asset>(q.data).slice(0, 8);
 
   return (
     <Panel>
@@ -196,7 +202,7 @@ function TopAssets({ type, title }: { type: "stock" | "fii"; title: string }) {
 
 function RankingResumido() {
   const q = useRanking({ limit: 12, sort: "score", order: "desc" });
-  const items = asArray(q.data).slice(0, 12);
+  const items = asArray<Asset>(q.data).slice(0, 12);
   return (
     <Panel>
       <PanelHeader
@@ -332,7 +338,7 @@ function WarningsPanel() {
 
 function WalletsPanel() {
   const q = useWallets();
-  const wallets = asArray(q.data);
+  const wallets = asArray<WalletData>(q.data);
   return (
     <Panel>
       <PanelHeader
@@ -361,7 +367,7 @@ function WalletsPanel() {
       ) : null}
       {wallets.length > 0 ? (
         <div className="divide-y divide-border">
-          {wallets.slice(0, 6).map((w: any) => (
+          {wallets.slice(0, 6).map((w) => (
             <Link
               key={w.id ?? w.name}
               to="/portfolio/$id"

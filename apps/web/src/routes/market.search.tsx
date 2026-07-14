@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { asArray, useRanking } from "@/lib/queries";
+import { asArray, useRanking, type Asset } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { Input } from "@/components/ui/input";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
@@ -21,8 +21,8 @@ function SearchPage() {
 
   const all = useMemo(
     () => [
-      ...asArray(stocks.data).map((a) => ({ ...a, type: a.type ?? "stock" })),
-      ...asArray(fiis.data).map((a) => ({ ...a, type: a.type ?? "fii" })),
+      ...asArray<Asset>(stocks.data).map((a) => ({ ...a, type: a.type ?? "stock" })),
+      ...asArray<Asset>(fiis.data).map((a) => ({ ...a, type: a.type ?? "fii" })),
     ],
     [stocks.data, fiis.data],
   );

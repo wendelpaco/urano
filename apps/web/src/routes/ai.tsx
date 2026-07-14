@@ -14,7 +14,7 @@ import {
   Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { asArray, useWallets } from "@/lib/queries";
+import { asArray, useWallets, type Wallet as WalletData } from "@/lib/queries";
 
 export const Route = createFileRoute("/ai")({
   head: () => ({
@@ -225,7 +225,7 @@ export function AIPage() {
               {asArray(wallets.data).length === 0 ? (
                 <div className="text-[11px] text-muted-foreground px-2 py-1">Nenhuma carteira</div>
               ) : (
-                asArray(wallets.data).map((w: any) => (
+                asArray<WalletData>(wallets.data).map((w) => (
                   <div key={w.id} className="flex items-center justify-between text-xs px-2 py-1">
                     <span className="truncate">{w.name ?? `#${w.id}`}</span>
                   </div>

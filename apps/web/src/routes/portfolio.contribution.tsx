@@ -24,6 +24,34 @@ export const Route = createFileRoute("/portfolio/contribution")({
   component: ContributionPage,
 });
 
+type ContributionBuy = {
+  ticker: string;
+  quantity?: number;
+  qty?: number;
+  price?: number;
+  total?: number;
+  value?: number;
+  weight?: number;
+  reason?: string;
+  justification?: string;
+};
+
+type ContributionDiscard = {
+  ticker: string;
+  reason?: string;
+  justification?: string;
+};
+
+type ContributionResult = {
+  summary?: string;
+  justification?: string;
+  buys?: ContributionBuy[];
+  purchases?: ContributionBuy[];
+  recommendations?: ContributionBuy[];
+  discards?: ContributionDiscard[];
+  rejected?: ContributionDiscard[];
+};
+
 function ContributionPage() {
   const [amount, setAmount] = useState("3000");
   const [profile, setProfile] = useState("balanced");
@@ -33,7 +61,7 @@ function ContributionPage() {
 
   const run = useMutation({
     mutationFn: async () => {
-      const body: any = {
+      const body = {
         amount: Number(amount),
         profile,
         onlyTypes: onlyTypes === "all" ? undefined : [onlyTypes],
@@ -46,13 +74,13 @@ function ContributionPage() {
           .map((s) => s.trim())
           .filter(Boolean),
       };
-      return apiFetch({ path: "/analysis/contribution", method: "POST", body });
+      return apiFetch<ContributionResult>({ path: "/analysis/contribution", method: "POST", body });
     },
   });
 
-  const result: any = run.data ?? {};
-  const buys = asArray(result.buys ?? result.purchases ?? result.recommendations);
-  const discards = asArray(result.discards ?? result.rejected);
+  const result: ContributionResult = run.data ?? {};
+  const buys = asArray<ContributionBuy>(result.buys ?? result.purchases ?? result.recommendations);
+  const discards = asArray<ContributionDiscard>(result.discards ?? result.rejected);
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -167,7 +195,7 @@ function ContributionPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {buys.map((b: any, i: number) => (
+                      {buys.map((b, i) => (
                         <tr key={i} className="border-b border-border/60">
                           <td className="px-3 h-9">
                             <TickerBadge ticker={b.ticker} />
@@ -191,7 +219,7 @@ function ContributionPage() {
                 <Panel>
                   <PanelHeader title="Descartados" />
                   <div className="divide-y divide-border">
-                    {discards.map((d: any, i: number) => (
+                    {discards.map((d, i) => (
                       <div key={i} className="flex items-center gap-3 px-3 py-2 text-xs">
                         <TickerBadge ticker={d.ticker} />
                         <span className="text-muted-foreground flex-1">

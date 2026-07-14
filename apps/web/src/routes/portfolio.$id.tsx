@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { asArray, useWallet } from "@/lib/queries";
+import { asArray, useWallet, type Wallet, type Position } from "@/lib/queries";
 import { apiFetch } from "@/lib/api";
 import { MetricCard, Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { LoadingState, ErrorState, EmptyState } from "@/components/app/states";
@@ -28,8 +28,8 @@ const CHART_COLORS = [
 function WalletDetail() {
   const { id } = Route.useParams();
   const q = useWallet(id);
-  const w: any = q.data ?? {};
-  const positions = asArray(w.positions ?? w.assets);
+  const w: Wallet = q.data ?? ({ id: id ?? "" } as Wallet);
+  const positions = asArray<Position>(w.positions ?? w.assets);
 
   const rebalance = useMutation({
     mutationFn: () => apiFetch({ path: `/wallets/${id}/rebalance`, method: "POST" }),
@@ -37,7 +37,7 @@ function WalletDetail() {
       toast.success("Sugestão de rebalanceamento gerada");
       q.refetch();
     },
-    onError: (e: any) => toast.error(e.message ?? "Falha ao rebalancear"),
+    onError: (e: Error) => toast.error(e.message ?? "Falha ao rebalancear"),
   });
 
   const sectors = useMemo(() => {
@@ -79,7 +79,13 @@ function WalletDetail() {
             <MetricCard
               label="Variação"
               value={fmtPct(w.changePct, true)}
-              tone={w.changePct > 0 ? "positive" : w.changePct < 0 ? "negative" : "neutral"}
+              tone={
+                (w.changePct ?? 0) > 0
+                  ? "positive"
+                  : (w.changePct ?? 0) < 0
+                    ? "negative"
+                    : "neutral"
+              }
             />
             <MetricCard label="Ativos" value={positions.length} />
             <MetricCard label="Setores" value={sectors.length} />
@@ -105,7 +111,7 @@ function WalletDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {positions.map((p: any) => (
+                    {positions.map((p) => (
                       <tr key={p.ticker} className="border-b border-border/60 hover:bg-surface-2">
                         <td className="px-3 h-8">
                           <Link
@@ -165,7 +171,7 @@ function WalletDetail() {
                           ))}
                         </Pie>
                         <Tooltip
-                          formatter={(v: any) => fmtBRL(Number(v))}
+                          formatter={(v) => fmtBRL(Number(v))}
                           contentStyle={{
                             background: "var(--color-popover)",
                             border: "1px solid var(--color-border)",

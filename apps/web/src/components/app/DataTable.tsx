@@ -19,7 +19,7 @@ export function DataTable<T>({
   initialSort,
   className,
 }: {
-  columns: ColumnDef<T, any>[];
+  columns: ColumnDef<T, unknown>[];
   data: T[];
   onRowClick?: (row: T) => void;
   emptyState?: ReactNode;

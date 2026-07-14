@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { fallback, zodValidator } from "@tanstack/zod-adapter";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
-import { asArray, useScreener } from "@/lib/queries";
+import { asArray, useScreener, type Asset } from "@/lib/queries";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { ErrorState, SkeletonRows, EmptyState } from "@/components/app/states";
@@ -67,9 +67,10 @@ function ScreenerPage() {
     Object.entries(search).filter(([, v]) => v !== "" && v !== undefined),
   );
   const q = useScreener(params);
-  const items = asArray(q.data);
+  const items = asArray<Asset>(q.data);
 
-  const set = (k: string, v: string) => navigate({ search: (p: any) => ({ ...p, [k]: v }) });
+  const set = (k: keyof z.infer<typeof searchSchema>, v: string) =>
+    navigate({ search: (p) => ({ ...p, [k]: v }) });
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -80,7 +81,7 @@ function ScreenerPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate({ search: () => searchSchema.parse({}) as any })}
+            onClick={() => navigate({ search: () => searchSchema.parse({}) })}
           >
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Limpar
           </Button>
@@ -114,19 +115,19 @@ function ScreenerPage() {
             </FilterField>
 
             {filterDefs.map((f) => {
-              const minKey = f.key as string;
-              const maxKey = minKey.replace(/Min$/, "Max");
+              const minKey = f.key;
+              const maxKey = minKey.replace(/Min$/, "Max") as keyof z.infer<typeof searchSchema>;
               return (
                 <FilterField key={f.key} label={f.label}>
                   <div className="grid grid-cols-2 gap-1.5">
                     <Input
-                      value={(search as any)[minKey] ?? ""}
+                      value={search[minKey] ?? ""}
                       onChange={(e) => set(minKey, e.target.value)}
                       placeholder="min"
                       className="h-8 font-mono"
                     />
                     <Input
-                      value={(search as any)[maxKey] ?? ""}
+                      value={search[maxKey] ?? ""}
                       onChange={(e) => set(maxKey, e.target.value)}
                       placeholder="max"
                       className="h-8 font-mono"

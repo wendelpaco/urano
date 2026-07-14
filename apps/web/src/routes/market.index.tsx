@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { asArray, useRanking } from "@/lib/queries";
+import { asArray, useRanking, type Asset } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
@@ -25,13 +25,13 @@ function RankingPage() {
   const { type, sort, order } = Route.useSearch();
   const navigate = useNavigate({ from: "/market" });
   const q = useRanking({ type, sort, order, limit: 200 });
-  const items = asArray(q.data);
+  const items = asArray<Asset>(q.data);
 
   const setType = (t: "all" | "stock" | "fii") =>
-    navigate({ search: (p: any) => ({ ...p, type: t }) });
+    navigate({ search: (p: z.infer<typeof searchSchema>) => ({ ...p, type: t }) });
   const setSort = (col: string) =>
     navigate({
-      search: (p: any) => ({
+      search: (p: z.infer<typeof searchSchema>) => ({
         ...p,
         sort: col,
         order: p.sort === col && p.order === "desc" ? "asc" : "desc",

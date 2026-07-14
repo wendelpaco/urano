@@ -19,7 +19,23 @@ export type Asset = {
   roe?: number;
   marketCap?: number;
   liquidity?: number;
-  [k: string]: any;
+  // Detail-page-only fields (research.$type.$ticker) — best-effort, backend varies naming.
+  companyName?: string;
+  description?: string;
+  roic?: number;
+  netMargin?: number;
+  debtEquity?: number;
+  eps?: number;
+  bvps?: number;
+  overallScore?: number;
+  pontuacao?: number;
+  pontos?: number;
+  pillars?: unknown;
+  pilares?: unknown;
+  scores?: unknown;
+  reasons?: unknown;
+  motivos?: unknown;
+  [k: string]: unknown;
 };
 
 export type RankingParams = {
@@ -29,20 +45,74 @@ export type RankingParams = {
   limit?: number;
 };
 
+export type ScreenerParams = Record<string, string | number | boolean | undefined | null>;
+
+export type Position = {
+  ticker: string;
+  type?: "stock" | "fii" | string;
+  sector?: string;
+  quantity?: number;
+  qty?: number;
+  price?: number;
+  value?: number;
+  total?: number;
+  weight?: number;
+  changePct?: number;
+  score?: number;
+  [k: string]: unknown;
+};
+
+export type Wallet = {
+  id: string | number;
+  name?: string;
+  strategy?: string;
+  profile?: string;
+  value?: number;
+  total?: number;
+  changePct?: number;
+  positions?: unknown;
+  assets?: unknown;
+  [k: string]: unknown;
+};
+
+export type HistoryPoint = {
+  date?: string;
+  d?: string;
+  time?: string;
+  close?: number;
+  price?: number;
+  value?: number;
+  v?: number;
+};
+export type HistoryResponse =
+  HistoryPoint[] | { data?: HistoryPoint[]; items?: HistoryPoint[]; history?: HistoryPoint[] };
+
+export type DividendEntry = {
+  date?: string;
+  paymentDate?: string;
+  d?: string;
+  value?: number;
+  amount?: number;
+  v?: number;
+};
+export type DividendsResponse =
+  | DividendEntry[]
+  | { data?: DividendEntry[]; items?: DividendEntry[]; dividends?: DividendEntry[] };
+
 export function useRanking(params: RankingParams = {}) {
   return useQuery<Asset[] | { items?: Asset[]; data?: Asset[] }>({
     queryKey: ["ranking", params],
     queryFn: () =>
       apiFetch({
         path: "/analysis/ranking",
-        query: params as Record<string, any>,
+        query: params,
       }),
     staleTime: 60_000,
   });
 }
 
-export function useScreener(params: Record<string, any>) {
-  return useQuery({
+export function useScreener(params: ScreenerParams) {
+  return useQuery<Asset[] | { items?: Asset[]; data?: Asset[] }>({
     queryKey: ["screener", params],
     queryFn: () => apiFetch({ path: "/screener", query: params }),
     staleTime: 30_000,
@@ -51,7 +121,7 @@ export function useScreener(params: Record<string, any>) {
 }
 
 export function useAssetDetail(type: "stock" | "fii", ticker: string) {
-  return useQuery({
+  return useQuery<Asset>({
     queryKey: ["asset", type, ticker],
     queryFn: () =>
       apiFetch({
@@ -63,7 +133,7 @@ export function useAssetDetail(type: "stock" | "fii", ticker: string) {
 }
 
 export function useHistory(ticker: string) {
-  return useQuery<any>({
+  return useQuery<HistoryResponse>({
     queryKey: ["history", ticker],
     queryFn: () => apiFetch({ path: `/stocks/${ticker}/history` }),
     enabled: Boolean(ticker),
@@ -72,7 +142,7 @@ export function useHistory(ticker: string) {
 }
 
 export function useDividends(ticker: string) {
-  return useQuery<any>({
+  return useQuery<DividendsResponse>({
     queryKey: ["dividends", ticker],
     queryFn: () => apiFetch({ path: `/dividends/${ticker}` }),
     enabled: Boolean(ticker),
@@ -81,7 +151,7 @@ export function useDividends(ticker: string) {
 }
 
 export function useWallets() {
-  return useQuery<any>({
+  return useQuery<Wallet[] | { items?: Wallet[]; data?: Wallet[] }>({
     queryKey: ["wallets"],
     queryFn: () => apiFetch({ path: "/wallets" }),
     staleTime: 30_000,
@@ -89,7 +159,7 @@ export function useWallets() {
 }
 
 export function useWallet(id: string | undefined) {
-  return useQuery<any>({
+  return useQuery<Wallet>({
     queryKey: ["wallets", id],
     queryFn: () => apiFetch({ path: `/wallets/${id}` }),
     enabled: Boolean(id),
@@ -98,11 +168,12 @@ export function useWallet(id: string | undefined) {
 }
 
 /** Normalize API responses that may return either `T[]` or `{ items|data: T[] }`. */
-export function asArray<T = any>(v: any): T[] {
-  if (Array.isArray(v)) return v;
-  if (!v) return [];
-  if (Array.isArray(v.items)) return v.items;
-  if (Array.isArray(v.data)) return v.data;
-  if (Array.isArray(v.results)) return v.results;
+export function asArray<T = unknown>(v: unknown): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (!v || typeof v !== "object") return [];
+  const obj = v as { items?: unknown; data?: unknown; results?: unknown };
+  if (Array.isArray(obj.items)) return obj.items as T[];
+  if (Array.isArray(obj.data)) return obj.data as T[];
+  if (Array.isArray(obj.results)) return obj.results as T[];
   return [];
 }
