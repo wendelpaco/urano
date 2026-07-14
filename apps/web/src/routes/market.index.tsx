@@ -24,8 +24,28 @@ export const Route = createFileRoute("/market/")({
 function RankingPage() {
   const { type, sort, order } = Route.useSearch();
   const navigate = useNavigate({ from: "/market" });
-  const q = useRanking({ type, sort, order, limit: 200 });
-  const items = asArray<Asset>(q.data);
+  // Backend /analysis/ranking only accepts type: stock|fii (no "all") and caps limit at 50 —
+  // for "Todos" we fetch both and merge client-side, same pattern as market.search.tsx.
+  const stockQ = useRanking({ type: "stock", sort, order, limit: 50 });
+  const fiiQ = useRanking({ type: "fii", sort, order, limit: 50 });
+  const stockItems = asArray<Asset>(stockQ.data);
+  const fiiItems = asArray<Asset>(fiiQ.data);
+  const items =
+    type === "all" ? [...stockItems, ...fiiItems] : type === "stock" ? stockItems : fiiItems;
+  const q =
+    type === "all"
+      ? {
+          isLoading: stockQ.isLoading || fiiQ.isLoading,
+          isError: stockQ.isError || fiiQ.isError,
+          error: stockQ.error ?? fiiQ.error,
+          refetch: () => {
+            stockQ.refetch();
+            fiiQ.refetch();
+          },
+        }
+      : type === "stock"
+        ? stockQ
+        : fiiQ;
 
   const setType = (t: "all" | "stock" | "fii") =>
     navigate({ search: (p: z.infer<typeof searchSchema>) => ({ ...p, type: t }) });
