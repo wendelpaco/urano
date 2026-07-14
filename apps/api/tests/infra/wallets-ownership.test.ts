@@ -1,4 +1,6 @@
+import { and, eq, or } from 'drizzle-orm';
 import { describe, expect, mock, test } from 'bun:test';
+import { wallets } from '../../src/infra/database/schema.ts';
 
 // Estas controllers consultam o módulo real de `db` diretamente; esta suíte
 // troca `db` por um fake instrumentado por teste (mesmo padrão usado em
@@ -53,10 +55,44 @@ function extractEqPairs(node: unknown, pairs: EqPair[] = []): EqPair[] {
   return pairs;
 }
 
+// ─── Helper: extrai os combinadores booleanos (`and`/`or`) de uma árvore SQL ──
+// `extractEqPairs` sozinho não basta: `and(eq(wallets.id, X), eq(wallets.userId, Y))`
+// e `or(eq(wallets.id, X), eq(wallets.userId, Y))` produzem exatamente os
+// mesmos pares coluna=valor — só o combinador na árvore muda. Um `or` aqui
+// permitiria que qualquer chamador que adivinhasse um walletId passasse pelo
+// guard de ownership (o match do id sozinho já satisfaria o `or`), então o
+// combinador precisa ser verificado explicitamente. No drizzle-orm@0.45.2
+// (versão pinada no bun.lock deste repo) o `and`/`or` aparece como um
+// `StringChunk` cujo `.value` é `[" and "]` ou `[" or "]`, como irmão dos dois
+// sub-nós `SQL` de cada `eq(...)` dentro de `queryChunks`.
+function extractCombinators(node: unknown, combinators: string[] = []): string[] {
+  if (!node || typeof node !== 'object') return combinators;
+  const chunks = (node as { queryChunks?: unknown[] }).queryChunks;
+  if (Array.isArray(chunks)) {
+    for (const chunk of chunks) {
+      const ctorName = (chunk as { constructor?: { name?: string } })?.constructor?.name ?? '';
+      if (ctorName === 'StringChunk') {
+        const value = (chunk as { value?: unknown[] }).value;
+        const text = Array.isArray(value) ? String(value[0] ?? '').trim().toLowerCase() : '';
+        if (text === 'and' || text === 'or') combinators.push(text);
+      }
+      extractCombinators(chunk, combinators);
+    }
+  }
+  return combinators;
+}
+
 function expectOwnershipPredicate(whereArg: unknown, expectedWalletId: string, expectedApiKeyId: string): void {
   const pairs = extractEqPairs(whereArg);
   expect(pairs).toContainEqual({ column: 'id', value: expectedWalletId });
   expect(pairs).toContainEqual({ column: 'user_id', value: expectedApiKeyId });
+
+  // Regressão V-02: garante que as duas condições acima estão combinadas por
+  // `and`, não `or` — os pares coluna=valor por si só não distinguem os dois
+  // casos (veja o comentário de `extractCombinators`).
+  const combinators = extractCombinators(whereArg);
+  expect(combinators).toContain('and');
+  expect(combinators).not.toContain('or');
 }
 
 // ─── Fake db instrumentado ──────────────────────────────────────────────────
@@ -378,5 +414,24 @@ describe('rebalanceController — ownership guard', () => {
     );
 
     expect(getCaptured()?.status).toBe(404);
+  });
+});
+
+describe('expectOwnershipPredicate — combinator hardening (regressão V-02)', () => {
+  test('accepts a genuine and(...) predicate combining wallet id and owner', () => {
+    const predicate = and(eq(wallets.id, WALLET_ID), eq(wallets.userId, OWNER));
+    expect(() => expectOwnershipPredicate(predicate, WALLET_ID, OWNER)).not.toThrow();
+  });
+
+  test('rejects an or(...) predicate even though both column=value pairs are present', () => {
+    // Um `and(...)` trocado por `or(...)` num controller faria qualquer
+    // requisição que apenas acertasse o walletId passar pelo guard de
+    // ownership, sem precisar ser o dono de fato — o match do id sozinho já
+    // satisfaz o `or`. `extractEqPairs` sozinho não pegaria essa regressão:
+    // os pares extraídos de `or(eq(wallets.id, X), eq(wallets.userId, Y))`
+    // são idênticos aos de `and(...)`. Este teste prova que o helper
+    // reforçado (via `extractCombinators`) de fato rejeita esse caso.
+    const predicate = or(eq(wallets.id, WALLET_ID), eq(wallets.userId, OWNER));
+    expect(() => expectOwnershipPredicate(predicate, WALLET_ID, OWNER)).toThrow();
   });
 });
