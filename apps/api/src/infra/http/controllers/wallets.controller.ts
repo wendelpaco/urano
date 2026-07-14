@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { wallets, walletAssets, companies } from '../../database/schema.ts';
+import { logSecurityEvent } from '../audit-log.ts';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,8 @@ export async function createWalletController(
     .insert(wallets)
     .values({ userId: request.apiKeyId!, name })
     .returning();
+
+  logSecurityEvent('wallet.create', { walletId: row!.id, apiKeyId: request.apiKeyId });
 
   reply.status(201).send(row);
 }
@@ -158,6 +161,8 @@ export async function deleteWalletController(
     reply.status(404).send({ error: 'NotFound', message: 'Carteira não encontrada.' });
     return;
   }
+
+  logSecurityEvent('wallet.delete', { walletId: deleted.id, apiKeyId: request.apiKeyId });
 
   reply.send({ message: 'Carteira removida.', id: deleted.id });
 }

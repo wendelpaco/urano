@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
+import { logSecurityEvent } from '../audit-log.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -43,6 +44,8 @@ export async function createApiKeyController(
     .insert(apiKeys)
     .values({ name, key, keyHash })
     .returning();
+
+  logSecurityEvent('api_key.create', { apiKeyId: row!.id, name: row!.name });
 
   reply.status(201).send({
     id: row!.id,
@@ -103,6 +106,8 @@ export async function rotateApiKeyController(
     return;
   }
 
+  logSecurityEvent('api_key.rotate', { apiKeyId: updated.id, requestedBy: request.apiKeyId });
+
   reply.send({
     id: updated.id,
     name: updated.name,
@@ -139,6 +144,8 @@ export async function deleteApiKeyController(
     reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
     return;
   }
+
+  logSecurityEvent('api_key.delete', { apiKeyId: updated.id, requestedBy: request.apiKeyId });
 
   reply.send({ message: 'API Key desativada.', id: updated.id });
 }
