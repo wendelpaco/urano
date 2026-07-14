@@ -37,10 +37,11 @@ export async function createApiKeyController(
 
   const { name } = parsed.data;
   const key = generateApiKey();
+  const keyHash = crypto.createHash('sha256').update(key).digest('hex');
 
   const [row] = await db
     .insert(apiKeys)
-    .values({ name, key })
+    .values({ name, key, keyHash })
     .returning();
 
   reply.status(201).send({
@@ -89,10 +90,11 @@ export async function rotateApiKeyController(
     return;
   }
   const newKey = generateApiKey();
+  const newKeyHash = crypto.createHash('sha256').update(newKey).digest('hex');
 
   const [updated] = await db
     .update(apiKeys)
-    .set({ key: newKey })
+    .set({ key: newKey, keyHash: newKeyHash })
     .where(eq(apiKeys.id, id))
     .returning();
 

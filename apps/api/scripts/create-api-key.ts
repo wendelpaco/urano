@@ -10,7 +10,7 @@
  */
 
 import 'dotenv/config';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { db } from '../src/infra/database/connection.ts';
 import { apiKeys } from '../src/infra/database/schema.ts';
 
@@ -27,10 +27,11 @@ function generateApiKey(): string {
 async function main(): Promise<void> {
   try {
     const key = generateApiKey();
+    const keyHash = createHash('sha256').update(key).digest('hex');
 
     const [row] = await db
       .insert(apiKeys)
-      .values({ name, key })
+      .values({ name, key, keyHash })
       .returning();
 
     if (!row) {

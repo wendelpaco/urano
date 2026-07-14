@@ -296,6 +296,7 @@ export const apiKeys = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: varchar('name', { length: 100 }).notNull(),
     key: varchar('key', { length: 128 }).notNull().unique(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
     active: boolean('active').notNull().default(true),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })

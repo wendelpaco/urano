@@ -6,6 +6,7 @@
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
@@ -69,10 +70,11 @@ export async function authMiddleware(
   // Consulta o banco
   let row: { key: string; active: boolean; id: string } | undefined;
   try {
+    const keyHash = createHash('sha256').update(key).digest('hex');
     const result = await db
       .select({ key: apiKeys.key, active: apiKeys.active, id: apiKeys.id })
       .from(apiKeys)
-      .where(and(eq(apiKeys.key, key), eq(apiKeys.active, true)));
+      .where(and(eq(apiKeys.keyHash, keyHash), eq(apiKeys.active, true)));
     row = result[0];
   } catch {
     // DB indisponível → nega a request (fail-closed). Uma vez que a API é
