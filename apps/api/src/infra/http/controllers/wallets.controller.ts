@@ -20,7 +20,6 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
 const createWalletSchema = z.object({
-  userId: z.string().uuid(),
   name: z.string().min(1).max(100),
 });
 
@@ -52,39 +51,26 @@ export async function createWalletController(
   const parsed = createWalletSchema.safeParse(request.body);
   if (!parsed.success) return sendZodError(reply, parsed.error, 'Payload inválido.');
 
-  const { userId, name } = parsed.data;
+  const { name } = parsed.data;
 
   const [row] = await db
     .insert(wallets)
-    .values({ userId, name })
+    .values({ userId: request.apiKeyId!, name })
     .returning();
 
   reply.status(201).send(row);
 }
 
-/** GET /v1/wallets?userId= */
+/** GET /v1/wallets */
 export async function listWalletsController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const querySchema = z.object({
-    userId: z.string().uuid().optional(),
-  });
-  const parsed = querySchema.safeParse(request.query);
-  if (!parsed.success) return sendZodError(reply, parsed.error, 'Query inválida.');
-
-  const { userId } = parsed.data;
-
-  const rows = userId
-    ? await db
-        .select()
-        .from(wallets)
-        .where(eq(wallets.userId, userId))
-        .orderBy(desc(wallets.createdAt))
-    : await db
-        .select()
-        .from(wallets)
-        .orderBy(desc(wallets.createdAt));
+  const rows = await db
+    .select()
+    .from(wallets)
+    .where(eq(wallets.userId, request.apiKeyId!))
+    .orderBy(desc(wallets.createdAt));
   reply.send({ total: rows.length, data: rows });
 }
 
@@ -101,7 +87,7 @@ export async function getWalletController(
   const [wallet] = await db
     .select()
     .from(wallets)
-    .where(eq(wallets.id, walletId));
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)));
 
   if (!wallet) {
     reply.status(404).send({ error: 'NotFound', message: 'Carteira não encontrada.' });
@@ -142,7 +128,7 @@ export async function updateWalletController(
   const [row] = await db
     .update(wallets)
     .set({ ...updates, updatedAt: new Date() })
-    .where(eq(wallets.id, walletId))
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)))
     .returning();
 
   if (!row) {
@@ -165,7 +151,7 @@ export async function deleteWalletController(
 
   const [deleted] = await db
     .delete(wallets)
-    .where(eq(wallets.id, walletId))
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)))
     .returning({ id: wallets.id });
 
   if (!deleted) {
@@ -190,8 +176,11 @@ export async function addAssetToWalletController(
   const { walletId } = paramsParsed.data;
   const { ticker, targetAllocationPercent } = bodyParsed.data;
 
-  // Verifica se a carteira existe
-  const [wallet] = await db.select({ id: wallets.id }).from(wallets).where(eq(wallets.id, walletId));
+  // Verifica se a carteira existe e pertence à chave autenticada
+  const [wallet] = await db
+    .select({ id: wallets.id })
+    .from(wallets)
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)));
   if (!wallet) {
     reply.status(404).send({ error: 'NotFound', message: 'Carteira não encontrada.' });
     return;
@@ -234,6 +223,17 @@ export async function removeAssetFromWalletController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'Parâmetros de rota inválidos.');
 
   const { walletId, assetId } = parsed.data;
+
+  // Verifica se a carteira existe e pertence à chave autenticada antes de
+  // tocar no ativo — nunca vaza a existência da carteira de outra chave.
+  const [wallet] = await db
+    .select({ id: wallets.id })
+    .from(wallets)
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)));
+  if (!wallet) {
+    reply.status(404).send({ error: 'NotFound', message: 'Carteira não encontrada.' });
+    return;
+  }
 
   const [deleted] = await db
     .delete(walletAssets)

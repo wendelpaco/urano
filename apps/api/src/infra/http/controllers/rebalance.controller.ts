@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { eq, and } from 'drizzle-orm';
+import { db } from '../../database/connection.ts';
+import { wallets } from '../../database/schema.ts';
 import { ExecuteRebalanceUseCase } from '../../../core/use-cases/execute-rebalance.ts';
 
 const bodySchema = z.object({
@@ -48,8 +51,18 @@ export async function rebalanceController(
     return;
   }
 
+  const { walletId } = paramsResult.data;
+
+  const [wallet] = await db
+    .select({ id: wallets.id })
+    .from(wallets)
+    .where(and(eq(wallets.id, walletId), eq(wallets.userId, request.apiKeyId!)));
+  if (!wallet) {
+    reply.status(404).send({ error: 'NotFound', message: 'Carteira não encontrada.' });
+    return;
+  }
+
   try {
-    const { walletId } = paramsResult.data;
     const { availableAmount, currentPositions } = bodyResult.data;
 
     const useCase = new ExecuteRebalanceUseCase();

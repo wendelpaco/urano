@@ -1,0 +1,1 @@
+ALTER TABLE "wallets" ADD CONSTRAINT "wallets_user_id_api_keys_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."api_keys"("id") ON DELETE no action ON UPDATE no action;

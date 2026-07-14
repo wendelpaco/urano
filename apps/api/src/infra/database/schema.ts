@@ -101,7 +101,9 @@ export const wallets = pgTable(
   'wallets',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').notNull(),
+    // Dono da carteira = a API key autenticada que a criou. Nunca aceitar este
+    // valor do cliente — sempre derivar de request.apiKeyId no controller.
+    userId: uuid('user_id').notNull().references(() => apiKeys.id),
     name: varchar('name', { length: 100 }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
