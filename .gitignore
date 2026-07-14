@@ -23,7 +23,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.local
 
 # drizzle-kit
-db/migrations/meta
+apps/api/db/migrations/meta
 
 # caches
 .eslintcache
