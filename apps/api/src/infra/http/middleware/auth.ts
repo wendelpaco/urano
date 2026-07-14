@@ -11,12 +11,18 @@ import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
 import { redis } from '../../services/redis.ts';
 
-// Rotas públicas: healthcheck + criação de key (para bootstrap)
-const PUBLIC_ROUTES = new Set(['/v1/healthcheck', '/v1/keys']);
+declare module 'fastify' {
+  interface FastifyRequest {
+    apiKeyId?: string;
+  }
+}
+
+// Rotas públicas: só healthcheck. Bootstrap de key é feito via `bun run key:create`
+// (script CLI, acesso direto ao banco) — a rota HTTP de criação agora exige auth
+// como qualquer outra, então só quem já tem uma key pode provisionar mais.
+const PUBLIC_ROUTES = new Set(['/v1/healthcheck']);
 
 function isPublicRoute(url: string): boolean {
-  // /v1/keys só é público para POST (criação); GET e DELETE exigem auth
-  if (url === '/v1/keys') return true;
   return PUBLIC_ROUTES.has(url);
 }
 
@@ -41,19 +47,19 @@ export async function authMiddleware(
     return;
   }
 
-  // Cache Redis: verifica se key é válida
   try {
-    const valid = await redis.get(`apikey:valid:${key}`);
-    if (valid === 'true') {
-      // Atualiza last_used_at em background (fire-and-forget)
-      updateLastUsed(key).catch(() => {});
-      return;
-    }
-    if (valid === 'false') {
+    const cached = await redis.get(`apikey:valid:${key}`);
+    if (cached === 'false') {
       reply.status(401).send({
         error: 'Unauthorized',
         message: 'API key inválida ou inativa.',
       });
+      return;
+    }
+    if (cached) {
+      // Valid key: cached value is the apiKeyId (uuid), not a boolean.
+      request.apiKeyId = cached;
+      updateLastUsed(key).catch(() => {});
       return;
     }
   } catch {
@@ -61,10 +67,10 @@ export async function authMiddleware(
   }
 
   // Consulta o banco
-  let row: { key: string; active: boolean } | undefined;
+  let row: { key: string; active: boolean; id: string } | undefined;
   try {
     const result = await db
-      .select({ key: apiKeys.key, active: apiKeys.active })
+      .select({ key: apiKeys.key, active: apiKeys.active, id: apiKeys.id })
       .from(apiKeys)
       .where(and(eq(apiKeys.key, key), eq(apiKeys.active, true)));
     row = result[0];
@@ -93,9 +99,11 @@ export async function authMiddleware(
     return;
   }
 
-  // Cache positivo (60s)
+  request.apiKeyId = row.id;
+
+  // Cache positivo (60s) — guarda o id, não um booleano
   try {
-    await redis.setex(`apikey:valid:${key}`, 60, 'true');
+    await redis.setex(`apikey:valid:${key}`, 60, row.id);
   } catch { /* ok */ }
 
   // Atualiza last_used_at em background
