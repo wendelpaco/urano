@@ -313,6 +313,40 @@ export class CvmFiiService {
       .orderBy(desc(fiiCvmMonthly.referenceDate))
       .limit(limit);
   }
+
+  /**
+   * Mapa ticker → último NAV/cota (CVM). Uma query para ranking/screener —
+   * evita N scrapes síncronos de P/VP.
+   */
+  async getLatestNavByTickerMap(): Promise<
+    Map<string, { navPerShare: number; referenceDate: string }>
+  > {
+    const rows = await db.execute(sql`
+      SELECT DISTINCT ON (ticker)
+        ticker,
+        nav_per_share,
+        reference_date
+      FROM fii_cvm_monthly
+      WHERE ticker IS NOT NULL
+        AND nav_per_share IS NOT NULL
+        AND nav_per_share::numeric > 0
+      ORDER BY ticker, reference_date DESC
+    `);
+    const list = Array.isArray(rows)
+      ? rows
+      : ((rows as { rows?: unknown[] }).rows ?? []);
+    const map = new Map<string, { navPerShare: number; referenceDate: string }>();
+    for (const r of list as Array<Record<string, unknown>>) {
+      const ticker = String(r.ticker ?? '').toUpperCase();
+      const nav = Number(r.nav_per_share);
+      if (!ticker || !Number.isFinite(nav) || nav <= 0) continue;
+      map.set(ticker, {
+        navPerShare: nav,
+        referenceDate: String(r.reference_date ?? '').slice(0, 10),
+      });
+    }
+    return map;
+  }
 }
 
 export const cvmFiiService = new CvmFiiService();

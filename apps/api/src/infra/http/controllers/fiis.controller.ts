@@ -459,7 +459,12 @@ async function buildScreenerResult(
     return { filters: { ...filters, refresh: undefined }, total: 0, data: [] };
   }
 
-  // 2. Busca dados de mercado em paralelo (cotação + scraper)
+  // 2. Mercado: cotação Yahoo + P/VP CVM (DB) + cache Redis; scrape só se faltar
+  const { cvmFiiService } = await import('../../services/cvm-fii-service.ts');
+  const cvmNavMap = await cvmFiiService.getLatestNavByTickerMap().catch(
+    () => new Map<string, { navPerShare: number; referenceDate: string }>(),
+  );
+
   const enriched: FiiScreenerResult[] = await batchWithConcurrency(
     candidates,
     async (fii) => {
@@ -480,15 +485,45 @@ async function buildScreenerResult(
         result.liquidity = quote.volume * quote.price;
       } catch { /* ok */ }
 
-      // P/VP, DY, classificação (scraper ou cache Redis)
-      try {
-        const scraped = await fiisScraper.fetchFII(fii.ticker);
-        if (scraped.pvp > 0) result.pvp = scraped.pvp;
-        if (scraped.dy12m > 0) result.dy = scraped.dy12m;
-        result.classification = scraped.category;
-      } catch { /* ok */ }
+      // P/VP oficial CVM (NAV do informe mensal)
+      const cvm = cvmNavMap.get(fii.ticker);
+      if (cvm && result.price && result.price > 0 && cvm.navPerShare > 0) {
+        result.pvp = +(result.price / cvm.navPerShare).toFixed(3);
+      }
 
-      // Fallback DY: calcula dos proventos se scraper falhou
+      // Cache Redis de scrape anterior (sem I/O HTTP)
+      if (result.pvp === null || result.dy === null) {
+        try {
+          const { redis } = await import('../../services/redis.ts');
+          const cached = await redis.get(`fii:full:${fii.ticker}`);
+          if (cached) {
+            const data = JSON.parse(cached) as {
+              pvp?: number;
+              dy12m?: number;
+              category?: string;
+            };
+            if (result.pvp === null && typeof data.pvp === 'number' && data.pvp > 0) {
+              result.pvp = data.pvp;
+            }
+            if (result.dy === null && typeof data.dy12m === 'number' && data.dy12m > 0) {
+              result.dy = data.dy12m;
+            }
+            if (data.category) result.classification = data.category;
+          }
+        } catch { /* redis offline */ }
+      }
+
+      // Scrape só se ainda faltar P/VP ou DY (e só com refresh explícito ou gaps)
+      if (result.pvp === null || result.dy === null) {
+        try {
+          const scraped = await fiisScraper.fetchFII(fii.ticker);
+          if (scraped.pvp > 0 && result.pvp === null) result.pvp = scraped.pvp;
+          if (scraped.dy12m > 0 && result.dy === null) result.dy = scraped.dy12m;
+          if (scraped.category) result.classification = scraped.category;
+        } catch { /* ok */ }
+      }
+
+      // Fallback DY: proventos (DB/StatusInvest com cache)
       if (result.dy === null) {
         try {
           const proventos = await dividendsProvider.fetchDividends(fii.ticker);
@@ -508,7 +543,7 @@ async function buildScreenerResult(
 
       return result;
     },
-    3, // concorrência limitada para respeitar rate limit do scraper
+    5, // menos pressão no scraper: CVM/cache cobrem a maioria
   );
 
   // 3. Aplica filtros numéricos

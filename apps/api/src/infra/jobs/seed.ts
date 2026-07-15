@@ -8,6 +8,7 @@
  */
 
 import 'dotenv/config';
+import { eq } from 'drizzle-orm';
 import { db } from '../database/connection.ts';
 import { companies } from '../database/schema.ts';
 import { JobStore } from './job-store.ts';
@@ -64,18 +65,41 @@ async function main(): Promise<void> {
 
   const store = new JobStore();
 
-  // 1. Cadastra FIIs (idempotente via ON CONFLICT)
+  // 1. Cadastra FIIs (não sobrescreve CNPJ real de 14 dígitos — use worker:fii-link)
   console.log('🏢 Cadastrando FIIs...');
   let fiiAdded = 0;
+  let fiiUpdated = 0;
   for (const fii of KNOWN_FIIS) {
-    const fakeCnpj = `FII${fii.ticker.padEnd(11, '0').slice(0, 11)}`;
-    await db
-      .insert(companies)
-      .values({ cnpj: fakeCnpj, ticker: fii.ticker, name: fii.name, sector: fii.sector })
-      .onConflictDoUpdate({ target: companies.ticker, set: { name: fii.name, sector: fii.sector, updatedAt: new Date() } });
-    fiiAdded++;
+    const [existing] = await db
+      .select({ cnpj: companies.cnpj, ticker: companies.ticker })
+      .from(companies)
+      .where(eq(companies.ticker, fii.ticker))
+      .limit(1);
+
+    if (existing) {
+      // Atualiza só metadata. CNPJ real (14 dígitos) ou placeholder nunca é tocado
+      // aqui — vínculo CVM é responsabilidade de worker:fii-link.
+      await db
+        .update(companies)
+        .set({
+          name: fii.name,
+          sector: fii.sector,
+          updatedAt: new Date(),
+        })
+        .where(eq(companies.ticker, fii.ticker));
+      fiiUpdated++;
+    } else {
+      const fakeCnpj = `FII${fii.ticker.padEnd(11, '0').slice(0, 11)}`;
+      await db.insert(companies).values({
+        cnpj: fakeCnpj,
+        ticker: fii.ticker,
+        name: fii.name,
+        sector: fii.sector,
+      });
+      fiiAdded++;
+    }
   }
-  console.log(`   ✅ ${fiiAdded} FIIs cadastrados\n`);
+  console.log(`   ✅ ${fiiAdded} novos, ${fiiUpdated} atualizados (CNPJ real preservado)\n`);
 
   // 2. Lê todas as empresas do banco (para stats)
   const allCompanies = await db

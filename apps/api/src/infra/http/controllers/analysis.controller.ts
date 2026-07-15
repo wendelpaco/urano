@@ -611,9 +611,7 @@ export async function getRankingController(
 
     reply.send(response);
   } else {
-    // Ranking de FIIs
-    // Busca todas as empresas terminadas em "11" e filtra as que são FIIs
-    // (exclui Units como KLBN11, SANB11, TAEE11, etc.)
+    // Ranking de FIIs — P/VP via CVM (DB) ou cache Redis; sem scrape síncrono em lote
     const allTickers = await db.execute(sql`
       SELECT ticker, name FROM companies
       WHERE ticker LIKE '%11'
@@ -625,7 +623,12 @@ export async function getRankingController(
     const fiiTickers = (allTickers as unknown as Record<string, unknown>[])
       .filter((r) => isFii(String(r.ticker)));
 
-    // Batch concorrente (igual ao ranking de stocks)
+    const { cvmFiiService } = await import('../../services/cvm-fii-service.ts');
+    const cvmNavMap = await cvmFiiService.getLatestNavByTickerMap().catch(
+      () => new Map<string, { navPerShare: number; referenceDate: string }>(),
+    );
+
+    // Batch concorrente (quotes + proventos; P/VP offline-first)
     const scoredFii = await batchWithConcurrency(
       fiiTickers as unknown as Record<string, unknown>[],
       async (r) => {
@@ -647,7 +650,31 @@ export async function getRankingController(
           }
         } catch { /* ok */ }
 
-        const score = FIIScoreCalculatorV4.calculate({ ticker, price, dy, pvp: null, liquidity, dividendsHistory: dividendEvents });
+        // P/VP: CVM (oficial) → Redis cache de scrape prévio → null (sem scrape no ranking)
+        let pvp: number | null = null;
+        const cvm = cvmNavMap.get(ticker);
+        if (cvm && cvm.navPerShare > 0) {
+          pvp = +(price / cvm.navPerShare).toFixed(3);
+        } else {
+          try {
+            const cachedFii = await redis.get(`fii:full:${ticker}`);
+            if (cachedFii) {
+              const fiiData = JSON.parse(cachedFii) as { pvp?: number };
+              if (typeof fiiData.pvp === 'number' && fiiData.pvp > 0) {
+                pvp = fiiData.pvp;
+              }
+            }
+          } catch { /* redis offline */ }
+        }
+
+        const score = FIIScoreCalculatorV4.calculate({
+          ticker,
+          price,
+          dy,
+          pvp,
+          liquidity,
+          dividendsHistory: dividendEvents,
+        });
         if (minScore !== undefined && score.overall_score < minScore) return null;
         const subclass = score.subclasse_tijolo || score.subclasse_papel || score.type || null;
         return {
@@ -664,7 +691,7 @@ export async function getRankingController(
           price,
           changePct: null,
           dy: dy || null,
-          pvp: null,
+          pvp,
           pe: null,
           roe: null,
         };

@@ -8,6 +8,34 @@ on:
 jobs:
   test-and-typecheck:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: urano
+          POSTGRES_PASSWORD: ci_secret
+          POSTGRES_DB: urano_finbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U urano -d urano_finbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://urano:ci_secret@localhost:5432/urano_finbot
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      CORS_ORIGIN: http://localhost:8080
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -15,14 +43,24 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
+      - name: API migrate
+        working-directory: apps/api
+        run: bun run db:migrate
       - name: API tests
         working-directory: apps/api
         run: bun test
+        env:
+          # Unitários não devem depender de Postgres; integração usa CI=true
+          CI: true
+      - name: API integration smoke
+        working-directory: apps/api
+        env:
+          CI: true
+          RUN_INTEGRATION: '1'
+        run: bun test tests/integration/
       - name: Web lint
         working-directory: apps/web
         run: bun run lint
-      # Vite + Nitro (cloudflare-module preset). Build does not need CF/wrangler secrets;
-      # deploy would. Fail CI if the production bundle cannot be produced.
       - name: Web build
         run: bun run --filter urano-web build
 

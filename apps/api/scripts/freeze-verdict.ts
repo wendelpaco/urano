@@ -1,16 +1,13 @@
 #!/usr/bin/env bun
 /**
- * Congela o veredito a partir do último run persistido no Postgres.
- * Escreve docs/backtest/LATEST-RUN.json (repo root relativo a apps/api → ../../docs)
- * e imprime o bloco a copiar para SCORE_VALIDATION se desejado.
+ * Congela o veredito a partir do último run no Postgres.
  *
- * Não sobrescreve score-validation.data.ts automaticamente (evita commit cego).
- *
- * Uso: bun run scripts/freeze-verdict.ts
+ *   bun run freeze-verdict           → docs/backtest/LATEST-RUN.json
+ *   bun run freeze-verdict --apply   → também atualiza topN em score-validation.data.ts
  */
 
 import 'dotenv/config';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { closeDatabaseConnection } from '../src/infra/database/connection.ts';
 import {
@@ -19,6 +16,8 @@ import {
 } from '../src/infra/database/backtest-queries.ts';
 import { getLatestFiiBacktestSummary } from '../src/infra/database/fii-backtest-queries.ts';
 import { SCORE_VALIDATION } from '../src/core/data/score-validation.data.ts';
+
+const apply = process.argv.includes('--apply');
 
 async function main() {
   const strategy = await getLatestStrategyYears(10);
@@ -47,12 +46,12 @@ async function main() {
       : null,
     fiiBacktest: fii,
     note:
-      'Snapshot de runs persistidos. Atualize SCORE_VALIDATION.topN manualmente se quiser alinhar o JSON estático ao run.',
+      'Snapshot de runs persistidos. Use --apply para alinhar topN em score-validation.data.ts.',
     suggestedTopN: summary
       ? {
           n: 10,
-          avgPortfolio: summary.avgPortfolio,
-          avgMarket: summary.avgUniverse,
+          avgPortfolio: summary.avgPortfolio ?? SCORE_VALIDATION.topN?.avgPortfolio ?? 0,
+          avgMarket: summary.avgUniverse ?? SCORE_VALIDATION.topN?.avgMarket ?? 0,
           winYears: summary.winYearsVsUniverse,
           totalYears: summary.totalYears,
           avgIbov: summary.avgIbov,
@@ -65,9 +64,51 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
   const outFile = join(outDir, 'LATEST-RUN.json');
   writeFileSync(outFile, JSON.stringify(freeze, null, 2) + '\n');
-
   console.log('✅ Freeze escrito em', outFile);
-  console.log(JSON.stringify(freeze.suggestedTopN ?? freeze.fiiBacktest, null, 2));
+
+  if (apply && freeze.suggestedTopN) {
+    const dataFile = join(
+      import.meta.dir,
+      '../src/core/data/score-validation.data.ts',
+    );
+    let src = readFileSync(dataFile, 'utf8');
+    const t = freeze.suggestedTopN;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Replace topN block
+    src = src.replace(
+      /topN:\s*\{[^}]+\}/,
+      `topN: {
+    n: ${t.n},
+    avgPortfolio: ${t.avgPortfolio},
+    avgMarket: ${t.avgMarket},
+    winYears: ${t.winYears},
+    totalYears: ${t.totalYears},
+  }`,
+    );
+    src = src.replace(
+      /validatedAt:\s*'[^']*'/,
+      `validatedAt: '${today}'`,
+    );
+
+    // Annotate summary with freeze note if not present
+    if (!src.includes('LATEST-RUN.json')) {
+      src = src.replace(
+        /summary:\s*'([^']*)'/,
+        (_m, prev: string) =>
+          `summary:\n    '${prev} Números topN alinhados ao run persistido (ver docs/backtest/LATEST-RUN.json; freeze ${today}).'`,
+      );
+    }
+
+    writeFileSync(dataFile, src);
+    console.log('✅ SCORE_VALIDATION.topN atualizado em score-validation.data.ts');
+    console.log(JSON.stringify(t, null, 2));
+  } else if (apply) {
+    console.warn('--apply sem suggestedTopN (rode backtest ações primeiro)');
+  } else {
+    console.log(JSON.stringify(freeze.suggestedTopN ?? freeze.fiiBacktest, null, 2));
+    console.log('(use --apply para gravar topN no código)');
+  }
 
   await closeDatabaseConnection().catch(() => {});
   process.exit(0);

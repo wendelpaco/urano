@@ -16,7 +16,7 @@ Checklist honesto alinhado ao código (2026-07, pós ondas de segurança + dados
 | IBOV real (Yahoo ^BVSP) | **Done** | Validation + worker + web benchmarks |
 | DY/momentum reais no backtest ações | **Done** | DMPL CVM + preços na data do score |
 | Freeze veredito a partir do DB | **Done** | `bun run freeze-verdict` → `docs/backtest/LATEST-RUN.json` |
-| Re-rodar e alinhar JSON estático ao último run | **Partial** | Freeze gera suggestedTopN; update manual de `SCORE_VALIDATION` se quiser |
+| Re-rodar e alinhar JSON estático ao último run | **Done** | `bun run freeze-verdict --apply` atualiza `SCORE_VALIDATION.topN` |
 | Iteração de pesos / edge | **Deferred** | Veredito atual = quality-filter |
 | Score FII histórico look-ahead free | **Partial** | TR + DY→TR free; score no tempo ainda não |
 
@@ -59,7 +59,7 @@ Checklist honesto alinhado ao código (2026-07, pós ondas de segurança + dados
 | Yahoo preço + IBOV | **Done** | |
 | Proventos canônicos | **Done** | `dividend_events` |
 | Backtest FII total return | **Done** | `backtest:fii` — sem rank por score atual |
-| StatusInvest scrape | **Partial** | Frágil; fallback + fixtures |
+| StatusInvest scrape | **Partial** | Ranking/screener preferem CVM+cache; scrape só em gap |
 | Feed B3 pago | **Deferred** | |
 
 ---
@@ -70,7 +70,7 @@ Checklist honesto alinhado ao código (2026-07, pós ondas de segurança + dados
 |---|---|---|
 | Unit API (~157) | **Done** | |
 | Typecheck + lint + OSV + gitleaks + web build | **Done** | CI |
-| Integração DB/workers no CI | **Partial** | Pipeline local; CI sem Postgres job full |
+| Integração DB/workers no CI | **Done** | CI: Postgres+Redis services, migrate, `tests/integration/` |
 | E2E browser | **Deferred** | |
 
 ---
@@ -104,7 +104,8 @@ Checklist honesto alinhado ao código (2026-07, pós ondas de segurança + dados
 - [ ] Pipeline `--full` rodado e `LATEST-RUN.json` no seu ambiente  
 - [ ] Restore testado 1×  
 - [ ] Staging TLS  
-- [ ] Integração CI com Postgres  
+- [x] Integração CI com Postgres (workflow + smoke)  
+
 
 ---
 

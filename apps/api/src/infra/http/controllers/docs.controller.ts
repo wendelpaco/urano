@@ -63,8 +63,8 @@ const spec = {
         tags: ['Sistema'],
         summary: 'Métricas de processo (JSON)',
         description:
-          'Snapshot autenticado de uptime e memória do processo. Não é Prometheus exposition; ' +
-          'requer x-api-key. Correlação via x-request-id (entrada opcional, sempre ecoado na resposta).',
+          'Snapshot de uptime e memória do processo. Não é Prometheus exposition. ' +
+          'Requer x-api-key com escopo admin:ops (ou *). Correlação via x-request-id.',
         parameters: [{ $ref: '#/components/parameters/RequestId' }],
         responses: {
           '200': {
@@ -72,6 +72,7 @@ const spec = {
               'JSON: { uptimeSeconds, memory: { rss, heapUsed }, nodeEnv }',
           },
           '401': { description: 'Sem x-api-key ou key inválida' },
+          '403': { description: 'Sem escopo admin:ops' },
         },
       },
     },
@@ -236,6 +237,74 @@ const spec = {
         tags: ['FIIs'], summary: 'Dados operacionais (vacância, imóveis, inquilinos)',
         parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'Dados operacionais' } },
+      },
+    },
+    '/fiis/{ticker}/cvm': {
+      get: {
+        tags: ['FIIs'],
+        summary: 'Informe mensal CVM (NAV, PL, cotas)',
+        description:
+          'Dados oficiais open data CVM (fii_cvm_monthly). Preferir a scrape de P/VP comercial. ' +
+          'Requer escopo read:market.',
+        parameters: [
+          { name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'HGLG11' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 12, maximum: 60 } },
+        ],
+        responses: {
+          '200': { description: 'Série mensal CVM + latest' },
+          '404': { description: 'Sem dados CVM para o ticker (rode worker:fii-cvm + worker:fii-link)' },
+        },
+      },
+    },
+    '/fiis/{ticker}/total-return': {
+      get: {
+        tags: ['FIIs'],
+        summary: 'Total return (cota Yahoo + proventos)',
+        description:
+          'Retorno total real: variação de preço + soma de proventos no período. Fontes free (Yahoo + dividend_events/StatusInvest).',
+        parameters: [
+          { name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'HGLG11' },
+          {
+            name: 'range',
+            in: 'query',
+            schema: { type: 'string', enum: ['1y', '2y', '3y', '5y'], default: '1y' },
+          },
+        ],
+        responses: { '200': { description: 'Total return, price return, yield contribution' } },
+      },
+    },
+
+    // ── Benchmarks ───────────────────────────────────────────────────────
+    '/benchmarks': {
+      get: {
+        tags: ['Benchmarks'],
+        summary: 'Listar benchmarks free (IBOV, IFIX experimental)',
+        description: 'Metadados de séries de benchmark (Yahoo). Escopo read:market.',
+        responses: { '200': { description: 'Lista de benchmarks disponíveis' } },
+      },
+    },
+    '/benchmarks/{id}': {
+      get: {
+        tags: ['Benchmarks'],
+        summary: 'Série de retornos do benchmark',
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', enum: ['IBOV', 'IFIX'] },
+            example: 'IBOV',
+          },
+          {
+            name: 'years',
+            in: 'query',
+            schema: { type: 'integer', default: 10, minimum: 1, maximum: 20 },
+          },
+        ],
+        responses: {
+          '200': { description: 'Retornos anuais + source/asOf' },
+          '404': { description: 'Benchmark desconhecido' },
+        },
       },
     },
 
@@ -539,25 +608,68 @@ const spec = {
 
     // ── Auth ─────────────────────────────────────────────────────────────
     '/keys': {
-      get: { tags: ['Auth'], summary: 'Listar API keys', responses: { '200': { description: 'Chaves' } } },
+      get: {
+        tags: ['Auth'],
+        summary: 'Listar API keys do dono',
+        description: 'Requer escopo admin:keys (ou *). Keys filhas listam só as próprias.',
+        responses: { '200': { description: 'Chaves (sem segredo; só prefix/scopes/meta)' } },
+      },
       post: {
-        tags: ['Auth'], summary: 'Criar API key',
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' } } } } } },
-        responses: { '201': { description: 'Chave criada (segredo exibido uma única vez)' }, '400': { description: 'Payload inválido' } },
+        tags: ['Auth'],
+        summary: 'Criar API key filha',
+        description:
+          'Escopos: read:market, write:wallet, admin:keys, admin:ops, * (full). ' +
+          'Default de filhas: [read:market, write:wallet]. Segredo exibido uma vez.',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  scopes: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                      enum: ['read:market', 'write:wallet', 'admin:keys', 'admin:ops', '*'],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Chave criada (segredo exibido uma única vez)' },
+          '400': { description: 'Payload inválido' },
+          '403': { description: 'Sem escopo admin:keys' },
+        },
       },
     },
     '/keys/{id}/rotate': {
       post: {
-        tags: ['Auth'], summary: 'Rotacionar API key',
+        tags: ['Auth'],
+        summary: 'Rotacionar API key',
+        description: 'Requer admin:keys. Gera novo segredo; id estável.',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        responses: { '200': { description: 'Nova chave' }, '404': { description: 'Não encontrada' } },
+        responses: {
+          '200': { description: 'Nova chave' },
+          '403': { description: 'Sem escopo ou ownership' },
+          '404': { description: 'Não encontrada' },
+        },
       },
     },
     '/keys/{id}': {
       delete: {
-        tags: ['Auth'], summary: 'Desativar API key',
+        tags: ['Auth'],
+        summary: 'Desativar API key',
+        description: 'Requer admin:keys. Soft-delete / deactivate.',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        responses: { '200': { description: 'Desativada' }, '404': { description: 'Não encontrada' } },
+        responses: {
+          '200': { description: 'Desativada' },
+          '403': { description: 'Sem escopo ou ownership' },
+          '404': { description: 'Não encontrada' },
+        },
       },
     },
 
@@ -566,6 +678,7 @@ const spec = {
       get: {
         tags: ['Sistema'],
         summary: 'Saúde dos dados (cobertura, freshness)',
+        description: 'Escopo read:market. Usado por contribution/UI para warnings.',
         responses: { '200': { description: 'Métricas de data health + warnings' } },
       },
     },
@@ -573,9 +686,14 @@ const spec = {
       get: {
         tags: ['Sistema'],
         summary: 'Diagnóstico do scraper (jobs, circuit breakers, rate limiters)',
-        responses: { '200': { description: 'Status operacional do pipeline de scraping' } },
+        description: 'Escopo admin:ops. Internals de pipeline, não produto.',
+        responses: {
+          '200': { description: 'Status operacional do pipeline de scraping' },
+          '403': { description: 'Sem escopo admin:ops' },
+        },
       },
     },
+    // /metrics já documentado no topo com admin:ops implícito no description
 
     // ── Docs ─────────────────────────────────────────────────────────────
     '/docs/openapi.json': {
