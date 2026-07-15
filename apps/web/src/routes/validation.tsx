@@ -146,6 +146,134 @@ function ValidationPage() {
             </Panel>
           ) : null}
 
+          {v.strategy?.summary ? (
+            <Panel>
+              <PanelHeader
+                title="Estratégia top-N persistida (último backtest)"
+                actions={
+                  <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[200px]">
+                    run {v.strategy.runId.slice(0, 8)}…
+                  </span>
+                }
+              />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3">
+                <MetricCard
+                  label="Avg portfolio"
+                  value={
+                    v.strategy.summary.avgPortfolio != null
+                      ? fmtPct(v.strategy.summary.avgPortfolio)
+                      : "—"
+                  }
+                />
+                <MetricCard
+                  label="Avg universo"
+                  value={
+                    v.strategy.summary.avgUniverse != null
+                      ? fmtPct(v.strategy.summary.avgUniverse)
+                      : "—"
+                  }
+                />
+                <MetricCard
+                  label="Avg IBOV"
+                  value={
+                    v.strategy.summary.avgIbov != null
+                      ? fmtPct(v.strategy.summary.avgIbov)
+                      : "—"
+                  }
+                />
+                <MetricCard
+                  label="Ganha vs IBOV"
+                  value={`${v.strategy.summary.winYearsVsIbov}/${v.strategy.summary.ibovYears}`}
+                />
+              </div>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="text-left px-3 h-8">Ano</th>
+                    <th className="text-right px-3 h-8">Top-N</th>
+                    <th className="text-right px-3 h-8">Universo</th>
+                    <th className="text-right px-3 h-8">IBOV</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {v.strategy.summary.byYear.map((y) => (
+                    <tr key={y.year} className="border-b border-border/60">
+                      <td className="px-3 h-8 font-mono">{y.year}</td>
+                      <td className="px-3 h-8 text-right tabular">
+                        {fmtPct(y.portfolioReturn)}
+                      </td>
+                      <td className="px-3 h-8 text-right tabular">
+                        {fmtPct(y.universeReturn)}
+                      </td>
+                      <td className="px-3 h-8 text-right tabular">
+                        {y.ibovReturn == null ? "—" : fmtPct(y.ibovReturn)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          ) : null}
+
+          {v.fiiBacktest ? (
+            <Panel>
+              <PanelHeader title="Backtest FII — total return real (último run)" />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3">
+                <MetricCard label="Observações" value={v.fiiBacktest.observations} />
+                <MetricCard label="Tickers" value={v.fiiBacktest.tickers} />
+                <MetricCard
+                  label="Corr DY→TR+1"
+                  value={
+                    v.fiiBacktest.dyPredictsNext.n > 0
+                      ? v.fiiBacktest.dyPredictsNext.correlation.toFixed(3)
+                      : "—"
+                  }
+                />
+                <MetricCard
+                  label="n pares DY"
+                  value={v.fiiBacktest.dyPredictsNext.n}
+                />
+              </div>
+              <p className="px-3 text-xs text-muted-foreground leading-relaxed">
+                {v.fiiBacktest.dyPredictsNext.interpretation}
+              </p>
+              <table className="w-full text-[12.5px] mt-2">
+                <thead>
+                  <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="text-left px-3 h-8">Ano</th>
+                    <th className="text-right px-3 h-8">TR médio</th>
+                    <th className="text-right px-3 h-8">Preço</th>
+                    <th className="text-right px-3 h-8">Proventos</th>
+                    <th className="text-right px-3 h-8">n</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {v.fiiBacktest.byYear.map((y) => (
+                    <tr key={y.year} className="border-b border-border/60">
+                      <td className="px-3 h-8 font-mono">{y.year}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgTotal)}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgPrice)}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgDiv)}</td>
+                      <td className="px-3 h-8 text-right tabular">{y.n}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="p-3 text-[11px] text-muted-foreground">
+                Fontes: Yahoo (cota) + StatusInvest/DB (proventos). Score FII não é ranking
+                histórico — use DY→TR+1 e médias de total return.
+              </p>
+            </Panel>
+          ) : (
+            <Panel>
+              <PanelHeader title="Backtest FII" />
+              <p className="p-3 text-xs text-muted-foreground">
+                Ainda sem run. Execute:{" "}
+                <code className="font-mono text-foreground">bun run backtest:fii</code>
+              </p>
+            </Panel>
+          )}
+
           {v.dataPolicy ? (
             <Panel>
               <PanelHeader title="Política de dados (só fontes gratuitas)" />

@@ -132,6 +132,7 @@ async function main() {
       const annual = calendarYearTotalReturns(prices, cash, years);
       const lastPrice =
         prices.length > 0 ? prices[prices.length - 1]!.close : 0;
+      // Score/P/VP atuais só como metadado de pesquisa (NÃO ranking histórico)
       const { score, pvp } = await currentScore(ticker, lastPrice);
 
       let okYears = 0;
@@ -145,7 +146,8 @@ async function main() {
           totalReturnPct: tr.totalReturnPct,
           priceReturnPct: tr.priceReturnPct,
           dividendReturnPct: tr.dividendReturnPct,
-          score,
+          // score omitido de ranking look-ahead free
+          score: null,
         });
         insertYears.push({
           runId,
@@ -158,6 +160,7 @@ async function main() {
           totalReturnPct: String(tr.totalReturnPct),
           dividendsSum: String(tr.dividendsSum),
           dividendEvents: tr.dividendEvents,
+          // metadado: score "agora" (nullable analytics only)
           score: score ?? null,
           pvp: pvp != null ? String(pvp) : null,
           priceSource: history.source,
@@ -218,15 +221,48 @@ async function main() {
   console.log(`  n=${pred.n} correlação=${pred.correlation}`);
   console.log(`  ${pred.interpretation}`);
 
-  // Score atual (mesmo score em todos os anos — apenas ilustrativo, NÃO preditivo)
-  console.log('\n═══ TOP 5 por score ATUAL vs universo (ilustrativo / bias) ═══');
-  const top = topNByScoreVsUniverse(yearRows, 5);
-  console.log(
-    `  avg top5=${top.avgTop}% avg univ=${top.avgUniverse}% ganha ${top.winYears}/${top.years.length} anos`,
-  );
-  console.log(
-    '  ⚠ score é o de hoje em todos os anos — não use como prova de edge; use a correlação DY.',
-  );
+  // Top-N look-ahead free: ranquear por DY trailing do ANO (não score de hoje)
+  console.log('\n═══ TOP 5 por DY do ano (look-ahead free) vs universo TR ═══');
+  {
+    const byYear = new Map<number, typeof yearRows>();
+    for (const r of yearRows) {
+      if (!byYear.has(r.year)) byYear.set(r.year, []);
+      byYear.get(r.year)!.push(r);
+    }
+    let win = 0;
+    let nY = 0;
+    let sumTop = 0;
+    let sumUni = 0;
+    for (const [year, list] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
+      // proxy score = dividendReturnPct do mesmo ano (conhecido no fim do ano; para predizer Y+1 use dy pairs)
+      // Aqui comparamos: FIIs com maior renda no ano Y tiveram melhor TR no ano Y? (descritivo)
+      if (list.length < 5) continue;
+      const ranked = [...list].sort(
+        (a, b) => b.dividendReturnPct - a.dividendReturnPct,
+      );
+      const top = ranked.slice(0, 5);
+      const topAvg = top.reduce((s, r) => s + r.totalReturnPct, 0) / top.length;
+      const uniAvg = list.reduce((s, r) => s + r.totalReturnPct, 0) / list.length;
+      nY++;
+      sumTop += topAvg;
+      sumUni += uniAvg;
+      if (topAvg > uniAvg) win++;
+      console.log(
+        `  ${year}: topDY TR=${topAvg.toFixed(1)}% univ=${uniAvg.toFixed(1)}%`,
+      );
+    }
+    if (nY > 0) {
+      console.log(
+        `  média: topDY ${(sumTop / nY).toFixed(1)}% univ ${(sumUni / nY).toFixed(1)}% ganha ${win}/${nY}`,
+      );
+    }
+    console.log(
+      '  Nota: top por DY no mesmo ano é descritivo (renda alta → TR alto no ano). Predição = correlação DY→TR+1 acima.',
+    );
+  }
+
+  // Não usar score "de hoje" como ranking histórico (bias). Score fica só como metadado na linha.
+  void topNByScoreVsUniverse;
 
   console.log(`\n💾 Gravado run_id=${runId} (${insertYears.length} linhas ano, ${insertPairs.length} pares DY)`);
   await closeDatabaseConnection().catch(() => {});

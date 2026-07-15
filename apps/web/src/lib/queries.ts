@@ -321,7 +321,47 @@ export type ScoreValidation = {
       avgIbov: number | null;
       ibovYears: number;
       deltaAvgPp: number | null;
+      source?: string;
     };
+  } | null;
+  strategy?: {
+    runId: string;
+    scoreVersion: string;
+    n: number;
+    summary: {
+      avgPortfolio: number | null;
+      avgUniverse: number | null;
+      avgIbov: number | null;
+      winYearsVsUniverse: number;
+      winYearsVsIbov: number;
+      totalYears: number;
+      ibovYears: number;
+      byYear: Array<{
+        year: number;
+        portfolioReturn: number;
+        universeReturn: number;
+        ibovReturn: number | null;
+      }>;
+    };
+  } | null;
+  fiiBacktest?: {
+    runId: string;
+    createdAt?: string;
+    observations: number;
+    tickers: number;
+    byYear: Array<{
+      year: number;
+      avgTotal: number;
+      avgPrice: number;
+      avgDiv: number;
+      n: number;
+    }>;
+    dyPredictsNext: {
+      n: number;
+      correlation: number;
+      interpretation: string;
+    };
+    dataQuality?: Record<string, unknown>;
   } | null;
   generatedAt?: string;
 };

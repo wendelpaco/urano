@@ -27,7 +27,11 @@
     "warm-cache": "bun run scripts/warm-cache.ts",
     "backtest": "bun run src/infra/workers/backtest.ts",
     "backtest:fii": "bun run src/infra/workers/fii-backtest.ts",
-    "backup": "bash scripts/backup-postgres.sh"
+    "backup": "bash scripts/backup-postgres.sh",
+    "restore": "bash scripts/restore-postgres.sh",
+    "pipeline": "bash scripts/data-pipeline.sh",
+    "pipeline:full": "bash scripts/data-pipeline.sh --full",
+    "freeze-verdict": "bun run scripts/freeze-verdict.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

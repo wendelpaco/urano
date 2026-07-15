@@ -62,7 +62,8 @@ Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + p
 - Classificação/subclasses: datasets estáticos + StatusInvest / documentos de fundo.
 - Cotação/histórico: Yahoo + scraper.
 - Operacional (vacância, imóveis): scraper StatusInvest.
-- **Score FII não foi backtestado** — sem fundamentals CVM históricos de FII no pipeline atual; permanece heurística / qualidade de dados limitada (`dataQuality` no endpoint de análise). Validação formal = pesquisa futura.
+- **Score FII:** heurística operacional; **total return real** e correlação **DY(Y)→TR(Y+1)** via `bun run backtest:fii` (não prova edge do score histórico).
+- P/VP oficial quando há CVM (`navPerShare`); proventos + cota Yahoo para TR.
 
 ## Score e quality-filter
 
