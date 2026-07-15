@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Eye,
   Banknote,
+  BookMarked,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -55,6 +56,7 @@ const groups: { label: string; items: NavItem[] }[] = [
     label: "Intelligence",
     items: [
       { to: "/ai", label: "Copilot", icon: Sparkles },
+      { to: "/journal", label: "Journal", icon: BookMarked },
       { to: "/validation", label: "Validação score", icon: ShieldCheck },
       { to: "/health", label: "Data Health", icon: Activity },
     ],

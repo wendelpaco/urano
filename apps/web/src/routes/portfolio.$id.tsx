@@ -10,9 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { RefreshCw } from "lucide-react";
+import { BookMarked, RefreshCw } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { useMemo, useState } from "react";
+import { addJournalEntry } from "@/lib/journal";
 
 export const Route = createFileRoute("/portfolio/$id")({
   head: ({ params }) => ({ meta: [{ title: `Carteira ${params.id}` }] }),
@@ -259,7 +260,43 @@ function WalletDetail() {
 
               {rb ? (
                 <Panel>
-                  <PanelHeader title="Sugestão de rebalanceamento" />
+                  <PanelHeader
+                    title="Sugestão de rebalanceamento"
+                    actions={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => {
+                          const tickers = buys
+                            .map((b) => b.ticker)
+                            .filter(Boolean)
+                            .slice(0, 6)
+                            .join(", ");
+                          addJournalEntry({
+                            kind: "rebalance",
+                            title: `Rebalance carteira ${w.name ?? id} · R$ ${availableAmount}${
+                              tickers ? ` · ${tickers}` : ""
+                            }`,
+                            summary:
+                              rb.summary || rb.message
+                                ? String(rb.summary ?? rb.message)
+                                : `${buys.length} compra(s) sugerida(s)`,
+                            payload: {
+                              walletId: id,
+                              params: { availableAmount: Number(availableAmount) },
+                              result: rb,
+                            },
+                          });
+                          toast.success("Salvo no journal");
+                        }}
+                      >
+                        <BookMarked className="h-3.5 w-3.5 mr-1" />
+                        Salvar no journal
+                      </Button>
+                    }
+                  />
                   <div className="p-3 space-y-3">
                     {rb.summary || rb.message ? (
                       <p className="text-xs text-foreground/90 whitespace-pre-wrap">

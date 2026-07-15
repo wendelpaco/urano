@@ -14,6 +14,7 @@ import { Sidebar } from "@/components/app/Sidebar";
 import { Topbar } from "@/components/app/Topbar";
 import { CommandPaletteProvider } from "@/components/app/CommandPalette";
 import { HealthBanner, UnauthorizedGuard } from "@/components/app/HealthBanner";
+import { DisclaimerBanner } from "@/components/app/DisclaimerBanner";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -139,6 +140,7 @@ function RootComponent() {
           <Sidebar />
           <div className="flex flex-1 flex-col min-w-0">
             <Topbar />
+            <DisclaimerBanner />
             <HealthBanner />
             <main className="flex-1 overflow-y-auto">
               <Outlet />

@@ -23,6 +23,7 @@ import {
 import { getDataHealthController } from '../controllers/health.controller.ts';
 import { scraperDiagnosticsController } from '../controllers/diagnostics.controller.ts';
 import { contributionController } from '../controllers/contribution.controller.ts';
+import { metricsController } from '../controllers/metrics.controller.ts';
 import {
   createWalletController,
   listWalletsController,
@@ -45,6 +46,9 @@ export async function routesPlugin(
   // nunca incluiu esta rota, então isso nunca foi um vazamento real).
   app.get('/healthcheck', healthcheckController);
   app.get('/docs/openapi.json', openApiController);
+
+  // Process metrics (auth required) — JSON snapshot, not Prometheus
+  app.get('/metrics', metricsController);
 
   // Wallets (CRUD + Rebalance)
   app.post('/wallets', createWalletController);

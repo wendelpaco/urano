@@ -87,22 +87,29 @@ Health: `GET /v1/health` (or project healthcheck route) after migrations.
 
 ## Scheduler on/off & worker process
 
-`SCHEDULER_ENABLED` (env, default `true`) controls whether the in-process job scheduler starts with the HTTP server.
+`SCHEDULER_ENABLED` (env, default `true`) is intended to control whether the in-process job scheduler starts with the HTTP server. Prefer a **split** deployment in production.
 
 | Goal | How |
 |------|-----|
-| Single process (dev default) | `bun run dev` / `bun run start` — scheduler on |
+| Single process (dev default) | `bun run dev` / `bun run start` — HTTP + scheduler in one process |
 | HTTP API only (no background jobs) | `bun run start:api-only` → `SCHEDULER_ENABLED=false` |
-| Process that runs with scheduler on | `bun run worker` → `SCHEDULER_ENABLED=true bun run src/server.ts` |
+| Dedicated jobs process (no Fastify) | `bun run worker:jobs` → `src/infra/workers/job-runner.ts` |
+| Legacy combined worker (HTTP + scheduler) | `bun run worker` → `SCHEDULER_ENABLED=true bun run src/server.ts` |
 
-### Split API + worker (recommended direction for prod)
-
-Today the scheduler lives in the same entrypoint as Fastify (`src/server.ts`). Practical split:
+### Split API + worker (recommended for prod)
 
 1. **API replica(s):** `SCHEDULER_ENABLED=false` (script: `start:api-only`) so request handlers do not compete with ETL/scrapers.
-2. **Worker process:** one instance with `SCHEDULER_ENABLED=true` (script: `worker`). Until a dedicated worker entrypoint exists (no HTTP listen), this still starts the API server on that process — run a **single** worker instance and do not put it behind the load balancer, or pin a free port.
+2. **Job worker (one instance):** `bun run worker:jobs` — starts `JobStore` + `JobWorker` + `JobScheduler` only (no HTTP listen). Needs the same `DATABASE_URL` / `REDIS_URL` as the API (jobs use Postgres + Redis cache).
 
-Future improvement: dedicated `scripts/run-worker.ts` that only starts `JobScheduler` + DB/Redis (no Fastify). Scripts above are the interim contract.
+```bash
+cd apps/api
+# terminal A — HTTP
+bun run start:api-only
+# terminal B — background jobs
+bun run worker:jobs
+```
+
+From monorepo root: `bun --filter urano-api start:api-only` and `bun --filter urano-api worker:jobs`.
 
 One-shot / heavy jobs (unchanged):
 
@@ -115,12 +122,38 @@ bun run backtest
 
 ---
 
+## Postgres backup & restore
+
+Logical dump via `pg_dump` (requires client tools on PATH). Script: `apps/api/scripts/backup-postgres.sh`.
+
+```bash
+cd apps/api
+# uses DATABASE_URL from environment (or load .env first)
+set -a && source .env && set +a   # optional if DATABASE_URL not already exported
+bun run backup
+# equivalent: bash scripts/backup-postgres.sh
+```
+
+- Output dir: `BACKUP_DIR` (default `./backups` relative to CWD).
+- Filename: `urano_<UTC-timestamp>.sql.gz`.
+- Fallback: if `DATABASE_URL` is unset, uses libpq `PGHOST` + `PGDATABASE` (+ `PGUSER` / `PGPASSWORD` / `PGPORT`).
+
+Restore one-liner (into an existing empty/target DB; adjust URL and dump path):
+
+```bash
+gunzip -c backups/urano_YYYYMMDDTHHMMSSZ.sql.gz | psql "$DATABASE_URL"
+```
+
+---
+
 ## Quick reference
 
 | Command | What |
 |---------|------|
 | `docker compose --env-file .env up -d` | Postgres + Redis only |
 | `docker compose --env-file .env --profile full up -d --build` | + API container |
-| `bun run start:api-only` | API, scheduler off |
-| `bun run worker` | Scheduler on (same binary for now) |
+| `bun run start:api-only` | API, scheduler off (use with `worker:jobs`) |
+| `bun run worker:jobs` | JobScheduler only (no HTTP) |
+| `bun run worker` | Legacy: scheduler on via full `server.ts` |
+| `bun run backup` | `pg_dump` → `BACKUP_DIR` (default `./backups`) |
 | `docker build -f apps/api/Dockerfile -t urano-api .` | Prod image from repo root |

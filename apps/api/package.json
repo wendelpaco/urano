@@ -15,13 +15,15 @@
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
     "worker:sync": "bun run src/infra/workers/cvm-sync-worker.ts",
+    "worker:jobs": "bun run src/infra/workers/job-runner.ts",
     "worker": "SCHEDULER_ENABLED=true bun run src/server.ts",
     "start:api-only": "SCHEDULER_ENABLED=false bun run src/server.ts",
     "seed": "bun run src/infra/jobs/seed.ts",
     "mcp": "bun run src/infra/mcp/server.ts",
     "key:create": "bun run scripts/create-api-key.ts",
     "warm-cache": "bun run scripts/warm-cache.ts",
-    "backtest": "bun run src/infra/workers/backtest.ts"
+    "backtest": "bun run src/infra/workers/backtest.ts",
+    "backup": "bash scripts/backup-postgres.sh"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

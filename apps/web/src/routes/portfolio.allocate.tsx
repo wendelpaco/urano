@@ -16,7 +16,9 @@ import { useState } from "react";
 import { ErrorState, EmptyState } from "@/components/app/states";
 import { ScoreBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
-import { PieChart } from "lucide-react";
+import { addJournalEntry } from "@/lib/journal";
+import { BookMarked, PieChart } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/portfolio/allocate")({
   head: () => ({ meta: [{ title: "Alocação modelo" }] }),
@@ -158,6 +160,33 @@ function AllocatePage() {
 
           {result ? (
             <>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    addJournalEntry({
+                      kind: "allocate",
+                      title: `Alocação R$ ${totalAmount} · ${riskProfile}`,
+                      summary: `${assets.length} ativos · investido ${fmtBRL(summary?.totalInvested)} · score médio ${
+                        summary?.averageScore != null ? fmtNum(summary.averageScore) : "—"
+                      }`,
+                      payload: {
+                        params: {
+                          totalAmount: Number(totalAmount),
+                          riskProfile,
+                        },
+                        result,
+                      },
+                    });
+                    toast.success("Salvo no journal");
+                  }}
+                >
+                  <BookMarked className="h-3.5 w-3.5 mr-1.5" />
+                  Salvar no journal
+                </Button>
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MetricCard label="Investido" value={fmtBRL(summary?.totalInvested)} />
                 <MetricCard label="Caixa restante" value={fmtBRL(summary?.remainingCash)} />

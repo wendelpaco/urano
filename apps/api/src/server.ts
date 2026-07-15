@@ -9,6 +9,8 @@ import { JobScheduler } from './infra/jobs/scheduler.ts';
 import { checkRedisConnection, redis } from './infra/services/redis.ts';
 import { checkDatabaseConnection, closeDatabaseConnection } from './infra/database/connection.ts';
 import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
+import { createGenReqId, requestIdHook } from './infra/http/middleware/request-id.ts';
+import { securityHeadersHook } from './infra/http/middleware/security-headers.ts';
 
 // ─── Timestamp GMT-3 (horário de Brasília) ─────────────────────────────
 function brt(d = new Date()): string {
@@ -28,6 +30,8 @@ console.error = (...a: unknown[]) => _c.error(`[${brt()}]`, ...a);
 const isDev = process.env.NODE_ENV !== 'production';
 
 const app = Fastify({
+  // Correlation id: honor incoming x-request-id or generate UUID (request.id).
+  genReqId: createGenReqId(),
   logger: {
     timestamp: () => `,"time":"${brt()}"`,
     ...(isDev ? {
@@ -41,8 +45,23 @@ const app = Fastify({
 
 await app.register(cors, { origin: [env.CORS_ORIGIN], methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] });
 
-// Rate limiting
+// Request correlation id, security headers, rate limiting (does not touch CORS)
+app.addHook('onRequest', requestIdHook);
+app.addHook('onRequest', securityHeadersHook);
 app.addHook('onRequest', rateLimiter);
+
+// Light access log: method, url, status, duration — reqId comes from Fastify logger bindings
+app.addHook('onResponse', async (request, reply) => {
+  request.log.info(
+    {
+      method: request.method,
+      url: request.url,
+      statusCode: reply.statusCode,
+      responseTime: reply.elapsedTime,
+    },
+    'request completed',
+  );
+});
 
 // Compressão gzip (Bun nativo)
 app.addHook('onSend', async (request, reply, payload) => {

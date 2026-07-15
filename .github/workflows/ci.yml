@@ -21,6 +21,10 @@ jobs:
       - name: Web lint
         working-directory: apps/web
         run: bun run lint
+      # Vite + Nitro (cloudflare-module preset). Build does not need CF/wrangler secrets;
+      # deploy would. Fail CI if the production bundle cannot be produced.
+      - name: Web build
+        run: bun run --filter urano-web build
 
   secret-scan:
     runs-on: ubuntu-latest

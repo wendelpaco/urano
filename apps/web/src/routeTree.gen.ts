@@ -14,6 +14,7 @@ import { Route as ValidationRouteImport } from './routes/validation'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
 import { Route as MarketRouteImport } from './routes/market'
+import { Route as JournalRouteImport } from './routes/journal'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as IndexRouteImport } from './routes/index'
@@ -52,6 +53,11 @@ const PortfolioRoute = PortfolioRouteImport.update({
 const MarketRoute = MarketRouteImport.update({
   id: '/market',
   path: '/market',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JournalRoute = JournalRouteImport.update({
+  id: '/journal',
+  path: '/journal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HealthRoute = HealthRouteImport.update({
@@ -129,6 +135,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/health': typeof HealthRoute
+  '/journal': typeof JournalRoute
   '/market': typeof MarketRouteWithChildren
   '/portfolio': typeof PortfolioRouteWithChildren
   '/settings': typeof SettingsRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/health': typeof HealthRoute
+  '/journal': typeof JournalRoute
   '/settings': typeof SettingsRoute
   '/validation': typeof ValidationRoute
   '/watchlist': typeof WatchlistRoute
@@ -170,6 +178,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/health': typeof HealthRoute
+  '/journal': typeof JournalRoute
   '/market': typeof MarketRouteWithChildren
   '/portfolio': typeof PortfolioRouteWithChildren
   '/settings': typeof SettingsRoute
@@ -193,6 +202,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/health'
+    | '/journal'
     | '/market'
     | '/portfolio'
     | '/settings'
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/health'
+    | '/journal'
     | '/settings'
     | '/validation'
     | '/watchlist'
@@ -233,6 +244,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/health'
+    | '/journal'
     | '/market'
     | '/portfolio'
     | '/settings'
@@ -255,6 +267,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AiRoute: typeof AiRoute
   HealthRoute: typeof HealthRoute
+  JournalRoute: typeof JournalRoute
   MarketRoute: typeof MarketRouteWithChildren
   PortfolioRoute: typeof PortfolioRouteWithChildren
   SettingsRoute: typeof SettingsRoute
@@ -298,6 +311,13 @@ declare module '@tanstack/react-router' {
       path: '/market'
       fullPath: '/market'
       preLoaderRoute: typeof MarketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/journal': {
+      id: '/journal'
+      path: '/journal'
+      fullPath: '/journal'
+      preLoaderRoute: typeof JournalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/health': {
@@ -444,6 +464,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AiRoute: AiRoute,
   HealthRoute: HealthRoute,
+  JournalRoute: JournalRoute,
   MarketRoute: MarketRouteWithChildren,
   PortfolioRoute: PortfolioRouteWithChildren,
   SettingsRoute: SettingsRoute,

@@ -548,6 +548,11 @@ export async function getRankingController(
       total: sliced.length,
       filters: { minScore: minScore ?? null, limit },
       data: sliced,
+      // Trust badge: scoreVersion + verdict from SCORE_VALIDATION (backward-compatible add)
+      meta: {
+        scoreVersion: SCORE_VALIDATION.scoreVersion,
+        verdict: SCORE_VALIDATION.verdict,
+      },
     };
 
     try {
@@ -629,6 +634,11 @@ export async function getRankingController(
       total: sliced.length,
       filters: { minScore: minScore ?? null, limit },
       data: sliced,
+      // Trust badge: scoreVersion + verdict from SCORE_VALIDATION (backward-compatible add)
+      meta: {
+        scoreVersion: SCORE_VALIDATION.scoreVersion,
+        verdict: SCORE_VALIDATION.verdict,
+      },
     };
 
     try {

@@ -17,7 +17,9 @@ import { ErrorState, EmptyState } from "@/components/app/states";
 import { TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtPct } from "@/lib/format";
 import { asArray } from "@/lib/queries";
-import { Sparkles } from "lucide-react";
+import { addJournalEntry } from "@/lib/journal";
+import { BookMarked, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/portfolio/contribution")({
   head: () => ({ meta: [{ title: "Simulador de aporte" }] }),
@@ -174,6 +176,42 @@ function ContributionPage() {
           ) : null}
           {run.data ? (
             <>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const tickers = buys
+                      .map((b) => b.ticker)
+                      .filter(Boolean)
+                      .slice(0, 6)
+                      .join(", ");
+                    addJournalEntry({
+                      kind: "contribution",
+                      title: `Aporte R$ ${amount} · ${profile}${tickers ? ` · ${tickers}` : ""}`,
+                      summary:
+                        result.summary ??
+                        result.justification ??
+                        `${buys.length} compra(s) sugerida(s)`,
+                      payload: {
+                        params: {
+                          amount: Number(amount),
+                          profile,
+                          onlyTypes,
+                          excludeSectors,
+                          positions,
+                        },
+                        result,
+                      },
+                    });
+                    toast.success("Salvo no journal");
+                  }}
+                >
+                  <BookMarked className="h-3.5 w-3.5 mr-1.5" />
+                  Salvar no journal
+                </Button>
+              </div>
               {result.summary || result.justification ? (
                 <Panel>
                   <PanelHeader title="Justificativa" />
