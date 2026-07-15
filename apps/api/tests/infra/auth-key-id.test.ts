@@ -13,7 +13,10 @@ mock.module('../../src/infra/database/connection.ts', () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: async () => [{ key: 'ur_test', active: true, id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }],
+        where: async () => [{
+          id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          scopes: ['read:market', 'write:wallet', 'admin:keys', 'admin:ops'],
+        }],
       }),
     }),
     update: () => ({

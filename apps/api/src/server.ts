@@ -34,6 +34,11 @@ const isDev = process.env.NODE_ENV !== 'production';
 const app = Fastify({
   // Correlation id: honor incoming x-request-id or generate UUID (request.id).
   genReqId: createGenReqId(),
+  bodyLimit: env.BODY_LIMIT_BYTES,
+  connectionTimeout: 10_000,
+  requestTimeout: env.REQUEST_TIMEOUT_MS,
+  // When behind a reverse proxy that terminates TLS
+  trustProxy: true,
   logger: {
     timestamp: () => `,"time":"${brt()}"`,
     ...(isDev ? {

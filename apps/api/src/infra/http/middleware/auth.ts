@@ -1,8 +1,8 @@
 /**
  * Auth Middleware — Validação de API key via header x-api-key.
  *
- * Onda 3a: todas as rotas exceto /v1/healthcheck exigem api-key ativa.
- * Cache Redis de keys válidas (TTL 60s) para não bater no banco por request.
+ * Todas as rotas exceto /v1/healthcheck exigem api-key ativa.
+ * Cache Redis de keys válidas (TTL 60s) — valor: JSON { id, scopes }.
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -11,20 +11,48 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
 import { redis } from '../../services/redis.ts';
+import { normalizeScopes } from '../scopes.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
     apiKeyId?: string;
+    /** Normalized scopes for this key (from DB / cache). */
+    scopes?: string[];
   }
 }
 
-// Rotas públicas: só healthcheck. Bootstrap de key é feito via `bun run key:create`
-// (script CLI, acesso direto ao banco) — a rota HTTP de criação agora exige auth
-// como qualquer outra, então só quem já tem uma key pode provisionar mais.
-const PUBLIC_ROUTES = new Set(['/v1/healthcheck']);
+const PUBLIC_PATHS = new Set(['/v1/healthcheck']);
 
-function isPublicRoute(url: string): boolean {
-  return PUBLIC_ROUTES.has(url);
+/** Path without query string — prevents probe mismatch and accidental auth skips. */
+export function pathOnly(url: string): string {
+  const q = url.indexOf('?');
+  return q === -1 ? url : url.slice(0, q);
+}
+
+function isPublicPath(url: string): boolean {
+  return PUBLIC_PATHS.has(pathOnly(url));
+}
+
+interface CachedAuth {
+  id: string;
+  scopes: string[];
+}
+
+function parseCachedAuth(raw: string): CachedAuth | null {
+  if (raw === 'false') return null;
+  // Legacy cache: plain UUID string (pre-scopes) — treat as full bootstrap until TTL expires
+  if (/^[0-9a-f-]{36}$/i.test(raw)) {
+    return { id: raw, scopes: normalizeScopes(null) };
+  }
+  try {
+    const parsed = JSON.parse(raw) as { id?: string; scopes?: unknown };
+    if (typeof parsed.id === 'string') {
+      return { id: parsed.id, scopes: normalizeScopes(parsed.scopes) };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 /**
@@ -35,9 +63,7 @@ export async function authMiddleware(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  // Rotas públicas
-  if (isPublicRoute(request.url) && request.method === 'POST') return;
-  if (PUBLIC_ROUTES.has(request.url)) return;
+  if (isPublicPath(request.url)) return;
 
   const key = request.headers['x-api-key'] as string | undefined;
   if (!key) {
@@ -48,8 +74,6 @@ export async function authMiddleware(
     return;
   }
 
-  // Hash da key: usado tanto para lookup no banco quanto como chave de cache
-  // no Redis — nunca guardamos a key em texto plano em nenhum dos dois (V-06).
   const keyHash = createHash('sha256').update(key).digest('hex');
 
   try {
@@ -62,27 +86,29 @@ export async function authMiddleware(
       return;
     }
     if (cached) {
-      // Valid key: cached value is the apiKeyId (uuid), not a boolean.
-      request.apiKeyId = cached;
-      updateLastUsed(key).catch(() => {});
-      return;
+      const auth = parseCachedAuth(cached);
+      if (auth) {
+        request.apiKeyId = auth.id;
+        request.scopes = auth.scopes;
+        updateLastUsed(keyHash).catch(() => {});
+        return;
+      }
     }
   } catch {
     // Redis offline → fallback para banco
   }
 
-  // Consulta o banco
-  let row: { key: string; active: boolean; id: string } | undefined;
+  let row: { id: string; scopes: string[] | null } | undefined;
   try {
     const result = await db
-      .select({ key: apiKeys.key, active: apiKeys.active, id: apiKeys.id })
+      .select({
+        id: apiKeys.id,
+        scopes: apiKeys.scopes,
+      })
       .from(apiKeys)
       .where(and(eq(apiKeys.keyHash, keyHash), eq(apiKeys.active, true)));
     row = result[0];
   } catch {
-    // DB indisponível → nega a request (fail-closed). Uma vez que a API é
-    // chamada direto do browser (sem proxy), deixar passar sem validar a
-    // key equivale a desligar a autenticação inteira durante a indisponibilidade.
     console.error('[auth] Banco indisponível — negando acesso (fail-closed)');
     reply.status(503).send({
       error: 'ServiceUnavailable',
@@ -92,7 +118,6 @@ export async function authMiddleware(
   }
 
   if (!row) {
-    // Cache negativo (60s) para evitar repeated DB hits com key inválida
     try {
       await redis.setex(`apikey:valid:${keyHash}`, 60, 'false');
     } catch { /* ok */ }
@@ -104,29 +129,28 @@ export async function authMiddleware(
     return;
   }
 
+  const scopes = normalizeScopes(row.scopes);
   request.apiKeyId = row.id;
+  request.scopes = scopes;
 
-  // Cache positivo (60s) — guarda o id, não um booleano
   try {
-    await redis.setex(`apikey:valid:${keyHash}`, 60, row.id);
+    await redis.setex(
+      `apikey:valid:${keyHash}`,
+      60,
+      JSON.stringify({ id: row.id, scopes }),
+    );
   } catch { /* ok */ }
 
-  // Atualiza last_used_at em background
-  updateLastUsed(key).catch(() => {});
+  updateLastUsed(keyHash).catch(() => {});
 }
 
-/**
- * Atualiza last_used_at da key no banco.
- * Executado em background — falha não bloqueia o request.
- */
-async function updateLastUsed(key: string): Promise<void> {
+async function updateLastUsed(keyHash: string): Promise<void> {
   try {
-    const keyHash = createHash('sha256').update(key).digest('hex');
     await db
       .update(apiKeys)
       .set({ lastUsedAt: new Date() })
       .where(eq(apiKeys.keyHash, keyHash));
   } catch {
-    // Silencioso — last_used_at é métrica secundária
+    // Silencioso
   }
 }

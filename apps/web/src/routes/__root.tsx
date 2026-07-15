@@ -97,6 +97,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "theme-color", content: "#1a1c22" },
+      // Baseline CSP for single-operator terminal (API key still in localStorage — not a XSS silver bullet).
+      {
+        httpEquiv: "Content-Security-Policy",
+        content: [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' https://fonts.gstatic.com data:",
+          "img-src 'self' data: blob:",
+          "connect-src 'self' http://localhost:* http://127.0.0.1:* https:",
+          "frame-ancestors 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+        ].join("; "),
+      },
     ],
     links: [
       { rel: "stylesheet", href: appCss },

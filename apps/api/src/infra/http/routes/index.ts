@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { authMiddleware } from '../middleware/auth.ts';
+import { requireScopeHandler } from '../middleware/scope-guard.ts';
 import { healthcheckController } from '../controllers/healthcheck.controller.ts';
 import { openApiController } from '../controllers/docs.controller.ts';
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
@@ -34,84 +35,79 @@ import {
   removeAssetFromWalletController,
 } from '../controllers/wallets.controller.ts';
 
+const market = { preHandler: requireScopeHandler('read:market') };
+const wallet = { preHandler: requireScopeHandler('write:wallet') };
+const adminOps = { preHandler: requireScopeHandler('admin:ops') };
+// keys routes enforce scopes inside controllers (list partial, create full)
+
 export async function routesPlugin(
   app: FastifyInstance,
   _opts: FastifyPluginOptions,
 ): Promise<void> {
-  // Auth middleware — todas as rotas exceto healthcheck
   app.addHook('onRequest', authMiddleware);
 
-  // Healthcheck é público; docs (openapi.json) exige auth como qualquer outra rota
-  // — corrigido em V-13 (o comentário antigo dizia "pública" mas isPublicRoute
-  // nunca incluiu esta rota, então isso nunca foi um vazamento real).
+  // Public
   app.get('/healthcheck', healthcheckController);
+
+  // OpenAPI — any authenticated key (docs are not secret)
   app.get('/docs/openapi.json', openApiController);
 
-  // Process metrics (auth required) — JSON snapshot, not Prometheus
-  app.get('/metrics', metricsController);
+  // Ops — admin:ops only (scraper internals + process metrics)
+  app.get('/metrics', { ...adminOps }, metricsController);
+  app.get('/health/scraper', { ...adminOps }, scraperDiagnosticsController);
+  // Data health is product-facing (contribution warnings) — any market reader
+  app.get('/health/data', { ...market }, getDataHealthController);
 
-  // Wallets (CRUD + Rebalance)
-  app.post('/wallets', createWalletController);
-  app.get('/wallets', listWalletsController);
-  app.get('/wallets/:walletId', getWalletController);
-  app.put('/wallets/:walletId', updateWalletController);
-  app.delete('/wallets/:walletId', deleteWalletController);
-  app.post('/wallets/:walletId/assets', addAssetToWalletController);
-  app.delete('/wallets/:walletId/assets/:assetId', removeAssetFromWalletController);
-  app.post('/wallets/:walletId/rebalance', rebalanceController);
+  // Wallets — write:wallet
+  app.post('/wallets', { ...wallet }, createWalletController);
+  app.get('/wallets', { ...wallet }, listWalletsController);
+  app.get('/wallets/:walletId', { ...wallet }, getWalletController);
+  app.put('/wallets/:walletId', { ...wallet }, updateWalletController);
+  app.delete('/wallets/:walletId', { ...wallet }, deleteWalletController);
+  app.post('/wallets/:walletId/assets', { ...wallet }, addAssetToWalletController);
+  app.delete('/wallets/:walletId/assets/:assetId', { ...wallet }, removeAssetFromWalletController);
+  app.post('/wallets/:walletId/rebalance', { ...wallet }, rebalanceController);
 
-  // Companies
-  app.get('/companies', listCompaniesController);
-  app.get('/companies/sectors', listSectorsController);
-  app.get('/companies/:ticker', getCompanyByTickerController);
+  // Market data — read:market
+  app.get('/companies', { ...market }, listCompaniesController);
+  app.get('/companies/sectors', { ...market }, listSectorsController);
+  app.get('/companies/:ticker', { ...market }, getCompanyByTickerController);
 
-  // Fundamentals
-  app.get('/fundamentals/:ticker', getLatestFundamentalsController);
-  app.get('/fundamentals/:ticker/history', getFundamentalsHistoryController);
+  app.get('/fundamentals/:ticker', { ...market }, getLatestFundamentalsController);
+  app.get('/fundamentals/:ticker/history', { ...market }, getFundamentalsHistoryController);
 
-  // Stocks
-  app.get('/stocks/:ticker/quote', getStockQuoteController);
-  app.get('/stocks/:ticker/history', getStockHistoryController);
-  app.get('/stocks/:ticker/stats', getStockStatsController);
-  app.get('/stocks/:ticker/corporate-events', getCorporateEventsController);
-  app.get('/stocks/:ticker/indicators', getTechnicalIndicatorsController);
-  app.get('/stocks/quotes', getBatchQuotesController);
+  app.get('/stocks/:ticker/quote', { ...market }, getStockQuoteController);
+  app.get('/stocks/:ticker/history', { ...market }, getStockHistoryController);
+  app.get('/stocks/:ticker/stats', { ...market }, getStockStatsController);
+  app.get('/stocks/:ticker/corporate-events', { ...market }, getCorporateEventsController);
+  app.get('/stocks/:ticker/indicators', { ...market }, getTechnicalIndicatorsController);
+  app.get('/stocks/quotes', { ...market }, getBatchQuotesController);
 
-  // Dividends
-  app.get('/dividends/:ticker', getDividendsController);
+  app.get('/dividends/:ticker', { ...market }, getDividendsController);
 
-  // FIIs (Fundos Imobiliários)
-  app.get('/fiis', listFiisController);
-  // IMPORTANTE: /fiis/screener antes de /fiis/:ticker para não capturar "screener" como ticker
-  app.get('/fiis/screener', fiiScreenerController);
-  app.get('/fiis/:ticker', getFiiByTickerController);
-  app.get('/fiis/:ticker/history', getFiiHistoryController);
-  app.get('/fiis/:ticker/operational', getFiiOperationalController);
+  app.get('/fiis', { ...market }, listFiisController);
+  app.get('/fiis/screener', { ...market }, fiiScreenerController);
+  app.get('/fiis/:ticker', { ...market }, getFiiByTickerController);
+  app.get('/fiis/:ticker/history', { ...market }, getFiiHistoryController);
+  app.get('/fiis/:ticker/operational', { ...market }, getFiiOperationalController);
 
-  // Macro
-  app.get('/macro', listMacroController);
-  app.get('/macro/:series', getMacroSeriesController);
+  app.get('/macro', { ...market }, listMacroController);
+  app.get('/macro/:series', { ...market }, getMacroSeriesController);
 
-  // Auth / API Keys
+  app.get('/screener', { ...market }, screenerController);
+
+  app.get('/search', { ...market }, searchController);
+  app.get('/analysis/stocks/:ticker', { ...market }, getStockAnalysisController);
+  app.get('/analysis/fiis/:ticker', { ...market }, getFiiAnalysisController);
+  app.get('/analysis/ranking', { ...market }, getRankingController);
+  app.post('/analysis/allocate', { ...market }, getAllocationController);
+  app.post('/analysis/compare', { ...market }, compareController);
+  app.post('/analysis/contribution', { ...market }, contributionController);
+  app.get('/analysis/validation', { ...market }, getValidationController);
+
+  // Keys — scoped inside controllers
   app.post('/keys', createApiKeyController);
   app.get('/keys', listApiKeysController);
   app.post('/keys/:id/rotate', rotateApiKeyController);
   app.delete('/keys/:id', deleteApiKeyController);
-
-  // Screener
-  app.get('/screener', screenerController);
-
-  // Analysis
-  app.get('/search', searchController);
-  app.get('/analysis/stocks/:ticker', getStockAnalysisController);
-  app.get('/analysis/fiis/:ticker', getFiiAnalysisController);
-  app.get('/analysis/ranking', getRankingController);
-  app.post('/analysis/allocate', getAllocationController);
-  app.post('/analysis/compare', compareController);
-  app.post('/analysis/contribution', contributionController);
-  app.get('/analysis/validation', getValidationController);
-
-  // Data health & diagnostics
-  app.get('/health/data', getDataHealthController);
-  app.get('/health/scraper', scraperDiagnosticsController);
 }

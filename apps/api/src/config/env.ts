@@ -33,12 +33,26 @@ const envSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
-  // When Redis rate-limit store fails: false = allow traffic (fail-open, default);
-  // true = deny with 503 (fail-closed). Prefer true in production once Redis is reliable.
+  // When Redis rate-limit store fails: false = allow traffic (fail-open);
+  // true = deny with 503 (fail-closed). Default TRUE in production, false in dev.
   RATE_LIMIT_FAIL_CLOSED: z
     .enum(['true', 'false'])
-    .default('false')
+    .default(isProd ? 'true' : 'false')
     .transform((v) => v === 'true'),
+
+  /** Max JSON body size in bytes (default 256 KiB). */
+  BODY_LIMIT_BYTES: z
+    .string()
+    .default('262144')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(5_000_000)),
+
+  /** Request timeout ms (default 30s). */
+  REQUEST_TIMEOUT_MS: z
+    .string()
+    .default('30000')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(300_000)),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -52,6 +66,8 @@ function parseEnv(): Env {
     NODE_ENV: process.env.NODE_ENV,
     SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED,
     RATE_LIMIT_FAIL_CLOSED: process.env.RATE_LIMIT_FAIL_CLOSED,
+    BODY_LIMIT_BYTES: process.env.BODY_LIMIT_BYTES,
+    REQUEST_TIMEOUT_MS: process.env.REQUEST_TIMEOUT_MS,
   };
 
   const result = envSchema.safeParse(raw);

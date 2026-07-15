@@ -42,9 +42,15 @@ Checklist honesto do que a evolução do monorepo entregou vs. o que ficou consc
 | Auth por `x-api-key` | **Done** | Middleware fail-closed; só `/v1/healthcheck` público |
 | Hash SHA-256 de keys no banco | **Done** | Lookup por `key_hash`; script de backfill |
 | Segredo não recuperável no DB após create | **Done** | Coluna `key` guarda placeholder `ur_hashonly_*`; plaintext só na resposta HTTP uma vez |
+| Scopes RBAC + owner_id em api_keys | **Done** | `read:market`, `write:wallet`, `admin:keys`, `admin:ops`; migration 0014 |
+| List/create keys sem dump global | **Done** | Lista só self (+ children se admin:keys); create exige admin:keys |
+| Ops endpoints com admin:ops | **Done** | `/metrics`, `/health/scraper` |
 | Ownership de carteiras por `apiKeyId` | **Done** | Não confia `userId` do cliente |
-| CRUD / rotate de keys autenticado | **Done** | Bootstrap via `bun run key:create` (CLI) |
-| API key no `localStorage` do browser | **Partial** | Aceitável single-operator; JWT/httpOnly exige multi-user |
+| CRUD / rotate de keys autenticado | **Done** | Bootstrap via `bun run key:create` (CLI, full scopes) |
+| Rate-limit fail-closed em produção | **Done** | Default `true` quando `NODE_ENV=production` |
+| bodyLimit + requestTimeout + trustProxy | **Done** | server.ts |
+| Compose bind 127.0.0.1 | **Done** | Postgres/Redis/API não escutam 0.0.0.0 no host |
+| API key no `localStorage` do browser | **Partial** | CSP baseline no web; JWT/httpOnly exige multi-user |
 | Multi-user JWT / login-senha | **Deferred** | Fora de escopo deliberado (single-operator / api-key) |
 
 ---

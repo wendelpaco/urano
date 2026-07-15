@@ -11,8 +11,10 @@
 
 import 'dotenv/config';
 import { randomBytes, createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { db } from '../src/infra/database/connection.ts';
 import { apiKeys } from '../src/infra/database/schema.ts';
+import { BOOTSTRAP_SCOPES } from '../src/infra/http/scopes.ts';
 
 const name = process.argv[2] ?? 'default';
 
@@ -28,12 +30,16 @@ async function main(): Promise<void> {
   try {
     const key = generateApiKey();
     const keyHash = createHash('sha256').update(key).digest('hex');
-    // Placeholder in DB — unique, not a valid client key (auth uses keyHash only)
     const keyStored = `ur_hashonly_${keyHash.slice(0, 24)}`;
 
     const [row] = await db
       .insert(apiKeys)
-      .values({ name, key: keyStored, keyHash })
+      .values({
+        name,
+        key: keyStored,
+        keyHash,
+        scopes: [...BOOTSTRAP_SCOPES],
+      })
       .returning();
 
     if (!row) {
@@ -41,8 +47,12 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Self-own bootstrap key (owner_id = id)
+    await db.update(apiKeys).set({ ownerId: row.id }).where(eq(apiKeys.id, row.id));
+
     console.log(`🔑 API key criada: ${row.name}`);
     console.log(`   ${key}`);
+    console.log(`   scopes: ${BOOTSTRAP_SCOPES.join(', ')}`);
     console.log('');
     console.log('⚠️  Guarde esta chave — ela não será exibida novamente.');
     console.log('   Use no header: x-api-key');

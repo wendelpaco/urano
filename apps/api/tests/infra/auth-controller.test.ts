@@ -28,21 +28,22 @@ const OWN_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const OTHER_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 
 describe('key management — ownership enforcement', () => {
-  test('rotateApiKeyController: 403 when id is not the caller\'s own key', async () => {
+  // 404 (not 403) so we do not confirm existence of foreign keys.
+  test('rotateApiKeyController: 404 when id is not the caller\'s own key and no admin:keys', async () => {
     const { reply, getCaptured } = fakeReply();
-    const request = { params: { id: OTHER_ID }, apiKeyId: OWN_ID };
+    const request = { params: { id: OTHER_ID }, apiKeyId: OWN_ID, scopes: ['read:market'] };
 
     await rotateApiKeyController(request as never, reply as never);
 
-    expect(getCaptured()?.status).toBe(403);
+    expect(getCaptured()?.status).toBe(404);
   });
 
-  test('deleteApiKeyController: 403 when id is not the caller\'s own key', async () => {
+  test('deleteApiKeyController: 404 when id is not the caller\'s own key and no admin:keys', async () => {
     const { reply, getCaptured } = fakeReply();
-    const request = { params: { id: OTHER_ID }, apiKeyId: OWN_ID };
+    const request = { params: { id: OTHER_ID }, apiKeyId: OWN_ID, scopes: ['read:market'] };
 
     await deleteApiKeyController(request as never, reply as never);
 
-    expect(getCaptured()?.status).toBe(403);
+    expect(getCaptured()?.status).toBe(404);
   });
 });

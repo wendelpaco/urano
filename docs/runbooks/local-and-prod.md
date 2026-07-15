@@ -157,3 +157,34 @@ gunzip -c backups/urano_YYYYMMDDTHHMMSSZ.sql.gz | psql "$DATABASE_URL"
 | `bun run worker` | Legacy: scheduler on via full `server.ts` |
 | `bun run backup` | `pg_dump` → `BACKUP_DIR` (default `./backups`) |
 | `docker build -f apps/api/Dockerfile -t urano-api .` | Prod image from repo root |
+
+---
+
+## Security (critical package)
+
+### After pull / upgrade
+```bash
+cd apps/api && bun run db:migrate   # 0014 scopes + owner_id
+# Rotate any legacy keys created before hash-only storage:
+bun run key:create "rotated-$(date +%Y%m%d)"
+# then deactivate old keys once clients switch
+```
+
+### Scopes (API keys)
+| Scope | Access |
+|-------|--------|
+| `read:market` | analysis, quotes, screener, macro, … |
+| `write:wallet` | wallet CRUD / rebalance |
+| `admin:keys` | create child keys; list self+children |
+| `admin:ops` | `/metrics`, `/health/scraper` |
+
+CLI `key:create` grants **all** scopes and self-owns the key.  
+HTTP `POST /keys` requires `admin:keys` and creates **child** keys without admin scopes by default.
+
+### Production checklist
+- `NODE_ENV=production` → `RATE_LIMIT_FAIL_CLOSED` defaults **true**
+- Postgres/Redis/API compose ports bind **127.0.0.1** only
+- Prefer TLS reverse proxy; HSTS is set when `x-forwarded-proto: https`
+- Body limit default 256 KiB; request timeout 30s
+- Do **not** expose 5432/6379 on public interfaces
+

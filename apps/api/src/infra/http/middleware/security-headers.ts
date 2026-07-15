@@ -43,4 +43,10 @@ export async function securityHeadersHook(
   for (const [name, value] of Object.entries(headers)) {
     reply.header(name, value);
   }
+
+  // HSTS only when the request is already HTTPS (direct or via trusted proxy).
+  const proto = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim();
+  if (proto === 'https' || (request.raw.socket as { encrypted?: boolean } | undefined)?.encrypted) {
+    reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
 }

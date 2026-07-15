@@ -14,6 +14,7 @@ import {
   check,
   boolean,
   jsonb,
+  text,
 } from 'drizzle-orm/pg-core';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -299,6 +300,18 @@ export const apiKeys = pgTable(
     key: varchar('key', { length: 128 }).notNull().unique(),
     keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
     active: boolean('active').notNull().default(true),
+    /** Parent key that created this one (self for bootstrap/CLI). */
+    ownerId: uuid('owner_id'),
+    /**
+     * Coarse RBAC: read:market | write:wallet | admin:keys | admin:ops | *
+     * Bootstrap keys get full set; HTTP children default without admin:*.
+     */
+    scopes: text('scopes').array().notNull().default([
+      'read:market',
+      'write:wallet',
+      'admin:keys',
+      'admin:ops',
+    ]),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
@@ -306,6 +319,7 @@ export const apiKeys = pgTable(
   },
   (table) => [
     index('idx_api_keys_key').on(table.key),
+    index('idx_api_keys_owner_id').on(table.ownerId),
   ],
 );
 
