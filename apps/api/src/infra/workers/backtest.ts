@@ -242,9 +242,32 @@ async function main(): Promise<void> {
   // ═══ ESTRATÉGIA: TOP N POR SCORE ═══
   console.log('\n═══ SIMULAÇÃO DE ESTRATÉGIA ═══');
   console.log('Compra top N por score a cada ano, vende 12 meses depois\n');
+
+  // IBOV real (Yahoo ^BVSP) — retornos civis para os mesmos anos do backtest
+  let ibovByYear: Record<number, number | null> | undefined;
+  try {
+    const { fetchIbovCalendarReturns } = await import('../services/ibov-benchmark.ts');
+    const years = [...new Set(allResults.map((r) => r.year))];
+    const ibov = await fetchIbovCalendarReturns(years);
+    ibovByYear = ibov.byYear;
+    console.log(`  IBOV fonte: ${ibov.source} ${ibov.symbol} asOf=${ibov.asOf}`);
+    for (const y of years.sort()) {
+      const v = ibov.byYear[y];
+      console.log(`    ${y}: ${v == null ? 'n/d' : v.toFixed(1) + '%'}`);
+    }
+  } catch (e) {
+    console.warn('  IBOV Yahoo indisponível:', e instanceof Error ? e.message : e);
+  }
+
   for (const n of [3, 5, 10]) {
-    const s = topNStrategy(allResults, n);
-    console.log(`  Top ${String(n).padStart(2)}: Retorno médio ${s.avgPortfolio.toFixed(1)}%  |  vs Mercado ${(s.avgPortfolio - s.avgMarket).toFixed(1)}pp  |  ganha em ${s.winYears}/${s.totalYears} anos`);
+    const s = topNStrategy(allResults, n, ibovByYear);
+    const vsMkt = (s.avgPortfolio - s.avgMarket).toFixed(1);
+    const vsIbov =
+      s.avgIbov != null ? (s.avgPortfolio - s.avgIbov).toFixed(1) : 'n/d';
+    console.log(
+      `  Top ${String(n).padStart(2)}: Retorno médio ${s.avgPortfolio.toFixed(1)}%  |  vs Universo ${vsMkt}pp  |  vs IBOV ${vsIbov}pp  |  ganha univ. ${s.winYears}/${s.totalYears}` +
+        (s.winYearsVsIbov != null ? `  |  ganha IBOV ${s.winYearsVsIbov}/${s.ibovYears}` : ''),
+    );
   }
 
   // ═══ DIAGNÓSTICO DO MODELO ═══
