@@ -1,5 +1,7 @@
 import { getOrSet } from './redis.ts';
-import { withRetry } from '../../shared/retry.ts';
+import { withRetry, RateLimitError } from '../../shared/retry.ts';
+import { yahooLimiter } from './rate-limiter.ts';
+import { yahooCircuitBreaker } from './circuit-breaker.ts';
 import { StatusInvestScraper } from './statusinvest-scraper.ts';
 
 /**
@@ -78,10 +80,16 @@ interface YahooFinanceResponse {
 }
 
 /**
- * Serviço de cotações em tempo real com cache Redis (TTL 30 segundos).
+ * Serviço de cotações em tempo real com cache Redis.
  *
- * Fonte: Yahoo Finance v8 API (gratuita, uso razoável).
- * Formato do ticker na B3: PETR4 → PETR4.SA
+ * Fonte primária: StatusInvest (mais confiável para B3)
+ * Fallback: Yahoo Finance v8 API (gratuita, uso razoável)
+ *
+ * Cache:
+ *  - Cotação: 120s (2 min, suficiente para dashboards)
+ *  - Histórico: 30 min (dados diários, não mudam intraday)
+ *
+ * Rate limit: 5 req/s para Yahoo Finance (centralizado)
  */
 export class StockQuoteService {
   private readonly baseUrl =
@@ -91,30 +99,43 @@ export class StockQuoteService {
   /**
    * Busca cotação atual de um ticker da B3.
    *
-   * Cache Redis de 30s para respeitar rate limits e reduzir latência.
-   * Se Redis indisponível, busca direto na API.
+   * Cache Redis de 120s (vs 30s anterior) — cotações B3 têm delay natural
+   * de 15 min para dados gratuitos, então 2 min é seguro e reduz chamadas.
    */
   async getQuote(ticker: string): Promise<StockQuote> {
     const cacheKey = `quote:${ticker.toUpperCase()}`;
 
-    return getOrSet(cacheKey, 30, () =>
+    return getOrSet(cacheKey, 120, () =>
       // StatusInvest como fonte PRIMÁRIA (dados B3 mais confiáveis para ações brasileiras)
       this.fetchFromStatusInvest(ticker).catch((siErr) => {
         console.warn(`[quote] StatusInvest falhou para ${ticker} (${(siErr as Error).message}), tentando Yahoo...`);
         const symbol = this.toYahooSymbol(ticker);
         return withRetry(() => this.fetchQuote(symbol, ticker), {
-          maxRetries: 0, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+          maxRetries: 2,
+          initialDelay: 1000,
+          maxDelay: 15_000,
+          timeout: 10_000,
         });
       }));
   }
 
   /**
-   * Busca cotações de múltiplos tickers simultaneamente.
+   * Busca cotações de múltiplos tickers com controle de concorrência.
+   * Processa em lotes de 2 para não estourar rate limit do Yahoo.
    */
   async getQuotes(tickers: string[]): Promise<Map<string, StockQuote>> {
-    const results = await Promise.all(
-      tickers.map((t) => this.getQuote(t).catch(() => null)),
-    );
+    // Processa sequencialmente (cada chamada já tem cache Redis de 120s,
+    // então chamadas repetidas são instantâneas). Para tickers novos,
+    // o rate limiter do Yahoo garante espaçamento.
+    const results: (StockQuote | null)[] = [];
+    for (const ticker of tickers) {
+      try {
+        const quote = await this.getQuote(ticker);
+        results.push(quote);
+      } catch {
+        results.push(null);
+      }
+    }
 
     const map = new Map<string, StockQuote>();
     for (let i = 0; i < tickers.length; i++) {
@@ -131,6 +152,9 @@ export class StockQuoteService {
   /**
    * Busca histórico de preços de um ticker.
    *
+   * Cache Redis de 30 min (vs 5 min anterior) — dados diários não mudam
+   * intraday. A Yahoo API é chamada com muito menos frequência.
+   *
    * @param ticker Ticker B3 (ex: PETR4)
    * @param range  Período: '1mo', '3mo', '6mo', '1y', '2y', '5y'
    */
@@ -141,9 +165,12 @@ export class StockQuoteService {
     const symbol = this.toYahooSymbol(ticker);
     const cacheKey = `history:${ticker.toUpperCase()}:${range}`;
 
-    return getOrSet(cacheKey, 300, () =>
+    return getOrSet(cacheKey, 1800, () =>
       withRetry(() => this.fetchHistory(symbol, ticker, range), {
-        maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000,
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 15_000,
+        timeout: 10_000,
       }));
   }
 
@@ -154,28 +181,63 @@ export class StockQuoteService {
   /** Converte ticker B3 para símbolo Yahoo Finance (PETR4 → PETR4.SA) */
   private toYahooSymbol(ticker: string): string {
     const upper = ticker.toUpperCase();
-    // Se já tem sufixo .SA, não duplica
     return upper.endsWith('.SA') ? upper : `${upper}.SA`;
   }
 
-  /** Faz a requisição HTTP à API do Yahoo Finance */
+  /** Faz a requisição HTTP à API do Yahoo Finance com rate limit */
   private async fetchQuote(
     symbol: string,
     originalTicker: string,
   ): Promise<StockQuote> {
+    // Circuit breaker: verifica se o Yahoo está acessível
+    await yahooCircuitBreaker.beforeRequest();
+
+    // Rate limit centralizado do Yahoo
+    await yahooLimiter.acquire();
+
     const url = `${this.baseUrl}/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Urano-FinBot/0.1',
-        Accept: 'application/json',
-      },
-    });
+    let response: Response;
+    try {
+      response = await withRetry(async () => {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': 'Urano-FinBot/0.1',
+            Accept: 'application/json',
+          },
+        });
 
-    if (!response.ok) {
-      throw new Error(
-        `Yahoo Finance retornou HTTP ${response.status} para ${symbol}`,
-      );
+        if (res.status === 429) {
+          const retryAfter = res.headers.get('Retry-After');
+          const retrySec = retryAfter ? parseInt(retryAfter, 10) || 5 : 5;
+          throw new RateLimitError(
+            `Yahoo Finance HTTP 429 (Retry-After: ${retrySec}s)`,
+            retrySec * 1000,
+          );
+        }
+
+        if (!res.ok) {
+          throw new Error(`Yahoo Finance retornou HTTP ${res.status} para ${symbol}`);
+        }
+
+        return res;
+      }, {
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 15_000,
+      });
+
+      // Sucesso: notifica circuit breaker
+      await yahooCircuitBreaker.onSuccess();
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        await yahooCircuitBreaker.onFailure('rate-limit', error.message);
+      } else if (error instanceof Error && error.message.includes('HTTP 5')) {
+        await yahooCircuitBreaker.onFailure('server-error', error.message);
+      } else {
+        await yahooCircuitBreaker.onFailure('network-error', (error as Error).message);
+      }
+      throw error;
     }
 
     const data = (await response.json()) as YahooFinanceResponse;
@@ -223,17 +285,54 @@ export class StockQuoteService {
     originalTicker: string,
     range: string,
   ): Promise<StockHistory> {
+    // Circuit breaker: verifica se o Yahoo está acessível
+    await yahooCircuitBreaker.beforeRequest();
+
+    // Rate limit centralizado do Yahoo
+    await yahooLimiter.acquire();
+
     const url = `${this.baseUrl}/${encodeURIComponent(symbol)}?interval=1d&range=${range}`;
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Urano-FinBot/0.1',
-        Accept: 'application/json',
-      },
-    });
+    let response: Response;
+    try {
+      response = await withRetry(async () => {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': 'Urano-FinBot/0.1',
+            Accept: 'application/json',
+          },
+        });
 
-    if (!response.ok) {
-      throw new Error(`Yahoo Finance HTTP ${response.status} para ${symbol}`);
+        if (res.status === 429) {
+          const retryAfter = res.headers.get('Retry-After');
+          const retrySec = retryAfter ? parseInt(retryAfter, 10) || 5 : 5;
+          throw new RateLimitError(
+            `Yahoo Finance HTTP 429 (Retry-After: ${retrySec}s)`,
+            retrySec * 1000,
+          );
+        }
+
+        if (!res.ok) {
+          throw new Error(`Yahoo Finance HTTP ${res.status} para ${symbol}`);
+        }
+
+        return res;
+      }, {
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 15_000,
+      });
+
+      await yahooCircuitBreaker.onSuccess();
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        await yahooCircuitBreaker.onFailure('rate-limit', error.message);
+      } else if (error instanceof Error && error.message.includes('HTTP 5')) {
+        await yahooCircuitBreaker.onFailure('server-error', error.message);
+      } else {
+        await yahooCircuitBreaker.onFailure('network-error', (error as Error).message);
+      }
+      throw error;
     }
 
     const data = (await response.json()) as YahooFinanceHistoryResponse;
@@ -275,7 +374,6 @@ export class StockQuoteService {
   private async fetchFromStatusInvest(ticker: string): Promise<StockQuote> {
     const scraper = this.statusInvest;
 
-    // Tenta ação primeiro, fallback para FII se preço vier zerado
     let price = 0;
     let avgDailyLiquidity = 0;
     let marketCap: number | null = null;

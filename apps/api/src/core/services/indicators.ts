@@ -34,6 +34,9 @@ export function calcAllIndicators(
   const marketCap = shares > 0 ? shares * price : 0;
   const grossProfit = revenue - cogs;
   const netDebt = totalLiabilities - cash;
+  // Enterprise Value = market cap + net debt. Requires a price (marketCap > 0);
+  // total liabilities is the only debt figure the schema carries, so it proxies debt.
+  const enterpriseValue = marketCap + netDebt;
 
   return {
     ticker: String(f.ticker ?? ''),
@@ -50,7 +53,7 @@ export function calcAllIndicators(
     pbRatio: bvps > 0 && price > 0 ? +(price / bvps).toFixed(2) : null,
     psRatio: revenue > 0 && shares > 0 ? +(marketCap / revenue).toFixed(2) : null,
     pebit: ebit > 0 && shares > 0 ? +(marketCap / ebit).toFixed(2) : null,
-    evEbit: ebit > 0 ? +((totalLiabilities + equity) / ebit).toFixed(2) : null,
+    evEbit: ebit > 0 && marketCap > 0 && enterpriseValue > 0 ? +(enterpriseValue / ebit).toFixed(2) : null,
     // Endividamento
     debtToEquity: equity > 0 ? +(totalLiabilities / equity).toFixed(2) : null,
     netDebtToEquity: equity > 0 ? +(netDebt / equity).toFixed(2) : null,

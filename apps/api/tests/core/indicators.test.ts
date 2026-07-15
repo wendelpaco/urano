@@ -53,8 +53,26 @@ describe('calcAllIndicators', () => {
     // Market cap
     expect(result.marketCap).toBe(455_000_000_000); // 13B × 35
 
+    // EV/EBIT = (marketCap 455B + netDebt 550B) / EBIT 150B = 6.7
+    // (sensível ao preço; NÃO é Ativo/EBIT = 1T/150B = 6.67)
+    expect(result.evEbit).toBe(6.7);
+
     // DY ainda null (calculado externamente)
     expect(result.dividendYield).toBeNull();
+  });
+
+  // ─── EV/EBIT sensível ao preço ─────────────────────────────────────────
+
+  it('deve calcular EV/EBIT sensível ao preço (não Ativo/EBIT)', () => {
+    const row = makeRow();
+    const low = calcAllIndicators(row, 35).evEbit;
+    const high = calcAllIndicators(row, 70).evEbit;
+    // Preço maior → EV maior → EV/EBIT maior. O bug antigo (Ativo/EBIT) era invariante.
+    expect(low).not.toBeNull();
+    expect(high).not.toBeNull();
+    expect(high as number).toBeGreaterThan(low as number);
+    // Ativo/EBIT daria 6.67 e não mudaria com preço — garante que não regredimos.
+    expect(low).not.toBe(6.67);
   });
 
   // ─── Empresa sem receita ───────────────────────────────────────────────
@@ -107,6 +125,7 @@ describe('calcAllIndicators', () => {
     expect(result.peRatio).toBeNull();
     expect(result.pbRatio).toBeNull();
     expect(result.marketCap).toBe(0);
+    expect(result.evEbit).toBeNull(); // sem preço não há EV
   });
 
   // ─── COGS negativo (padrão CVM) ────────────────────────────────────────

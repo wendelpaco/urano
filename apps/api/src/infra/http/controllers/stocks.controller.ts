@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { redis } from '../../services/redis.ts';
+import { technicalIndicators } from '../../services/analysis/technical-indicators.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -401,6 +402,54 @@ export async function getCorporateEventsController(
     reply.status(502).send({
       error: 'EventsUnavailable',
       message: `Eventos corporativos indisponíveis para "${ticker}".`,
+      detail: message,
+    });
+  }
+}
+
+// ─── GET /v1/stocks/:ticker/indicators ──────────────────────────────────────
+
+export async function getTechnicalIndicatorsController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) {
+    return sendZodError(reply, parsed.error, 'Ticker inválido.');
+  }
+  const { ticker } = parsed.data;
+
+  const cacheKey = `indicators:${ticker.toUpperCase()}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      reply.send(JSON.parse(cached));
+      return;
+    }
+  } catch { /* Redis offline */ }
+
+  try {
+    const history = await stockQuoteService.getHistory(ticker, '1y');
+
+    if (!history.points || history.points.length < 20) {
+      reply.status(404).send({
+        error: 'NotEnoughData',
+        message: `Dados insuficientes para ${ticker}. Mínimo 20 pontos.`,
+      });
+      return;
+    }
+
+    const result = technicalIndicators.calculate(ticker, history.points);
+
+    try { await redis.setex(cacheKey, 900, JSON.stringify(result)); } catch { /* ok */ }
+
+    reply.send(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    reply.status(502).send({
+      error: 'IndicatorsUnavailable',
+      message: `Indicadores técnicos indisponíveis para "${ticker}".`,
       detail: message,
     });
   }

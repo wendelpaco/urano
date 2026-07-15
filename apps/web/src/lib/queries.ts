@@ -85,7 +85,14 @@ export type HistoryPoint = {
   v?: number;
 };
 export type HistoryResponse =
-  HistoryPoint[] | { data?: HistoryPoint[]; items?: HistoryPoint[]; history?: HistoryPoint[] };
+  | HistoryPoint[]
+  | {
+      data?: HistoryPoint[];
+      items?: HistoryPoint[];
+      history?: HistoryPoint[];
+      // Backend `/stocks/:ticker/history` returns `{ points: [...] }`.
+      points?: HistoryPoint[];
+    };
 
 export type DividendEntry = {
   date?: string;
@@ -97,7 +104,14 @@ export type DividendEntry = {
 };
 export type DividendsResponse =
   | DividendEntry[]
-  | { data?: DividendEntry[]; items?: DividendEntry[]; dividends?: DividendEntry[] };
+  | {
+      data?: DividendEntry[];
+      items?: DividendEntry[];
+      dividends?: DividendEntry[];
+      // Backend `/dividends/:ticker` returns dated monthly events here; `data` holds
+      // annual DMPL rows with no date/value and is not chartable.
+      monthlyHistory?: DividendEntry[];
+    };
 
 export function useRanking(params: RankingParams = {}) {
   return useQuery<Asset[] | { items?: Asset[]; data?: Asset[] }>({
@@ -120,6 +134,47 @@ export function useScreener(params: ScreenerParams) {
   });
 }
 
+const asNum = (v: unknown): number | undefined =>
+  typeof v === "number" && !Number.isNaN(v) ? v : undefined;
+
+/**
+ * The detail endpoints return different shapes per asset class:
+ * - stocks nest metrics under `indicators` (peRatio/pbRatio/dividendYield/…),
+ * - FIIs expose dividendYield/pvp/price/liquidity at the top level and omit P/L,
+ *   ROE, margins, etc. (semantically N/A for a fund).
+ * Both put the score pillars in `breakdown`; FIIs carry `explanation` instead of
+ * a `reasons[]`. The UI reads a single flat shape, so normalize here.
+ */
+export function flattenAssetDetail(raw: Asset, type: "stock" | "fii"): Asset {
+  if (!raw || typeof raw !== "object") return raw;
+  const ind = (raw.indicators ?? {}) as Record<string, unknown>;
+  const flat: Asset = {
+    ...raw,
+    pillars: raw.pillars ?? raw.breakdown ?? raw.pilares ?? raw.scores,
+  };
+  if (type === "fii") {
+    flat.dy = asNum(raw.dividendYield ?? raw.dy);
+    flat.pvp = asNum(raw.pvp);
+    flat.price = asNum(raw.price);
+    flat.liquidity = asNum(raw.liquidity);
+    if (!Array.isArray(raw.reasons) && typeof raw.explanation === "string" && raw.explanation) {
+      flat.reasons = [raw.explanation];
+    }
+  } else {
+    flat.dy = asNum(ind.dividendYield);
+    flat.pe = asNum(ind.peRatio);
+    flat.pvp = asNum(ind.pbRatio);
+    flat.roe = asNum(ind.roe);
+    flat.marketCap = asNum(ind.marketCap);
+    flat.netMargin = asNum(ind.netMargin);
+    flat.debtEquity = asNum(ind.debtToEquity);
+    flat.eps = asNum(ind.eps);
+    flat.bvps = asNum(ind.bvps);
+    // The API does not compute ROIC for stocks; leave undefined → renders "—".
+  }
+  return flat;
+}
+
 export function useAssetDetail(type: "stock" | "fii", ticker: string) {
   return useQuery<Asset>({
     queryKey: ["asset", type, ticker],
@@ -129,6 +184,7 @@ export function useAssetDetail(type: "stock" | "fii", ticker: string) {
       }),
     enabled: Boolean(ticker),
     staleTime: 60_000,
+    select: (raw) => flattenAssetDetail(raw, type),
   });
 }
 
@@ -140,6 +196,33 @@ export function useHistory(ticker: string) {
     staleTime: 5 * 60_000,
   });
 }
+
+export function useLazySearch(query: string) {
+  return useQuery<{ results?: LazyAsset[]; source?: string; message?: string }>({
+    queryKey: ["lazySearch", query],
+    queryFn: () => apiFetch({ path: "/search", query: { q: query } }),
+    enabled: Boolean(query) && query.length >= 2,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export type LazyAsset = {
+  ticker: string;
+  name: string;
+  type: "stock" | "fii";
+  price: number;
+  change: number;
+  changePct: number;
+  score: number;
+  sector: string | null;
+  dy?: number;
+  pl?: number;
+  pvp?: number;
+  roe?: number;
+  category?: string;
+  source: string;
+};
 
 export function useDividends(ticker: string) {
   return useQuery<DividendsResponse>({

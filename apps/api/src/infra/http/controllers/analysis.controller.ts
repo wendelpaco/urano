@@ -16,6 +16,8 @@ import { statusInvestScraper } from '../../services/statusinvest-scraper.ts';
 import { fiisScraper } from '../../services/fiis-scraper.ts';
 import { fiiOperationalService } from '../../services/fii-operational.service.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
+import { isFii } from '../../../shared/ticker-utils.ts';
+import { lazyDataService } from '../../services/lazy-data-service.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
 import {
@@ -415,13 +417,39 @@ const rankingSchema = z.object({
     .optional()
     .default('10')
     .transform(Number)
-    .pipe(z.number().int().min(1).max(50)),
+    .pipe(z.number().int().min(1).max(500)),
   minScore: z
     .string()
     .optional()
     .transform((v) => (v ? parseInt(v, 10) : undefined))
     .pipe(z.number().int().min(0).max(100).optional()),
+  sort: z.string().optional(),
+  order: z.enum(['asc', 'desc']).optional().default('desc'),
 });
+
+// Sort ranking rows by a chosen numeric column (missing values always last),
+// falling back to score. Ticker sorts alphabetically.
+function sortRankingRows<T extends Record<string, unknown>>(
+  rows: T[],
+  sort: string | undefined,
+  order: 'asc' | 'desc',
+): T[] {
+  const key = sort || 'score';
+  const dir = order === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    if (key === 'ticker') {
+      return String(a.ticker ?? '').localeCompare(String(b.ticker ?? '')) * dir;
+    }
+    const av = a[key];
+    const bv = b[key];
+    const aMiss = typeof av !== 'number' || Number.isNaN(av);
+    const bMiss = typeof bv !== 'number' || Number.isNaN(bv);
+    if (aMiss && bMiss) return 0;
+    if (aMiss) return 1;
+    if (bMiss) return -1;
+    return ((av as number) - (bv as number)) * dir;
+  });
+}
 
 export async function getRankingController(
   request: FastifyRequest,
@@ -430,9 +458,9 @@ export async function getRankingController(
   const parsed = rankingSchema.safeParse(request.query);
   if (!parsed.success)
     return sendZodError(reply, parsed.error, 'Query inválida.');
-  const { type, limit, minScore } = parsed.data;
+  const { type, limit, minScore, sort, order } = parsed.data;
 
-  const cacheKey = `analysis:ranking:${type}:${limit}:${minScore ?? 'none'}`;
+  const cacheKey = `analysis:ranking:${type}:${limit}:${minScore ?? 'none'}:${sort ?? 'score'}:${order}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -457,9 +485,9 @@ export async function getRankingController(
         cf.reference_date
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-      WHERE c.ticker NOT LIKE '%11'  -- Exclui FIIs (4 letras + 11)
+      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))  -- Exclui FIIs, mas mantém Units
         AND LENGTH(c.ticker) >= 5
-      ORDER BY c.ticker, cf.reference_date DESC
+      ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
       LIMIT 200
     `);
 
@@ -469,7 +497,12 @@ export async function getRankingController(
       async (r) => {
         const ticker = String(r.ticker);
         let price = 0;
-        try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
+        let changePct: number | null = null;
+        try {
+          const q = await stockQuoteService.getQuote(ticker);
+          price = q.price;
+          changePct = typeof q.changePercent === 'number' ? q.changePercent : null;
+        } catch { return null; }
         if (price <= 0) return null;
 
         const indicators = calcAllIndicators(r, price);
@@ -486,18 +519,29 @@ export async function getRankingController(
 
         const result = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
         if (minScore !== undefined && result.score < minScore) return null;
-        return { ticker, name: String(r.name), score: result.score };
+        return {
+          ticker,
+          name: String(r.name),
+          score: result.score,
+          type: 'stock' as const,
+          sector: (r.sector as string) || null,
+          price,
+          changePct,
+          dy: indicators.dividendYield ?? null,
+          pe: indicators.peRatio ?? null,
+          pvp: indicators.pbRatio ?? null,
+          roe: indicators.roe ?? null,
+        };
       },
       8, // concorrência maior para ranking (usa cache interno do quote service)
     );
 
-    const results: Array<{ ticker: string; name: string; score: number }> = [];
+    const results: Array<Record<string, unknown>> = [];
     for (const r of scored) {
       if (r) results.push(r);
     }
 
-    results.sort((a, b) => b.score - a.score);
-    const sliced = results.slice(0, limit);
+    const sliced = sortRankingRows(results, sort, order).slice(0, limit);
 
     const response = {
       type: 'stock' as const,
@@ -515,13 +559,18 @@ export async function getRankingController(
     reply.send(response);
   } else {
     // Ranking de FIIs
-    const fiiTickers = await db.execute(sql`
+    // Busca todas as empresas terminadas em "11" e filtra as que são FIIs
+    // (exclui Units como KLBN11, SANB11, TAEE11, etc.)
+    const allTickers = await db.execute(sql`
       SELECT ticker, name FROM companies
       WHERE ticker LIKE '%11'
         AND LENGTH(ticker) = 6
       ORDER BY ticker
       LIMIT 200
     `);
+
+    const fiiTickers = (allTickers as unknown as Record<string, unknown>[])
+      .filter((r) => isFii(String(r.ticker)));
 
     // Batch concorrente (igual ao ranking de stocks)
     const scoredFii = await batchWithConcurrency(
@@ -547,21 +596,33 @@ export async function getRankingController(
 
         const score = FIIScoreCalculatorV4.calculate({ ticker, price, dy, pvp: null, liquidity, dividendsHistory: dividendEvents });
         if (minScore !== undefined && score.overall_score < minScore) return null;
+        const subclass = score.subclasse_tijolo || score.subclasse_papel || score.type || null;
         return {
-          ticker, name: String(r.name), score: score.overall_score,
+          ticker,
+          name: String(r.name),
+          score: score.overall_score,
+          // Asset class drives routing to /research/fii/:ticker — must be 'fii', not the subclass.
+          type: 'fii' as const,
           recommendation: score.overall_rating === 'excelente' || score.overall_rating === 'bom' ? 'conservador'
             : score.overall_rating === 'regular' ? 'moderado' : 'arriscado',
-          type: score.subclasse_tijolo || score.subclasse_papel || score.type,
+          subclass,
+          // Surface the FII subclass in the "Setor" column (FIIs have no sector).
+          sector: subclass,
+          price,
+          changePct: null,
+          dy: dy || null,
+          pvp: null,
+          pe: null,
+          roe: null,
         };
       },
       8,
     );
 
-    const results: Array<{ ticker: string; name: string; score: number; recommendation?: string; type?: string }> = [];
+    const results: Array<Record<string, unknown>> = [];
     for (const r of scoredFii) { if (r) results.push(r); }
 
-    results.sort((a, b) => b.score - a.score);
-    const sliced = results.slice(0, limit);
+    const sliced = sortRankingRows(results, sort, order).slice(0, limit);
 
     const response = {
       type: 'fii' as const,
@@ -819,4 +880,44 @@ export async function getValidationController(
   reply: FastifyReply,
 ): Promise<void> {
   reply.send(SCORE_VALIDATION);
+}
+
+// ─── GET /v1/search ─────────────────────────────────────────────────────────
+
+const searchSchema = z.object({
+  q: z.string().min(1).max(50),
+});
+
+export async function searchController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = searchSchema.safeParse(request.query);
+  if (!parsed.success)
+    return sendZodError(reply, parsed.error, 'Query inválida.');
+
+  const { q } = parsed.data;
+
+  const result = await lazyDataService.searchAssets(q);
+
+  // Se não encontrou nada mas parece ticker, dispara scraping em background
+  if (result.results.length === 0 && /^[A-Z]{4}\d{1,2}$/.test(q.toUpperCase().trim())) {
+    // Responde imediatamente com status "fetching"
+    // O frontend pode refetch após alguns segundos
+    reply.header('X-Search-Status', 'scraping');
+    reply.send({
+      query: q,
+      results: [],
+      source: 'live_scrape',
+      message: 'Dados sendo buscados em tempo real. Tente novamente em instantes.',
+    });
+
+    // Dispara scraping em background (não bloqueia a resposta)
+    lazyDataService.ensureData(q).catch((err) =>
+      console.warn(`[search] Background scrape failed for ${q}:`, (err as Error).message),
+    );
+    return;
+  }
+
+  reply.send(result);
 }

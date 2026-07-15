@@ -328,7 +328,7 @@ function ResearchPage() {
 
 function normalizeSeries(raw: HistoryResponse | undefined): { d: string; v: number }[] {
   if (!raw) return [];
-  const arr = Array.isArray(raw) ? raw : (raw.data ?? raw.items ?? raw.history ?? []);
+  const arr = Array.isArray(raw) ? raw : (raw.points ?? raw.data ?? raw.items ?? raw.history ?? []);
   if (!Array.isArray(arr)) return [];
   return arr
     .map((p) => ({
@@ -340,7 +340,9 @@ function normalizeSeries(raw: HistoryResponse | undefined): { d: string; v: numb
 
 function normalizeDividends(raw: DividendsResponse | undefined): { d: string; v: number }[] {
   if (!raw) return [];
-  const arr = Array.isArray(raw) ? raw : (raw.data ?? raw.items ?? raw.dividends ?? []);
+  const arr = Array.isArray(raw)
+    ? raw
+    : (raw.monthlyHistory ?? raw.data ?? raw.items ?? raw.dividends ?? []);
   if (!Array.isArray(arr)) return [];
   return arr
     .map((p) => ({

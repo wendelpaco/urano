@@ -166,9 +166,9 @@ export class AllocationEngine {
         cf.reference_date
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-      WHERE c.ticker NOT LIKE '%11'
+      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))
         AND LENGTH(c.ticker) >= 5
-      ORDER BY c.ticker, cf.reference_date DESC
+      ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
       LIMIT 100
     `);
 
@@ -217,7 +217,7 @@ export class AllocationEngine {
   }>> {
     const rows = await db.execute(sql`
       SELECT ticker, name, sector FROM companies
-      WHERE ticker LIKE '%11' AND LENGTH(ticker) = 6
+      WHERE ticker LIKE '%11' AND LENGTH(ticker) = 6 AND ticker NOT IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11')
       ORDER BY ticker LIMIT 100
     `);
 

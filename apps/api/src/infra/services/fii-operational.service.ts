@@ -18,6 +18,8 @@ import { withRetry } from '../../shared/retry.ts';
 import { fiisScraper, type FiisData } from './fiis-scraper.ts';
 import { redis } from './redis.ts';
 import { stockQuoteService } from './stock-quote-service.ts';
+import { statusInvestLimiter } from './rate-limiter.ts';
+import { userAgentPool } from './user-agent-pool.ts';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -90,28 +92,10 @@ export interface FiiOperationalData {
   referenceDate: string | null;
 }
 
-// ─── Rate Limiter ────────────────────────────────────────────────────────────
-
-class TokenBucket {
-  private tokens: number; private lastRefill: number; private refillRate: number;
-  constructor(rate: number) {
-    this.tokens = rate; this.lastRefill = Date.now(); this.refillRate = rate / 1000;
-  }
-  async acquire(): Promise<void> {
-    const now = Date.now();
-    this.tokens = Math.min(2, this.tokens + (now - this.lastRefill) * this.refillRate);
-    this.lastRefill = now;
-    if (this.tokens >= 1) { this.tokens -= 1; return; }
-    await new Promise(r => setTimeout(r, Math.ceil((1 - this.tokens) / this.refillRate)));
-    this.tokens = 0; this.lastRefill = Date.now();
-  }
-}
-
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 export class FiiOperationalService {
   private readonly baseUrl = 'https://statusinvest.com.br';
-  private readonly rateLimiter = new TokenBucket(1.5);
 
   /**
    * Busca todos os dados operacionais de um FII.
@@ -204,17 +188,15 @@ export class FiiOperationalService {
   private async scrapeOperationalSection(ticker: string) {
     const url = `${this.baseUrl}/fundos-imobiliarios/${ticker.toLowerCase()}`;
 
-    await this.rateLimiter.acquire();
+    // Rate limit centralizado
+    await statusInvestLimiter.acquire();
     const html = await withRetry(async () => {
       const r = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Accept-Language': 'pt-BR,pt;q=0.9',
-        },
+        headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
-    }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 15_000 });
+    }, { maxRetries: 3, initialDelay: 1000, maxDelay: 30_000, timeout: 15_000 });
 
     const $ = cheerio.load(html);
 
@@ -476,14 +458,15 @@ export class FiiOperationalService {
   > {
     const url = `${this.baseUrl}/fundos-imobiliarios/${ticker.toLowerCase()}`;
 
-    await this.rateLimiter.acquire();
+    // Rate limit centralizado
+    await statusInvestLimiter.acquire();
     const html = await withRetry(async () => {
       const r = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'pt-BR,pt;q=0.9' },
+        headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
-    }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 15_000 });
+    }, { maxRetries: 3, initialDelay: 1000, maxDelay: 30_000, timeout: 15_000 });
 
     const $ = cheerio.load(html);
     const tenants: Array<{ sector: string; pct: number }> = [];

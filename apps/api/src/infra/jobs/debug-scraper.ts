@@ -5,7 +5,7 @@ const scraper = new StatusInvestScraper();
 console.log("=== XPML11 (FII) ===");
 const fii = await scraper.fetchFII("XPML11");
 console.log(`Preço: ${fii.price}`);
-console.log(`DY: ${fii.dy}`);
+console.log(`DY: ${fii.dy12m}`);
 console.log(`P/VP: ${fii.pvp}`);
 console.log(`Proventos: ${fii.dividendsHistory.length} registros`);
 if (fii.dividendsHistory.length > 0) {

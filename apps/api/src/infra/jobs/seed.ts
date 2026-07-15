@@ -11,6 +11,7 @@ import 'dotenv/config';
 import { db } from '../database/connection.ts';
 import { companies } from '../database/schema.ts';
 import { JobStore } from './job-store.ts';
+import { ALL_STOCK_TICKERS, ALL_FII_TICKERS } from '../../shared/tickers-master-list.ts';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -76,34 +77,44 @@ async function main(): Promise<void> {
   }
   console.log(`   ✅ ${fiiAdded} FIIs cadastrados\n`);
 
-  // 2. Lê todas as empresas do banco
+  // 2. Lê todas as empresas do banco (para stats)
   const allCompanies = await db
     .select({ ticker: companies.ticker, name: companies.name })
     .from(companies)
     .orderBy(companies.ticker);
 
-  const stocks = allCompanies.filter((c) => !FII_TICKER_SET.has(c.ticker));
-  const fiis = allCompanies.filter((c) => FII_TICKER_SET.has(c.ticker));
+  const dbStocks = allCompanies.filter((c) => !FII_TICKER_SET.has(c.ticker));
+  const dbFiis = allCompanies.filter((c) => FII_TICKER_SET.has(c.ticker));
 
-  console.log(`📊 ${stocks.length} ações, ${fiis.length} FIIs\n`);
+  console.log(`📊 No banco: ${dbStocks.length} ações, ${dbFiis.length} FIIs`);
+  console.log(`📋 Lista mestra: ${ALL_STOCK_TICKERS.length} ações, ${ALL_FII_TICKERS.length} FIIs\n`);
 
-  // 3. Jobs de ações (StatusInvest a cada 6h)
-  console.log('📅 Criando jobs de ações...');
-  for (const s of stocks) {
-    await store.createJob({ ticker: s.ticker, assetType: 'stock', runInterval: STOCK_INTERVAL, priority: 1 });
+  // 3. Jobs de ações — da LISTA MESTRA (não apenas do banco)
+  //    Isso quebra o chicken-and-egg: worker vai fazer scraping e popular companies
+  console.log('📅 Criando jobs de ações (lista mestra)...');
+  let stockJobsCreated = 0;
+  for (const ticker of ALL_STOCK_TICKERS) {
+    await store.createJob({ ticker, assetType: 'stock', runInterval: STOCK_INTERVAL, priority: 1 });
+    stockJobsCreated++;
   }
-  console.log(`   ✅ ${stocks.length} jobs (refresh a cada ${STOCK_INTERVAL / 3600}h)`);
+  console.log(`   ✅ ${stockJobsCreated} jobs (refresh a cada ${STOCK_INTERVAL / 3600}h)`);
 
-  // 4. Jobs de FIIs (StatusInvest a cada 3h)
-  console.log('📅 Criando jobs de FIIs...');
-  for (const f of fiis) {
-    await store.createJob({ ticker: f.ticker, assetType: 'fii', runInterval: FII_INTERVAL, priority: 1 });  // mesma prioridade = intercala
+  // 4. Jobs de FIIs — da LISTA MESTRA
+  console.log('📅 Criando jobs de FIIs (lista mestra)...');
+  let fiiJobsCreated = 0;
+  for (const ticker of ALL_FII_TICKERS) {
+    await store.createJob({ ticker, assetType: 'fii', runInterval: FII_INTERVAL, priority: 1 });
+    fiiJobsCreated++;
   }
-  console.log(`   ✅ ${fiis.length} jobs (refresh a cada ${FII_INTERVAL / 3600}h)`);
+  console.log(`   ✅ ${fiiJobsCreated} jobs (refresh a cada ${FII_INTERVAL / 3600}h)`);
 
   // 5. System job: snapshot diário
   await store.createJob({ ticker: '_daily', assetType: 'system' as 'stock', runInterval: 86_400, priority: 10 });
-  console.log('   ✅ 1 job de snapshot diário (24h)\n');
+  console.log('   ✅ 1 job de snapshot diário (24h)');
+
+  // 6. System job: warmup de scores (a cada 25 min, antes do cache expirar em 30 min)
+  await store.createJob({ ticker: '_warmup', assetType: 'system' as 'stock', runInterval: 1_500, priority: 10 });
+  console.log('   ✅ 1 job de warmup de scores (25 min)\n');
 
   // 6. Stats
   const stats = await store.getStats();

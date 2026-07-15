@@ -1,7 +1,15 @@
 /**
- * Retry Utility
- * Implementa lógica de retry com exponential backoff
+ * Retry Utility — Backoff exponencial com jitter, tratamento de 429,
+ * e distinção entre erros de rate limit e erros de servidor.
+ *
+ * Comportamento por status HTTP:
+ *  - 429 Too Many Requests:   usa Retry-After header, backoff mais longo
+ *  - 5xx (500, 502, 503):     backoff normal, recomeça
+ *  - 4xx (exceto 429):        NÃO retenta (erro do cliente)
+ *  - Erros de rede (fetch):   backoff normal
  */
+
+// ─── Tipos ───────────────────────────────────────────────────────────────────
 
 export class TimeoutError extends Error {
   constructor(message: string) {
@@ -10,43 +18,122 @@ export class TimeoutError extends Error {
   }
 }
 
+export class RateLimitError extends Error {
+  retryAfterMs: number;
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export interface RetryOptions {
+  /** Número máximo de tentativas (padrão: 3) */
   maxRetries: number;
-  initialDelay: number; // ms
-  maxDelay: number; // ms
+  /** Delay inicial em ms (padrão: 1000) */
+  initialDelay: number;
+  /** Delay máximo em ms (padrão: 30000) */
+  maxDelay: number;
+  /** Fator de backoff exponencial (padrão: 2) */
   backoffFactor: number;
-  timeout?: number; // ms
-  onRetry?: (attempt: number, error: Error) => void;
+  /** Timeout por tentativa em ms (opcional) */
+  timeout?: number;
+  /** Callback chamado a cada retry */
+  onRetry?: (attempt: number, error: Error, delayMs: number) => void;
 }
 
 const defaultOptions: RetryOptions = {
-  maxRetries: 1,
-  initialDelay: 500,
-  maxDelay: 2000,
+  maxRetries: 3,
+  initialDelay: 1000,
+  maxDelay: 30_000,
   backoffFactor: 2,
 };
 
-/**
- * Calcula o delay para a próxima tentativa usando exponential backoff
- */
-const calculateDelay = (attempt: number, options: RetryOptions): number => {
-  const delay = options.initialDelay * Math.pow(options.backoffFactor, attempt);
-  return Math.min(delay, options.maxDelay);
-};
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
- * Sleep helper
+ * Calcula delay com jitter: delay base ± até 30% aleatório.
+ * Jitter evita thundering herd quando múltiplas requisições
+ * são retentadas simultaneamente.
  */
+const calculateDelayWithJitter = (baseDelay: number): number => {
+  const jitter = Math.floor(Math.random() * baseDelay * 0.3);
+  // Distribui simetricamente: -15% a +15%
+  return baseDelay - Math.floor(baseDelay * 0.15) + jitter;
+};
+
 const sleep = (ms: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, ms));
 };
 
 /**
- * Executa uma função com retry e exponential backoff
+ * Classifica o erro para decidir a estratégia de retry.
+ *
+ * Retorna:
+ *  - 'rate-limit': erro 429, usa Retry-After header
+ *  - 'server-error': 5xx, retry com backoff normal
+ *  - 'client-error': 4xx (exceto 429), NÃO retenta
+ *  - 'network-error': erro de rede/timeout, retry normal
+ */
+type ErrorKind = 'rate-limit' | 'server-error' | 'client-error' | 'network-error';
+
+const classifyError = (error: Error): { kind: ErrorKind; retryAfterMs?: number } => {
+  // Erro de RateLimitError (criado por quem parseou o 429)
+  if (error instanceof RateLimitError) {
+    return { kind: 'rate-limit', retryAfterMs: error.retryAfterMs };
+  }
+
+  const msg = error.message;
+
+  // Tenta extrair HTTP status da mensagem de erro
+  const httpMatch = msg.match(/HTTP\s*(\d{3})/i);
+  if (httpMatch) {
+    const status = parseInt(httpMatch[1]!, 10);
+
+    if (status === 429) {
+      // Tenta extrair Retry-After da mensagem (se injetado por quem fez a chamada)
+      const retryMatch = msg.match(/Retry-After[:\s]*(\d+)/i);
+      const retryAfterSec = retryMatch ? parseInt(retryMatch[1]!, 10) : 5;
+      return { kind: 'rate-limit', retryAfterMs: retryAfterSec * 1000 };
+    }
+
+    if (status >= 500 && status < 600) {
+      return { kind: 'server-error' };
+    }
+
+    // 4xx que não 429: não retenta
+    if (status >= 400 && status < 500) {
+      return { kind: 'client-error' };
+    }
+  }
+
+  // Erro de timeout
+  if (error instanceof TimeoutError || msg.includes('timeout') || msg.includes('Timeout')) {
+    return { kind: 'network-error' };
+  }
+
+  // Default: erro de rede (DNS, conexão recusada, etc.)
+  return { kind: 'network-error' };
+};
+
+// ─── withRetry ──────────────────────────────────────────────────────────────
+
+/**
+ * Executa uma função com retry inteligente:
+ * - 429: espera Retry-After + jitter, até 3 tentativas
+ * - 5xx: backoff exponencial com jitter
+ * - 4xx (não 429): NÃO retenta (erro do cliente)
+ * - Rede: backoff normal
+ *
+ * @example
+ *   const html = await withRetry(() => fetchPage(url), {
+ *     maxRetries: 3,
+ *     initialDelay: 1000,
+ *   });
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  options: Partial<RetryOptions> = {}
+  options: Partial<RetryOptions> = {},
 ): Promise<T> {
   const opts = { ...defaultOptions, ...options };
   let lastError: Error | undefined;
@@ -61,38 +148,71 @@ export async function withRetry<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
-      // Se é a última tentativa, lança o erro
+      // Última tentativa → lança
       if (attempt === opts.maxRetries) {
-        console.warn(`[retry] Máximo de tentativas excedido (${attempt + 1}): ${lastError.message}`);
+        console.warn(
+          `[retry] ❌ Esgotadas ${opts.maxRetries + 1} tentativas: ${lastError.message}`,
+        );
         throw lastError;
       }
 
-      // Calcula delay e aguarda
-      const delay = calculateDelay(attempt, opts);
+      // Classifica o erro para decidir delay
+      const { kind, retryAfterMs } = classifyError(lastError);
 
-      console.warn(`[retry] Tentativa ${attempt + 1}/${opts.maxRetries} em ${delay}ms: ${lastError.message}`);
+      // Erro de cliente (4xx não 429): não faz sentido retentar
+      if (kind === 'client-error') {
+        console.warn(
+          `[retry] ❌ Erro de cliente (não retentável): ${lastError.message}`,
+        );
+        throw lastError;
+      }
+
+      // Calcula delay
+      let delayMs: number;
+      if (kind === 'rate-limit' && retryAfterMs) {
+        // 429: usa Retry-After como base, com jitter + backoff progressivo
+        const baseDelay = Math.max(retryAfterMs, opts.initialDelay * Math.pow(opts.backoffFactor, attempt));
+        delayMs = calculateDelayWithJitter(Math.min(baseDelay, opts.maxDelay));
+        console.warn(
+          `[retry] ⚡ Rate limit (429) — tentativa ${attempt + 1}/${opts.maxRetries} ` +
+            `em ${Math.round(delayMs / 1000)}s (Retry-After: ${retryAfterMs / 1000}s)`,
+        );
+      } else {
+        // Backoff normal: exponential com jitter
+        const baseDelay = opts.initialDelay * Math.pow(opts.backoffFactor, attempt);
+        delayMs = calculateDelayWithJitter(Math.min(baseDelay, opts.maxDelay));
+        console.warn(
+          `[retry] ${kind === 'server-error' ? '🔥 Servidor' : '🌐 Rede'} — ` +
+            `tentativa ${attempt + 1}/${opts.maxRetries} ` +
+            `em ${Math.round(delayMs / 1000)}s: ${lastError.message.slice(0, 80)}`,
+        );
+      }
 
       // Callback opcional
       if (opts.onRetry) {
-        opts.onRetry(attempt + 1, lastError);
+        opts.onRetry(attempt + 1, lastError, delayMs);
       }
 
-      await sleep(delay);
+      await sleep(delayMs);
     }
   }
 
-  // lastError deve estar definido aqui pois maxRetries > 0
   if (!lastError) {
     throw new Error('Retry failed without error');
   }
   throw lastError;
 }
 
+// ─── withTimeout ────────────────────────────────────────────────────────────
+
 /**
- * Adiciona timeout a uma promise
+ * Adiciona timeout a uma promise.
  */
-export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: Timer | undefined;
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -107,13 +227,20 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Pr
   }
 }
 
+// ─── batchWithConcurrency ───────────────────────────────────────────────────
+
 /**
- * Executa operações em lotes com limite de concorrência
+ * Executa operações em lotes com limite de concorrência.
+ * Útil para processar N tickers sem disparar todas as chamadas de uma vez.
+ *
+ * @param items       Itens a processar
+ * @param operation   Função assíncrona para cada item
+ * @param concurrency Máximo de operações simultâneas (padrão: 2)
  */
 export async function batchWithConcurrency<T, R>(
   items: T[],
   operation: (item: T) => Promise<R>,
-  concurrency: number = 5
+  concurrency: number = 2,
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   const executing: Promise<void>[] = [];
@@ -133,4 +260,44 @@ export async function batchWithConcurrency<T, R>(
 
   await Promise.all(executing);
   return results;
+}
+
+// ─── fetchWithRetry (conveniência) ──────────────────────────────────────────
+
+/**
+ * Fetch wrapper que já trata 429 e injeta Retry-After na mensagem de erro.
+ * Use no lugar de fetch() para obter retry inteligente automático.
+ *
+ * @example
+ *   const res = await fetchWithRetry(url, { headers: {...} });
+ *   const html = await res.text();
+ */
+export async function fetchWithRetry(
+  url: string,
+  init?: RequestInit,
+  retryOptions?: Partial<RetryOptions>,
+): Promise<Response> {
+  return withRetry(async () => {
+    const response = await fetch(url, init);
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retrySec = retryAfter ? parseInt(retryAfter, 10) || 5 : 5;
+      throw new RateLimitError(
+        `HTTP 429 Too Many Requests (Retry-After: ${retrySec}s)`,
+        retrySec * 1000,
+      );
+    }
+
+    if (!response.ok && response.status >= 500) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    if (!response.ok) {
+      // 4xx não 429: não retentar
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    return response;
+  }, retryOptions);
 }

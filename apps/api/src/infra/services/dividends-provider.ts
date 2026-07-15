@@ -10,6 +10,8 @@
 
 import { getOrSet } from './redis.ts';
 import { withRetry } from '../../shared/retry.ts';
+import { statusInvestLimiter } from './rate-limiter.ts';
+import { getDividendsEndpoint } from '../../shared/ticker-utils.ts';
 import type { DividendEvent } from '../../core/services/dividends-analyzer.ts';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -29,47 +31,10 @@ type StatusInvestResponse = Array<{
   assetType?: number;
 }>;
 
-// ─── Rate Limiter (token bucket) ────────────────────────────────────────────
-
-class TokenBucket {
-  private tokens: number;
-  private lastRefill: number;
-  private readonly maxTokens: number;
-  private readonly refillRate: number; // tokens por ms
-
-  constructor(ratePerSecond: number) {
-    this.maxTokens = ratePerSecond;
-    this.tokens = ratePerSecond;
-    this.lastRefill = Date.now();
-    this.refillRate = ratePerSecond / 1000;
-  }
-
-  async acquire(): Promise<void> {
-    this.refill();
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return;
-    }
-    // Aguarda até ter token disponível
-    const waitMs = Math.ceil((1 - this.tokens) / this.refillRate);
-    await new Promise((r) => setTimeout(r, waitMs));
-    this.tokens = 0;
-    this.lastRefill = Date.now();
-  }
-
-  private refill(): void {
-    const now = Date.now();
-    const elapsed = now - this.lastRefill;
-    this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
-    this.lastRefill = now;
-  }
-}
-
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export class DividendsProvider {
   private readonly baseUrl = 'https://statusinvest.com.br';
-  private readonly rateLimiter = new TokenBucket(1); // 1 req/s
 
   /**
    * Busca proventos mensais de um ticker (ação ou FII).
@@ -103,17 +68,11 @@ export class DividendsProvider {
   private async doFetch(ticker: string): Promise<DividendEvent[] | null> {
     const upper = ticker.toUpperCase();
 
-    // Detecta se é FII (4 letras + 11) ou ação (4 letras + número 3-11)
-    const isFii = /^[A-Z]{4}11$/.test(upper);
-    const path = isFii
-      ? `/fii/companytickerprovents`
-      : `/acao/companytickerprovents`;
+    // Usa utilitário centralizado que distingue Units de FIIs
+    const { path, params, isFii } = getDividendsEndpoint(ticker);
 
-    const params = isFii
-      ? `?ticker=${upper}`
-      : `?ticker=${upper}&chartProventsType=2`;
-
-    await this.rateLimiter.acquire();
+    // Rate limit centralizado (compartilhado com outros scrapers do StatusInvest)
+    await statusInvestLimiter.acquire();
 
     const url = `${this.baseUrl}${path}${params}`;
     const response = await fetch(url, {

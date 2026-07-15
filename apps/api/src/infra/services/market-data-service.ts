@@ -5,9 +5,13 @@
  * - Retorno dos últimos 3 e 6 meses
  * - Distância do topo histórico de 52 semanas (quanto caiu?)
  * - Volatilidade anualizada (desvio padrão dos retornos diários)
+ *
+ * V2 (2026-07): Cache Redis de 30 min para momento, reduzindo chamadas
+ *               repetidas ao Yahoo Finance.
  */
 
 import { stockQuoteService, type StockHistoryPoint } from './stock-quote-service.ts';
+import { getOrSet } from './redis.ts';
 import { withRetry } from '../../shared/retry.ts';
 
 export interface MarketMomentum {
@@ -28,9 +32,20 @@ export interface MarketMomentum {
 export class MarketDataService {
   /**
    * Busca indicadores de momento para um ticker.
-   * Usa dados do Yahoo Finance (cache de 30s no StockQuoteService).
+   *
+   * Cache Redis de 30 min — dados de momento não mudam significativamente
+   * intraday (baseados em histórico de 6 meses a 1 ano).
    */
   async getMomentum(ticker: string): Promise<MarketMomentum> {
+    const cacheKey = `momentum:${ticker.toUpperCase()}`;
+
+    return getOrSet(cacheKey, 1800, () => this.computeMomentum(ticker));
+  }
+
+  /**
+   * Computa momento sem cache (uso interno).
+   */
+  private async computeMomentum(ticker: string): Promise<MarketMomentum> {
     const price = await this.getPrice(ticker);
 
     // Busca histórico de 6 meses para calcular retornos e volatilidade
@@ -38,11 +53,12 @@ export class MarketDataService {
     let return6m: number | null = null;
     let volatility: number | null = null;
     let drawdown52w: number | null = null;
+    let avgVolume: number | null = null;
 
     try {
       const history = await withRetry(
         () => stockQuoteService.getHistory(ticker, '6mo'),
-        { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000 },
+        { maxRetries: 2, initialDelay: 1000, maxDelay: 15_000, timeout: 10_000 },
       );
 
       if (history.points.length >= 2) {
@@ -69,46 +85,42 @@ export class MarketDataService {
       // Yahoo indisponível → sem momento
     }
 
-    // Busca high de 52 semanas via Yahoo quote (já cacheado)
+    // Busca high de 52 semanas
     try {
-      const quote = await stockQuoteService.getQuote(ticker);
-      const avgVolume = quote.volume;
-
-      // Yahoo não retorna 52w high/low diretamente na v8 API de quote.
-      // Usamos o preço atual vs preço de 1 ano atrás como proxy.
       const history1y = await withRetry(
         () => stockQuoteService.getHistory(ticker, '1y'),
-        { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000 },
+        { maxRetries: 2, initialDelay: 1000, maxDelay: 15_000, timeout: 10_000 },
       );
 
+      // Volume médio: usa o history de 6 meses (já obtido acima)
+      // Fallback: do 1y history
       if (history1y.points.length >= 2) {
+        const volumes = history1y.points
+          .map((p) => p.volume)
+          .filter((v) => v > 0);
+        if (volumes.length > 0) {
+          avgVolume = Math.round(volumes.reduce((s, v) => s + v, 0) / volumes.length);
+        }
+
         const yearCloses = history1y.points.map((p) => p.close).filter((c) => c > 0);
         const max52w = Math.max(...yearCloses);
-        if (max52w > 0) {
+        if (max52w > 0 && price > 0) {
           drawdown52w = +(((max52w - price) / max52w) * 100).toFixed(1);
         }
       }
-
-      return {
-        ticker,
-        price,
-        return3m,
-        return6m,
-        drawdownFrom52WeekHigh: drawdown52w,
-        annualizedVolatility: volatility,
-        avgVolume,
-      };
     } catch {
-      return {
-        ticker,
-        price,
-        return3m,
-        return6m,
-        drawdownFrom52WeekHigh: drawdown52w,
-        annualizedVolatility: volatility,
-        avgVolume: null,
-      };
+      // Yahoo indisponível → sem drawdown 52w
     }
+
+    return {
+      ticker,
+      price,
+      return3m,
+      return6m,
+      drawdownFrom52WeekHigh: drawdown52w,
+      annualizedVolatility: volatility,
+      avgVolume,
+    };
   }
 
   private async getPrice(ticker: string): Promise<number> {
@@ -137,7 +149,8 @@ export class MarketDataService {
     if (returns.length < 2) return 0;
 
     const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
-    const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1);
+    const variance =
+      returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1);
     const dailyVol = Math.sqrt(variance);
 
     // Anualizada: daily × sqrt(252)

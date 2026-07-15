@@ -5,6 +5,8 @@
 import JSZip from 'jszip';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';
 import { withRetry } from '../../shared/retry.ts';
+import { cvmLimiter } from './rate-limiter.ts';
+import { cvmCircuitBreaker } from './circuit-breaker.ts';
 
 // ---- Constantes de parsing CVM ----
 
@@ -326,18 +328,41 @@ export class CvmStorageService {
   }
 
   private async downloadZip(url: string): Promise<ArrayBuffer> {
-    return withRetry(async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120_000);
-      try {
-        const r = await fetch(url, {
-          headers: { 'User-Agent': this.userAgent },
-          signal: controller.signal,
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
-        return await r.arrayBuffer();
-      } finally { clearTimeout(timeout); }
-    }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000 });
+    // Circuit breaker: verifica se a CVM está acessível
+    await cvmCircuitBreaker.beforeRequest();
+
+    // Rate limit centralizado da CVM
+    await cvmLimiter.acquire();
+
+    try {
+      const result = await withRetry(async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120_000);
+        try {
+          const r = await fetch(url, {
+            headers: { 'User-Agent': this.userAgent },
+            signal: controller.signal,
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
+          return await r.arrayBuffer();
+        } finally { clearTimeout(timeout); }
+      }, {
+        maxRetries: 3,
+        initialDelay: 2000,
+        maxDelay: 30_000,
+      });
+
+      await cvmCircuitBreaker.onSuccess();
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('HTTP 5')) {
+        await cvmCircuitBreaker.onFailure('server-error', msg);
+      } else {
+        await cvmCircuitBreaker.onFailure('network-error', msg);
+      }
+      throw error;
+    }
   }
 
   private extractAccountFromCsv(

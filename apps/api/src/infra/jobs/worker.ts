@@ -13,6 +13,12 @@ import { statusInvestScraper } from '../services/statusinvest-scraper.ts';
 import { fiisScraper } from '../services/fiis-scraper.ts';
 import { stockQuoteService } from '../services/stock-quote-service.ts';
 import { redis } from '../services/redis.ts';
+import { snapshotWindow, etlWindow } from './time-window.ts';
+import { isFii } from '../../shared/ticker-utils.ts';
+import { db } from '../database/connection.ts';
+import { companies } from '../database/schema.ts';
+import { scoreWarmup } from '../services/score-warmup.ts';
+import { ALL_STOCK_TICKERS, ALL_FII_TICKERS } from '../../shared/tickers-master-list.ts';
 import type { Job } from './types.ts';
 
 export class JobWorker {
@@ -23,7 +29,25 @@ export class JobWorker {
 
     // Job de sistema: snapshot diário
     if (job.ticker === '_daily' && (job.assetType as string) === 'system') {
+      // Verifica janela de horário (madrugada para não competir com usuários)
+      if (!snapshotWindow.isOpen()) {
+        const status = snapshotWindow.getStatus();
+        console.log(`[worker] ⏰ Snapshot diário adiado: ${status.description}`);
+        // Re-agenda para daqui a 30 min (quando tentar de novo)
+        await this.store.updateJob(job.id, {
+          status: 'pending',
+          nextRunAt: new Date(Date.now() + 30 * 60_000),
+          lastError: status.description,
+        });
+        return;
+      }
       await this.runDailySnapshot(job);
+      return;
+    }
+
+    // Job de sistema: warmup de scores
+    if (job.ticker === '_warmup' && (job.assetType as string) === 'system') {
+      await this.runScoreWarmup(job);
       return;
     }
 
@@ -98,6 +122,42 @@ export class JobWorker {
 
   // ─── System Jobs ──────────────────────────────────────────────────────
 
+  private async runScoreWarmup(job: Job): Promise<void> {
+    const start = Date.now();
+    const run = await this.store.createJobRun(job.id, '_warmup');
+    await this.store.updateJob(job.id, { status: 'running' });
+
+    try {
+      const result = await scoreWarmup.warmupAll();
+
+      const nextRun = new Date(Date.now() + job.runInterval * 1000);
+      await this.store.updateJob(job.id, {
+        status: 'completed',
+        lastRunAt: new Date(),
+        nextRunAt: nextRun,
+        retryCount: 0,
+        lastError: result.stocks.failed > 0 || result.fiis.failed > 0
+          ? `${result.stocks.failed} stocks, ${result.fiis.failed} FIIs failed`
+          : null,
+      });
+      await this.store.completeJobRun(run.id, true);
+      console.log(
+        `[worker] 🔥 Warmup scores — ${(Date.now() - start)}ms ` +
+          `(${result.stocks.cached} stocks, ${result.fiis.cached} FIIs)`,
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await this.store.updateJob(job.id, {
+        status: 'failed',
+        lastError: msg.slice(0, 500),
+        lastRunAt: new Date(),
+        nextRunAt: new Date(Date.now() + 600_000),
+      });
+      await this.store.completeJobRun(run.id, false, msg);
+      console.error(`[worker] ❌ Warmup scores falhou: ${msg}`);
+    }
+  }
+
   private async runDailySnapshot(job: Job): Promise<void> {
     const start = Date.now();
     const run = await this.store.createJobRun(job.id, '_daily');
@@ -139,7 +199,7 @@ export class JobWorker {
   }
 
   private async refreshData(ticker: string, assetType: string): Promise<void> {
-    // 1. Sempre busca cotação atualizada (cache 30s no próprio service)
+    // 1. Cotação atualizada (cache 120s no próprio service, rate limit Yahoo)
     try {
       await stockQuoteService.getQuote(ticker);
     } catch {
@@ -147,41 +207,68 @@ export class JobWorker {
     }
 
     // 2. Scraping completo do StatusInvest (HTML + JSON API de proventos)
+    //    O scraper já faz cache de dividendos no Redis (24h).
+    //    Rate limit gerenciado pelo TokenBucket centralizado.
     try {
       if (assetType === 'stock') {
         const data = await statusInvestScraper.fetchStock(ticker);
 
-        // Cache de proventos (24h)
-        if (data.dividendsHistory.length > 0) {
-          await redis.setex(
-            `dividends:${ticker.toUpperCase()}`,
-            86_400,
-            JSON.stringify(data.dividendsHistory),
-          );
-        }
+        // Upsert na tabela companies para aparecer no ranking/search
+        // Usa CNPJ placeholder (CVM sync substitui pelo real depois)
+        const placeholderCnpj = `STOCK${ticker.toUpperCase().padEnd(11, '0').slice(0, 11)}`;
+        await db
+          .insert(companies)
+          .values({
+            cnpj: placeholderCnpj,
+            ticker: ticker.toUpperCase(),
+            name: data.name || ticker.toUpperCase(),
+            sector: data.sector || null,
+          })
+          .onConflictDoUpdate({
+            target: companies.ticker,
+            set: { name: data.name || ticker.toUpperCase(), sector: data.sector || null, updatedAt: new Date() },
+          })
+          .catch(() => {}); // ignora falhas (ex: constraint violation)
+
+        // Warmup do score após scraping
+        scoreWarmup.warmupSingle(ticker, 'stock').catch(() => {});
       } else {
         const data = await fiisScraper.fetchFII(ticker);
 
-        // Cache de proventos (24h)
-        if (data.dividendsHistory.length > 0) {
-          await redis.setex(
-            `dividends:${ticker.toUpperCase()}`,
-            86_400,
-            JSON.stringify(data.dividendsHistory),
-          );
-        }
+        // Upsert na tabela companies (FIIs usam CNPJ fake padrão)
+        const fakeCnpj = `FII${ticker.toUpperCase().padEnd(11, '0').slice(0, 11)}`;
+        await db
+          .insert(companies)
+          .values({
+            cnpj: fakeCnpj,
+            ticker: ticker.toUpperCase(),
+            name: data.name || ticker.toUpperCase(),
+            sector: null,
+          })
+          .onConflictDoUpdate({
+            target: companies.ticker,
+            set: { name: data.name || ticker.toUpperCase(), updatedAt: new Date() },
+          })
+          .catch(() => {});
 
-        // Cache de P/VP (24h)
+        // Cache adicional específico de FIIs usado pela API
         if (data.pvp > 0) {
           await redis.setex(
             `fii:pvp:${ticker.toUpperCase()}`,
             86_400,
             String(data.pvp),
-          );
+          ).catch(() => {});
         }
 
         // Cache do FII completo (24h) — usado pela API
-        await redis.setex(`fii:full:${ticker.toUpperCase()}`, 86_400, JSON.stringify(data));
+        await redis.setex(
+          `fii:full:${ticker.toUpperCase()}`,
+          86_400,
+          JSON.stringify(data),
+        ).catch(() => {});
+
+        // Warmup do score após scraping
+        scoreWarmup.warmupSingle(ticker, 'fii').catch(() => {});
       }
     } catch {
       // StatusInvest pode falhar — dados anteriores permanecem no cache

@@ -193,8 +193,8 @@ export class PgCompanyRepository implements ICompanyRepository {
         .insert(companies)
         .values({ cnpj, ticker, name, sector: null, createdAt: now, updatedAt: now })
         .onConflictDoUpdate({
-          target: companies.cnpj,
-          set: { ticker, name, updatedAt: now },
+          target: companies.ticker,
+          set: { cnpj, name, updatedAt: now },
         });
     } catch (err: unknown) {
       // Enriquecer o erro com a mensagem original do PostgreSQL

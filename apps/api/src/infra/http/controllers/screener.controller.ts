@@ -114,13 +114,13 @@ export async function screenerController(
       cf.source
     FROM companies c
     INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-    WHERE c.ticker NOT LIKE '%11' AND LENGTH(c.ticker) >= 5
+    WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11')) AND LENGTH(c.ticker) >= 5
   `;
 
   if (filters.sector) query = sql`${query} AND c.sector ILIKE ${`%${filters.sector}%`}`;
   if (filters.year) query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
 
-  query = sql`${query} ORDER BY c.ticker, cf.reference_date DESC LIMIT 100`;
+  query = sql`${query} ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC LIMIT 100`;
 
   const rows = await db.execute(query);
   const rawData = rows as unknown as Record<string, unknown>[];

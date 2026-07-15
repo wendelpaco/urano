@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { asArray, useRanking, type Asset } from "@/lib/queries";
+import { asArray, useRanking, useLazySearch, type Asset, type LazyAsset } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { Input } from "@/components/ui/input";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtPct } from "@/lib/format";
 import { EmptyState } from "@/components/app/states";
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/market/search")({
   head: () => ({ meta: [{ title: "Pesquisa — Market" }] }),
@@ -19,6 +19,14 @@ function SearchPage() {
   const fiis = useRanking({ type: "fii", limit: 500 });
   const navigate = useNavigate();
 
+  // Lazy search: fallback quando o ranking está vazio
+  const lazyQ = useLazySearch(q.trim().length >= 2 ? q.trim() : "");
+  const lazyResults = useMemo(
+    () => asArray<LazyAsset>(lazyQ.data?.results ?? lazyQ.data),
+    [lazyQ.data],
+  );
+  const isScraping = lazyQ.data?.source === "live_scrape" || lazyQ.isLoading;
+
   const all = useMemo(
     () => [
       ...asArray<Asset>(stocks.data).map((a) => ({ ...a, type: a.type ?? "stock" })),
@@ -30,7 +38,9 @@ function SearchPage() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return all.slice(0, 40);
-    return all
+
+    // Primeiro tenta ranking cache
+    const fromRanking = all
       .filter(
         (a) =>
           a.ticker?.toLowerCase().includes(needle) ||
@@ -38,7 +48,25 @@ function SearchPage() {
           a.sector?.toLowerCase().includes(needle),
       )
       .slice(0, 80);
-  }, [all, q]);
+
+    // Se ranking tem resultados, usa eles
+    if (fromRanking.length > 0) return fromRanking;
+
+    // Fallback: lazy search (scraping ao vivo)
+    if (lazyResults.length > 0) {
+      return lazyResults.map((r) => ({
+        ticker: r.ticker,
+        name: r.name,
+        type: r.type,
+        price: r.price,
+        changePct: r.changePct,
+        score: r.score,
+        sector: r.sector,
+      })) as Asset[];
+    }
+
+    return [];
+  }, [all, q, lazyResults]);
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -56,8 +84,20 @@ function SearchPage() {
             />
           </div>
         </div>
-        {filtered.length === 0 ? (
-          <EmptyState title="Sem resultados" description="Ajuste a busca." />
+        {isScraping && q.trim().length >= 2 ? (
+          <div className="flex items-center gap-3 px-4 py-8 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Buscando dados em tempo real...</span>
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title="Sem resultados"
+            description={
+              q.trim().length >= 2
+                ? `Nada encontrado para "${q}". Tente um ticker como PETR4 ou HGLG11.`
+                : "Digite um ticker, nome ou setor para buscar."
+            }
+          />
         ) : (
           <div className="divide-y divide-border">
             {filtered.map((a) => (
@@ -66,7 +106,7 @@ function SearchPage() {
                 onClick={() =>
                   navigate({
                     to: "/research/$type/$ticker",
-                    params: { type: a.type, ticker: a.ticker },
+                    params: { type: a.type || "stock", ticker: a.ticker },
                   })
                 }
                 className="w-full flex items-center gap-3 px-3 py-2 hover:bg-surface-2 text-left"

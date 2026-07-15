@@ -5,7 +5,7 @@ import { openApiController } from '../controllers/docs.controller.ts';
 import { rebalanceController } from '../controllers/rebalance.controller.ts';
 import { listCompaniesController, listSectorsController, getCompanyByTickerController } from '../controllers/companies.controller.ts';
 import { getLatestFundamentalsController, getFundamentalsHistoryController } from '../controllers/fundamentals.controller.ts';
-import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController, getCorporateEventsController } from '../controllers/stocks.controller.ts';
+import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController, getCorporateEventsController, getTechnicalIndicatorsController } from '../controllers/stocks.controller.ts';
 import { getDividendsController } from '../controllers/dividends.controller.ts';
 import { listFiisController, getFiiByTickerController, getFiiHistoryController, fiiScreenerController, getFiiOperationalController } from '../controllers/fiis.controller.ts';
 import { listMacroController, getMacroSeriesController } from '../controllers/macro.controller.ts';
@@ -18,8 +18,10 @@ import {
   getAllocationController,
   compareController,
   getValidationController,
+  searchController,
 } from '../controllers/analysis.controller.ts';
 import { getDataHealthController } from '../controllers/health.controller.ts';
+import { scraperDiagnosticsController } from '../controllers/diagnostics.controller.ts';
 import { contributionController } from '../controllers/contribution.controller.ts';
 import {
   createWalletController,
@@ -68,6 +70,7 @@ export async function routesPlugin(
   app.get('/stocks/:ticker/history', getStockHistoryController);
   app.get('/stocks/:ticker/stats', getStockStatsController);
   app.get('/stocks/:ticker/corporate-events', getCorporateEventsController);
+  app.get('/stocks/:ticker/indicators', getTechnicalIndicatorsController);
   app.get('/stocks/quotes', getBatchQuotesController);
 
   // Dividends
@@ -94,7 +97,8 @@ export async function routesPlugin(
   // Screener
   app.get('/screener', screenerController);
 
-  // Analysis (Onda 2c)
+  // Analysis
+  app.get('/search', searchController);
   app.get('/analysis/stocks/:ticker', getStockAnalysisController);
   app.get('/analysis/fiis/:ticker', getFiiAnalysisController);
   app.get('/analysis/ranking', getRankingController);
@@ -103,6 +107,7 @@ export async function routesPlugin(
   app.post('/analysis/contribution', contributionController);
   app.get('/analysis/validation', getValidationController);
 
-  // Data health
+  // Data health & diagnostics
   app.get('/health/data', getDataHealthController);
+  app.get('/health/scraper', scraperDiagnosticsController);
 }

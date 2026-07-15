@@ -21,6 +21,7 @@ import { PgCompanyRepository } from '../database/pg-company-repository.ts';
 import { checkDatabaseConnection, closeDatabaseConnection } from '../database/connection.ts';
 import type { ICompanyRepository } from '../../core/repositories/company-repository.ts';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';
+import { ALL_STOCK_TICKERS } from '../../shared/tickers-master-list.ts';
 
 // ---------------------------------------------------------------------------
 // Implementação de fallback do repositório (apenas loga, sem persistir).
@@ -69,37 +70,9 @@ class ConsoleCompanyRepository implements ICompanyRepository {
 
 // ---------------------------------------------------------------------------
 // Lista completa de tickers para o modo --all
+// (importada de tickers-master-list.ts — fonte única)
 // ---------------------------------------------------------------------------
-const ALL_TICKERS = [
-  // Bancos
-  'ITUB4', 'BBDC4', 'BBAS3', 'SANB11', 'BPAC11',
-  // Energia
-  'ELET3', 'CPLE6', 'EGIE3', 'CMIG4', 'TAEE11', 'ENGI11', 'ENEV3', 'ALUP11', 'EQTL3', 'CPFE3',
-  // Mineração / Siderurgia
-  'VALE3', 'GGBR4', 'CSNA3', 'USIM5', 'GOAU4', 'CMIN3',
-  // Petróleo
-  'PETR4', 'PRIO3', 'BRAV3', 'RECV3',
-  // Alimentos / Bebidas
-  'ABEV3', 'JBSS3', 'BRFS3', 'MDIA3', 'MRFG3', 'BEEF3',
-  // Saúde
-  'HAPV3', 'RDOR3', 'FLRY3', 'QUAL3', 'DASA3',
-  // Varejo
-  'MGLU3', 'LREN3', 'NTCO3', 'ASAI3', 'GMAT3', 'BHIA3', 'PETZ3', 'ARZZ3',
-  // Indústria
-  'WEGE3', 'EMBR3', 'TUPY3', 'MYPK3', 'ROMI3',
-  // Transporte
-  'RAIL3', 'CCRO3', 'STBP3', 'ECOR3',
-  // Papel / Celulose
-  'SUZB3', 'KLBN11',
-  // Telecom
-  'VIVT3', 'TIMS3',
-  // Construção / Imob
-  'CYRE3', 'MULT3', 'MRVE3', 'EZTC3', 'DIRR3',
-  // Tecnologia
-  'TOTS3', 'LWSA3',
-  // Outros
-  'RADL3', 'RENT3', 'SMTO3', 'SLCE3', 'VAMO3',
-];
+const ALL_TICKERS = ALL_STOCK_TICKERS;
 
 // ---------------------------------------------------------------------------
 // Entrypoint

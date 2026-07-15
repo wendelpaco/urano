@@ -8,7 +8,7 @@
 ###############################################################################
 
 @baseUrl = http://localhost:3000/v1
-@apiKey  = ur_9a0250d6317a_75d6d35ef3ac_ba54074251bc_e8e9f67f316f
+@apiKey  = ur_XXXXXXXXXXXX_XXXXXXXXXXXX_XXXXXXXXXXXX_XXXXXXXXXXXX
 
 ###############################################################################
 # 0. HEALTHCHECK (público)
