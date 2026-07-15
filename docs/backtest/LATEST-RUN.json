@@ -1,0 +1,143 @@
+{
+  "frozenAt": "2026-07-15T19:10:10.142Z",
+  "scoreVersion": "v1",
+  "staticVerdict": "quality-filter",
+  "stockStrategy": {
+    "runId": "944e6e60-ac85-41d8-8a85-24eee0c8fbb0",
+    "scoreVersion": "v1",
+    "n": 10,
+    "avgPortfolio": 23.18,
+    "avgUniverse": 24.01,
+    "avgIbov": 9.03,
+    "winYearsVsUniverse": 7,
+    "winYearsVsIbov": 7,
+    "totalYears": 10,
+    "ibovYears": 10,
+    "byYear": [
+      {
+        "year": 2015,
+        "portfolioReturn": 75.43,
+        "universeReturn": 74.06,
+        "ibovReturn": 0
+      },
+      {
+        "year": 2016,
+        "portfolioReturn": 23.62,
+        "universeReturn": 69.74,
+        "ibovReturn": 7.22
+      },
+      {
+        "year": 2017,
+        "portfolioReturn": 13.25,
+        "universeReturn": 23.74,
+        "ibovReturn": 30.71
+      },
+      {
+        "year": 2018,
+        "portfolioReturn": 57.04,
+        "universeReturn": 49.76,
+        "ibovReturn": 16.85
+      },
+      {
+        "year": 2019,
+        "portfolioReturn": 34.6,
+        "universeReturn": 24.71,
+        "ibovReturn": 30.28
+      },
+      {
+        "year": 2020,
+        "portfolioReturn": -9.93,
+        "universeReturn": -14.67,
+        "ibovReturn": -0.01
+      },
+      {
+        "year": 2021,
+        "portfolioReturn": 0.91,
+        "universeReturn": -5.85,
+        "ibovReturn": -12.35
+      },
+      {
+        "year": 2022,
+        "portfolioReturn": 34.88,
+        "universeReturn": 21.82,
+        "ibovReturn": 2.36
+      },
+      {
+        "year": 2023,
+        "portfolioReturn": -21.86,
+        "universeReturn": -20,
+        "ibovReturn": 24.74
+      },
+      {
+        "year": 2024,
+        "portfolioReturn": 23.88,
+        "universeReturn": 16.8,
+        "ibovReturn": -9.47
+      }
+    ]
+  },
+  "fiiBacktest": {
+    "runId": "4be7c04b-377b-4eb0-9988-fb813d15094c",
+    "createdAt": "2026-07-15T19:06:34.288Z",
+    "observations": 155,
+    "tickers": 31,
+    "byYear": [
+      {
+        "year": 2021,
+        "avgTotal": -3.02,
+        "avgPrice": -3.02,
+        "avgDiv": 0,
+        "n": 31
+      },
+      {
+        "year": 2022,
+        "avgTotal": -3.1,
+        "avgPrice": -3.1,
+        "avgDiv": 0,
+        "n": 31
+      },
+      {
+        "year": 2023,
+        "avgTotal": 6.4,
+        "avgPrice": 6.4,
+        "avgDiv": 0,
+        "n": 31
+      },
+      {
+        "year": 2024,
+        "avgTotal": -15.63,
+        "avgPrice": -15.63,
+        "avgDiv": 0,
+        "n": 31
+      },
+      {
+        "year": 2025,
+        "avgTotal": 19.18,
+        "avgPrice": 8,
+        "avgDiv": 11.17,
+        "n": 31
+      }
+    ],
+    "dyPredictsNext": {
+      "n": 124,
+      "correlation": 0,
+      "interpretation": "Sem relação clara entre DY passado e total return futuro."
+    },
+    "dataQuality": {
+      "freeSourcesOnly": true,
+      "priceSource": "yahoo",
+      "dividendSource": "statusinvest_or_db",
+      "scoreNote": "Score gravado é o atual (não histórico). Correlação DY→TR seguinte é look-ahead free."
+    }
+  },
+  "note": "Snapshot de runs persistidos. Use --apply para alinhar topN em score-validation.data.ts.",
+  "suggestedTopN": {
+    "n": 10,
+    "avgPortfolio": 23.18,
+    "avgMarket": 24.01,
+    "winYears": 7,
+    "totalYears": 10,
+    "avgIbov": 9.03,
+    "winYearsVsIbov": 7
+  }
+}

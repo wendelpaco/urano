@@ -26,6 +26,8 @@ export interface FiiCvmRow {
   netAssets: number | null;
   sharesOutstanding: number | null;
   navPerShare: number | null;
+  /** Ticker inferido do ISIN (BRxxxxCTF…) quando presente no CSV geral */
+  isinTicker: string | null;
   raw: Record<string, string>;
 }
 
@@ -113,7 +115,9 @@ function mapRow(headers: string[], cells: string[]): FiiCvmRow | null {
     col(
       headers,
       cells,
+      'COTAS_EMITIDAS',
       'QUANTIDADE_COTAS',
+      'QUANTIDADE_COTAS_EMITIDAS',
       'QT_COTAS',
       'NR_COTAS',
       'TOTAL_COTAS',
@@ -121,7 +125,14 @@ function mapRow(headers: string[], cells: string[]): FiiCvmRow | null {
   );
 
   let navPerShare = parseBrNumber(
-    col(headers, cells, 'VALOR_COTA', 'VL_COTA', 'VALOR_PATRIMONIAL_COTA'),
+    col(
+      headers,
+      cells,
+      'VALOR_PATRIMONIAL_COTAS',
+      'VALOR_PATRIMONIAL_COTA',
+      'VALOR_COTA',
+      'VL_COTA',
+    ),
   );
   if (
     navPerShare == null &&
@@ -131,6 +142,11 @@ function mapRow(headers: string[], cells: string[]): FiiCvmRow | null {
   ) {
     navPerShare = netAssets / sharesOutstanding;
   }
+
+  // ISIN FII B3: BR + 4 chars + CTF + dígito(s) → ticker = root + 11
+  const isin = col(headers, cells, 'CODIGO_ISIN', 'ISIN') ?? '';
+  const isinMatch = isin.toUpperCase().match(/^BR([A-Z0-9]{4})CTF/);
+  const isinTicker = isinMatch ? `${isinMatch[1]}11` : null;
 
   const raw: Record<string, string> = {};
   headers.forEach((h, i) => {
@@ -144,7 +160,33 @@ function mapRow(headers: string[], cells: string[]): FiiCvmRow | null {
     netAssets,
     sharesOutstanding,
     navPerShare,
+    isinTicker,
     raw,
+  };
+}
+
+/** Prefer latin1 (CVM) — fallback utf-8. */
+async function zipCsvText(
+  zip: JSZip,
+  name: string,
+): Promise<string> {
+  const bytes = await zip.files[name]!.async('uint8array');
+  // CVM ships ISO-8859-1 / Windows-1252 (Bun TextDecoder typings only list utf-*)
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!);
+  return s;
+}
+
+function mergeFiiRows(into: FiiCvmRow, from: FiiCvmRow): FiiCvmRow {
+  return {
+    cnpj: into.cnpj,
+    referenceDate: into.referenceDate,
+    fundName: into.fundName ?? from.fundName,
+    netAssets: into.netAssets ?? from.netAssets,
+    sharesOutstanding: into.sharesOutstanding ?? from.sharesOutstanding,
+    navPerShare: into.navPerShare ?? from.navPerShare,
+    isinTicker: into.isinTicker ?? from.isinTicker,
+    raw: { ...from.raw, ...into.raw },
   };
 }
 
@@ -185,36 +227,46 @@ export class CvmFiiService {
       (n) => n.toLowerCase().endsWith('.csv') && !zip.files[n]!.dir,
     );
 
-    // Prefer "geral" / "resumo" / first non-ativo_passivo
-    const preferred =
-      names.find((n) => /geral|resumo|complemento|geral/i.test(n)) ??
-      names.find((n) => !/ativo|passivo|imovel|imóvel/i.test(n)) ??
-      names[0];
-
-    if (!preferred) {
+    // complemento = PL/NAV mensal; geral = nome + ISIN. Mesclar ambos.
+    // Evitar só "complemento" (bug: match regex pegava complemento antes de geral).
+    const order = [
+      ...names.filter((n) => /complemento/i.test(n)),
+      ...names.filter((n) => /geral|resumo/i.test(n)),
+      ...names.filter(
+        (n) =>
+          !/complemento|geral|resumo|ativo|passivo|imovel|imóvel/i.test(n),
+      ),
+    ];
+    // unique preserve order
+    const files = [...new Set(order.length > 0 ? order : names)];
+    if (files.length === 0) {
       throw new Error(`ZIP CVM FII ${year} sem CSV utilizável`);
     }
 
-    const text = await zip.files[preferred]!.async('string');
-    // CVM files often Windows-1252; if mojibake, still parse numbers/CNPJ
-    const { headers, rows } = parseCsv(text);
-    if (headers.length === 0) {
-      throw new Error(`CSV CVM FII vazio em ${preferred}`);
+    const byKey = new Map<string, FiiCvmRow>();
+    for (const file of files) {
+      const text = await zipCsvText(zip, file);
+      const { headers, rows } = parseCsv(text);
+      if (headers.length === 0) continue;
+      let mappedCount = 0;
+      for (const cells of rows) {
+        const mapped = mapRow(headers, cells);
+        if (!mapped) continue;
+        mappedCount += 1;
+        const key = `${mapped.cnpj}|${mapped.referenceDate}`;
+        const prev = byKey.get(key);
+        byKey.set(key, prev ? mergeFiiRows(prev, mapped) : mapped);
+      }
+      console.log(
+        `[cvm-fii] ${year}: +${mappedCount} linhas de ${file} (merge keys=${byKey.size})`,
+      );
     }
 
-    const out: FiiCvmRow[] = [];
-    const seen = new Set<string>();
-    for (const cells of rows) {
-      const mapped = mapRow(headers, cells);
-      if (!mapped) continue;
-      const key = `${mapped.cnpj}|${mapped.referenceDate}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(mapped);
-    }
-
+    const out = [...byKey.values()];
+    const withName = out.filter((r) => r.fundName).length;
+    const withNav = out.filter((r) => r.navPerShare != null).length;
     console.log(
-      `[cvm-fii] ${year}: ${out.length} fundos/períodos de ${preferred}`,
+      `[cvm-fii] ${year}: total ${out.length} (nome=${withName}, nav=${withNav})`,
     );
     return out;
   }
@@ -231,6 +283,9 @@ export class CvmFiiService {
     const cnpjToTicker = new Map(
       companyRows.map((c) => [c.cnpj, c.ticker.toUpperCase()]),
     );
+    const knownTickers = new Set(
+      companyRows.map((c) => c.ticker.toUpperCase()),
+    );
 
     let upserted = 0;
     let withTicker = 0;
@@ -239,7 +294,15 @@ export class CvmFiiService {
     for (let i = 0; i < rows.length; i += chunk) {
       const slice = rows.slice(i, i + chunk);
       const values = slice.map((r) => {
-        const ticker = cnpjToTicker.get(r.cnpj) ?? null;
+        // 1) CNPJ já real em companies  2) ISIN → ticker se estiver no seed
+        let ticker = cnpjToTicker.get(r.cnpj) ?? null;
+        if (
+          !ticker &&
+          r.isinTicker &&
+          knownTickers.has(r.isinTicker.toUpperCase())
+        ) {
+          ticker = r.isinTicker.toUpperCase();
+        }
         if (ticker) withTicker += 1;
         return {
           cnpj: r.cnpj,

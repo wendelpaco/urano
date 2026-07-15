@@ -75,9 +75,27 @@ async function main() {
     const t = freeze.suggestedTopN;
     const today = new Date().toISOString().slice(0, 10);
 
-    // Replace topN block
-    src = src.replace(
-      /topN:\s*\{[^}]+\}/,
+    // Só o objeto SCORE_VALIDATION (nunca a interface TypeScript)
+    const constMarker = 'export const SCORE_VALIDATION';
+    const constIdx = src.indexOf(constMarker);
+    if (constIdx < 0) {
+      console.error('SCORE_VALIDATION const não encontrado — abort --apply');
+      process.exit(1);
+    }
+    const head = src.slice(0, constIdx);
+    let body = src.slice(constIdx);
+
+    // topN com números literais (não tipos TypeScript)
+    const topNRe =
+      /topN:\s*\{\s*n:\s*[\d.]+,\s*avgPortfolio:\s*[\d.]+,\s*avgMarket:\s*[\d.]+,\s*winYears:\s*[\d.]+,\s*totalYears:\s*[\d.]+,\s*\}/;
+    if (!topNRe.test(body)) {
+      console.error(
+        'Bloco topN numérico não encontrado em SCORE_VALIDATION — abort --apply',
+      );
+      process.exit(1);
+    }
+    body = body.replace(
+      topNRe,
       `topN: {
     n: ${t.n},
     avgPortfolio: ${t.avgPortfolio},
@@ -86,20 +104,12 @@ async function main() {
     totalYears: ${t.totalYears},
   }`,
     );
-    src = src.replace(
+    body = body.replace(
       /validatedAt:\s*'[^']*'/,
       `validatedAt: '${today}'`,
     );
 
-    // Annotate summary with freeze note if not present
-    if (!src.includes('LATEST-RUN.json')) {
-      src = src.replace(
-        /summary:\s*'([^']*)'/,
-        (_m, prev: string) =>
-          `summary:\n    '${prev} Números topN alinhados ao run persistido (ver docs/backtest/LATEST-RUN.json; freeze ${today}).'`,
-      );
-    }
-
+    src = head + body;
     writeFileSync(dataFile, src);
     console.log('✅ SCORE_VALIDATION.topN atualizado em score-validation.data.ts');
     console.log(JSON.stringify(t, null, 2));

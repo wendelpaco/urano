@@ -1,19 +1,19 @@
 /**
  * ScoreValidation — resultado da validação do score contra retornos históricos.
- * Preenchido manualmente a partir do relatório em docs/backtest/.
+ * Preenchido a partir do relatório em docs/backtest/ e de `bun run freeze-verdict --apply`.
  * Consumido por GET /v1/analysis/validation e pela tool MCP explain_score.
  */
 
 export interface ScoreValidation {
   scoreVersion: string;
-  validatedAt: string | null;          // "YYYY-MM-DD" ou null se pendente
+  validatedAt: string | null; // "YYYY-MM-DD" ou null se pendente
   yearsTested: number[];
   verdict: 'edge' | 'quality-filter' | 'pending';
-  summary: string;                     // 2-4 frases em português, linguagem de leigo
+  summary: string; // 2-4 frases em português, linguagem de leigo
   topN: {
     n: number;
-    avgPortfolio: number;              // % média anual da estratégia
-    avgMarket: number;                 // % média anual do universo coberto (não IBOV)
+    avgPortfolio: number; // % média anual da estratégia
+    avgMarket: number; // % média anual do universo coberto (não IBOV)
     winYears: number;
     totalYears: number;
   } | null;
@@ -38,26 +38,26 @@ export interface ScoreValidation {
 
 export const SCORE_VALIDATION: ScoreValidation = {
   scoreVersion: 'v1',
-  validatedAt: '2026-07-08',
+  validatedAt: '2026-07-15',
   yearsTested: [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
   verdict: 'quality-filter',
   summary:
-    'Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi 28,4% ao ano contra 25,4% da média do mercado (universo coberto) — uma vantagem pequena, e a estratégia só ganhou em 6 dos 10 anos testados. O score não ordena bem as melhores ações (os decis de score mais alto não renderam mais que os intermediários), mas a faixa de score mais baixa teve retorno nitidamente pior que as demais, então ele funciona melhor como filtro de empresas fracas do que como sinal de retorno esperado. A média do universo NÃO é o IBOV; o endpoint de validação anexa retornos reais do IBOV (^BVSP via Yahoo) quando a série está disponível.',
+    'Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi 23,2% ao ano contra 24,0% da média do universo coberto e 9,0% do IBOV — a estratégia ganhou do universo em 7/10 anos e do IBOV em 7/10. O score não ordena bem as melhores ações (correlação score×retorno ~0), mas a faixa mais baixa costuma ir pior; funciona melhor como filtro de qualidade do que como sinal de excess return. topN alinhado ao run persistido (docs/backtest/LATEST-RUN.json; freeze 2026-07-15).',
   topN: {
     n: 10,
-    avgPortfolio: 28.4,
-    avgMarket: 25.4,
-    winYears: 6,
+    avgPortfolio: 23.18,
+    avgMarket: 24.01,
+    winYears: 7,
     totalYears: 10,
   },
   pillarCorrelations: {
-    score: -0.047,
-    valuation: 0.017,
-    profitability: -0.179,
+    score: -0.099,
+    valuation: -0.022,
+    profitability: -0.182,
     growth: -0.094,
     dividends: 0,
-    quality: -0.026,
-    momentum: 0,
+    quality: -0.027,
+    momentum: -0.002,
   },
   ibovBenchmark: {
     source: 'yahoo',

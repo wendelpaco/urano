@@ -101,10 +101,11 @@ Checklist honesto alinhado ao código (2026-07, pós ondas de segurança + dados
 - [x] Scripts pipeline + backup/restore  
 - [x] Workers dados free documentados  
 - [x] Backtest ações/FII + IBOV no código  
-- [ ] Pipeline `--full` rodado e `LATEST-RUN.json` no seu ambiente  
+- [x] Pipeline `--full` rodado e `LATEST-RUN.json` no ambiente local (2026-07-15)  
 - [ ] Restore testado 1×  
 - [ ] Staging TLS  
 - [x] Integração CI com Postgres (workflow + smoke)  
+
 
 
 ---
