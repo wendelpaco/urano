@@ -39,6 +39,31 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
 
+  # Optional API process (profile "full"). Default `compose up` stays postgres+redis only.
+  # Build context is monorepo root (lockfile + workspace layout).
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    container_name: urano-api
+    restart: unless-stopped
+    profiles: ["full"]
+    env_file: .env
+    ports:
+      - "3000:3000"
+    environment:
+      # Override host-oriented URLs from .env so the container hits compose services
+      DATABASE_URL: postgres://urano:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/urano_finbot
+      REDIS_URL: redis://:${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}@redis:6379
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - urano-net
+
 volumes:
   pgdata:
     driver: local

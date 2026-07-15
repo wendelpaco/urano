@@ -1,0 +1,20 @@
+# Build context is monorepo root (see apps/api/Dockerfile and docker-compose).
+# Keep this in sync with apps/api/.dockerignore patterns where relevant.
+
+node_modules
+**/node_modules
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+apps/api/tests
+apps/web
+docs
+*.md
+!apps/api/package.json
+dist
+coverage
+.DS_Store
+API.http
+**/*.test.ts

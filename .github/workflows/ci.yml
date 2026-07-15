@@ -42,4 +42,3 @@ jobs:
         with:
           scan-args: |-
             --lockfile=./bun.lock
-        continue-on-error: true

@@ -353,10 +353,14 @@ describe('listWalletsController — always scoped to the caller', () => {
 describe('createWalletController — never trusts a client-supplied userId', () => {
   test('derives the wallet owner from request.apiKeyId, ignoring any userId in the body', async () => {
     const { db, captured } = makeInstrumentedDb([]);
+    // Wallet create + security audit both call db.insert. Capture only the
+    // wallet row (has userId); ignore audit_log inserts.
     let insertedValues: unknown;
     (db as { insert: unknown }).insert = () => ({
       values: (values: unknown) => {
-        insertedValues = values;
+        if (values && typeof values === 'object' && 'userId' in (values as object)) {
+          insertedValues = values;
+        }
         return { returning: async () => [{ id: WALLET_ID, ...(values as object) }] };
       },
     });

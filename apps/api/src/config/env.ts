@@ -26,6 +26,12 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:8080'),
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+
+  // Env strings are "true"/"false"; default keeps scheduler on in all envs.
+  SCHEDULER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -37,6 +43,7 @@ function parseEnv(): Env {
     REDIS_URL: process.env.REDIS_URL,
     CORS_ORIGIN: process.env.CORS_ORIGIN,
     NODE_ENV: process.env.NODE_ENV,
+    SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED,
   };
 
   const result = envSchema.safeParse(raw);

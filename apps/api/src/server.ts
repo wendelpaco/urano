@@ -94,7 +94,7 @@ app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
 const jobStore = new JobStore();
 const jobWorker = new JobWorker(jobStore);
 const scheduler = new JobScheduler(jobStore, jobWorker, {
-  enabled: true, checkInterval: 30_000, maxConcurrentJobs: 3, staleTimeout: 300_000,
+  enabled: env.SCHEDULER_ENABLED, checkInterval: 30_000, maxConcurrentJobs: 3, staleTimeout: 300_000,
 });
 scheduler.start().catch((err) => console.warn('[scheduler] Falha ao iniciar:', err.message));
 

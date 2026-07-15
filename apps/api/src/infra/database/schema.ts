@@ -13,6 +13,7 @@ import {
   index,
   check,
   boolean,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -305,6 +306,28 @@ export const apiKeys = pgTable(
   },
   (table) => [
     index('idx_api_keys_key').on(table.key),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// security_audit_log — Persistência de eventos de segurança (key/wallet mutations)
+// ═══════════════════════════════════════════════════════════════════════════
+export const securityAuditLog = pgTable(
+  'security_audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    action: varchar('action', { length: 64 }).notNull(),
+    // Never store plaintext API key here — only the key id when known.
+    apiKeyId: uuid('api_key_id'),
+    details: jsonb('details').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_security_audit_log_action').on(table.action),
+    index('idx_security_audit_log_api_key_id').on(table.apiKeyId),
+    index('idx_security_audit_log_created_at').on(table.createdAt.desc()),
   ],
 );
 

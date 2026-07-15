@@ -1,0 +1,18 @@
+# Exclude heavy / secret paths from API-related Docker builds.
+# Note: when build context is the monorepo root (compose + Dockerfile), Docker
+# also reads the repo-root .dockerignore — keep both in sync if you change either.
+
+node_modules
+**/node_modules
+.env
+.env.*
+!.env.example
+tests
+**/*.test.ts
+.git
+.gitignore
+*.md
+API.http
+dist
+coverage
+.DS_Store
