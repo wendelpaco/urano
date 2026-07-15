@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+const isProd = process.env.NODE_ENV === 'production';
+
+/**
+ * Em produção não aceitamos defaults com credenciais de dev — o processo
+ * deve falhar cedo se DATABASE_URL / REDIS_URL não estiverem definidas.
+ */
 const envSchema = z.object({
   PORT: z
     .string()
@@ -7,17 +13,19 @@ const envSchema = z.object({
     .transform(Number)
     .pipe(z.number().int().positive()),
 
-  DATABASE_URL: z
-    .string()
-    .default('postgres://urano:urano_dev@localhost:5432/urano_finbot'),
+  DATABASE_URL: isProd
+    ? z.string().min(1, 'DATABASE_URL é obrigatória em produção')
+    : z
+        .string()
+        .default('postgres://urano:urano_dev@localhost:5432/urano_finbot'),
 
-  REDIS_URL: z
-    .string()
-    .default('redis://localhost:6379'),
+  REDIS_URL: isProd
+    ? z.string().min(1, 'REDIS_URL é obrigatória em produção')
+    : z.string().default('redis://localhost:6379'),
 
-  CORS_ORIGIN: z
-    .string()
-    .default('http://localhost:8080'),
+  CORS_ORIGIN: z.string().default('http://localhost:8080'),
+
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -28,6 +36,7 @@ function parseEnv(): Env {
     DATABASE_URL: process.env.DATABASE_URL,
     REDIS_URL: process.env.REDIS_URL,
     CORS_ORIGIN: process.env.CORS_ORIGIN,
+    NODE_ENV: process.env.NODE_ENV,
   };
 
   const result = envSchema.safeParse(raw);

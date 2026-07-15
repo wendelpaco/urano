@@ -6,8 +6,8 @@ import { routesPlugin } from './infra/http/routes/index.ts';
 import { JobStore } from './infra/jobs/job-store.ts';
 import { JobWorker } from './infra/jobs/worker.ts';
 import { JobScheduler } from './infra/jobs/scheduler.ts';
-import { checkRedisConnection } from './infra/services/redis.ts';
-import { checkDatabaseConnection } from './infra/database/connection.ts';
+import { checkRedisConnection, redis } from './infra/services/redis.ts';
+import { checkDatabaseConnection, closeDatabaseConnection } from './infra/database/connection.ts';
 import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
 
 // ─── Timestamp GMT-3 (horário de Brasília) ─────────────────────────────
@@ -81,7 +81,13 @@ app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
     return;
   }
   app.log.error(error);
-  reply.status(fe.statusCode ?? 500).send({ error: 'InternalServerError', message: fe.message ?? 'Erro interno.' });
+  const status = fe.statusCode ?? 500;
+  // Em produção nunca vazamos mensagem interna/stack para o cliente.
+  const message =
+    status >= 500 && !isDev
+      ? 'Erro interno.'
+      : (fe.message ?? 'Erro interno.');
+  reply.status(status).send({ error: 'InternalServerError', message });
 });
 
 // ─── Job Scheduler ──────────────────────────────────────────────────────
@@ -92,8 +98,23 @@ const scheduler = new JobScheduler(jobStore, jobWorker, {
 });
 scheduler.start().catch((err) => console.warn('[scheduler] Falha ao iniciar:', err.message));
 
-process.on('SIGINT', async () => { await scheduler.stop(); await app.close(); process.exit(0); });
-process.on('SIGTERM', async () => { await scheduler.stop(); await app.close(); process.exit(0); });
+async function shutdown(signal: string) {
+  app.log.info(`[shutdown] ${signal} recebido — encerrando…`);
+  try {
+    await scheduler.stop();
+    await app.close();
+    await closeDatabaseConnection().catch(() => {});
+    try {
+      await redis.quit();
+    } catch {
+      redis.disconnect();
+    }
+  } finally {
+    process.exit(0);
+  }
+}
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 
 // ─── Start ──────────────────────────────────────────────────────────────
 try {

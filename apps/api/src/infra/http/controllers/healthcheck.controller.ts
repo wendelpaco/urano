@@ -1,49 +1,30 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { rateLimiterRegistry } from '../../services/rate-limiter.ts';
-import {
-  statusInvestCircuitBreaker,
-  yahooCircuitBreaker,
-  cvmCircuitBreaker,
-} from '../../services/circuit-breaker.ts';
-import { userAgentPool } from '../../services/user-agent-pool.ts';
-import { etlWindow, snapshotWindow } from '../../jobs/time-window.ts';
+import { checkDatabaseConnection } from '../../database/connection.ts';
+import { checkRedisConnection } from '../../services/redis.ts';
 
+/**
+ * GET /v1/healthcheck — público (liveness/readiness mínimo).
+ *
+ * Não expõe circuit breakers, rate limiters internos nem janelas de ETL:
+ * isso ficou em rotas autenticadas (/health/data, /health/scraper).
+ */
 export async function healthcheckController(
   _request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const uptimeSeconds = process.uptime();
-
-  const [siState, yhState, cvmState] = await Promise.all([
-    statusInvestCircuitBreaker.currentState(),
-    yahooCircuitBreaker.currentState(),
-    cvmCircuitBreaker.currentState(),
+  const [dbOk, redisOk] = await Promise.all([
+    checkDatabaseConnection().then(() => true).catch(() => false),
+    checkRedisConnection(),
   ]);
 
-  reply.send({
-    status: 'ok',
-    uptime: {
-      seconds: Math.round(uptimeSeconds * 100) / 100,
-      formatted: formatUptime(uptimeSeconds),
+  const ready = dbOk && redisOk;
+  reply.status(ready ? 200 : 503).send({
+    status: ready ? 'ok' : 'degraded',
+    checks: {
+      database: dbOk ? 'up' : 'down',
+      redis: redisOk ? 'up' : 'down',
     },
-    rateLimiters: rateLimiterRegistry.getStats(),
-    circuitBreakers: {
-      statusinvest: siState,
-      yahoo: yhState,
-      cvm: cvmState,
-    },
-    userAgentPool: userAgentPool.getStats(),
-    timeWindows: {
-      etl: etlWindow.getStatus(),
-      snapshot: snapshotWindow.getStatus(),
-    },
+    uptimeSeconds: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
   });
-}
-
-function formatUptime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.round(seconds % 60);
-  return `${h}h ${m}m ${s}s`;
 }

@@ -9,6 +9,7 @@
  * Design: injetável — permite testar sem Redis.
  */
 
+import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { redis } from '../../services/redis.ts';
 
@@ -117,9 +118,11 @@ export function buildRateLimiter(options: RateLimitOptions = {}) {
     const path = request.url.split('?')[0] ?? request.url;
     if (publicPaths.has(path)) return;
 
-    // Identificador do cliente: API key do header
-    const apiKey = (request.headers['x-api-key'] as string) || 'anonymous';
-    const rateLimitKey = apiKey;
+    // Identificador: hash da key (nunca o secret em texto plano no Redis).
+    const apiKey = (request.headers['x-api-key'] as string) || '';
+    const rateLimitKey = apiKey
+      ? createHash('sha256').update(apiKey).digest('hex')
+      : 'anonymous';
 
     const current = await store.increment(rateLimitKey, windowSeconds);
     const remaining = Math.max(0, limit - current);

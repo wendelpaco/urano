@@ -54,7 +54,7 @@ type ContributionResult = {
 
 function ContributionPage() {
   const [amount, setAmount] = useState("3000");
-  const [profile, setProfile] = useState("balanced");
+  const [profile, setProfile] = useState("moderado");
   const [onlyTypes, setOnlyTypes] = useState("all");
   const [excludeSectors, setExcludeSectors] = useState("");
   const [positions, setPositions] = useState("");
@@ -69,10 +69,19 @@ function ContributionPage() {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
+        // Formato: "PETR4:100, VALE3:50" — quantity deve ser > 0 (schema da API).
         positions: positions
           .split(",")
           .map((s) => s.trim())
-          .filter(Boolean),
+          .filter(Boolean)
+          .map((part) => {
+            const [t, q] = part.split(":").map((x) => x.trim());
+            return {
+              ticker: (t ?? "").toUpperCase(),
+              quantity: Number(q) > 0 ? Number(q) : 1,
+            };
+          })
+          .filter((p) => p.ticker.length >= 4),
       };
       return apiFetch<ContributionResult>({ path: "/analysis/contribution", method: "POST", body });
     },
@@ -86,7 +95,7 @@ function ContributionPage() {
     <div className="p-3 md:p-4 space-y-3">
       <SectionHeader
         title="Simulador de aporte"
-        subtitle="Aloque um valor entre os melhores ativos segundo seus critérios."
+        subtitle="Onde aportar com base em score de qualidade e diversificação — não é preditor de retorno."
       />
       <div className="grid grid-cols-12 gap-3">
         <Panel className="col-span-12 lg:col-span-4 h-fit">
@@ -112,9 +121,9 @@ function ContributionPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="conservative">Conservador</SelectItem>
-                  <SelectItem value="balanced">Moderado</SelectItem>
-                  <SelectItem value="aggressive">Agressivo</SelectItem>
+                  <SelectItem value="conservador">Conservador</SelectItem>
+                  <SelectItem value="moderado">Moderado</SelectItem>
+                  <SelectItem value="agressivo">Agressivo</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -138,11 +147,11 @@ function ContributionPage() {
                 className="h-8"
               />
             </Field>
-            <Field label="Posições atuais (tickers)">
+            <Field label="Posições atuais (ticker:qtd)">
               <Input
                 value={positions}
                 onChange={(e) => setPositions(e.target.value)}
-                placeholder="PETR4, VALE3, HGLG11"
+                placeholder="PETR4:100, VALE3:50"
                 className="h-8 font-mono"
               />
             </Field>

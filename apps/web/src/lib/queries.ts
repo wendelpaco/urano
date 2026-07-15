@@ -260,3 +260,84 @@ export function asArray<T = unknown>(v: unknown): T[] {
   if (Array.isArray(obj.results)) return obj.results as T[];
   return [];
 }
+
+// ─── Score validation (backtest verdict) ─────────────────────────────────────
+
+export type ScoreValidation = {
+  scoreVersion: string;
+  validatedAt: string | null;
+  yearsTested: number[];
+  verdict: "edge" | "quality-filter" | "pending";
+  summary: string;
+  topN: {
+    n: number;
+    avgPortfolio: number;
+    avgMarket: number;
+    winYears: number;
+    totalYears: number;
+  } | null;
+  pillarCorrelations: Record<string, number> | null;
+};
+
+export function useScoreValidation() {
+  return useQuery<ScoreValidation>({
+    queryKey: ["scoreValidation"],
+    queryFn: () => apiFetch({ path: "/analysis/validation" }),
+    staleTime: 30 * 60_000,
+  });
+}
+
+// ─── Macro ───────────────────────────────────────────────────────────────────
+
+export type MacroIndicator = {
+  code: string;
+  name: string;
+  latest: { date: string; value: number } | null;
+};
+
+export function useMacro() {
+  return useQuery<{ total?: number; data?: MacroIndicator[] }>({
+    queryKey: ["macro"],
+    queryFn: () => apiFetch({ path: "/macro" }),
+    staleTime: 15 * 60_000,
+  });
+}
+
+export function useMacroSeries(series: string | undefined, limit = 24) {
+  return useQuery<{
+    code?: string;
+    name?: string;
+    unit?: string;
+    history?: Array<{ date: string; value: number }>;
+    latest?: { date: string; value: number };
+  }>({
+    queryKey: ["macro", series, limit],
+    queryFn: () => apiFetch({ path: `/macro/${series}`, query: { limit } }),
+    enabled: Boolean(series),
+    staleTime: 15 * 60_000,
+  });
+}
+
+// ─── Technical indicators ────────────────────────────────────────────────────
+
+export function useTechnicalIndicators(ticker: string) {
+  return useQuery<Record<string, unknown>>({
+    queryKey: ["technicalIndicators", ticker],
+    queryFn: () => apiFetch({ path: `/stocks/${ticker}/indicators` }),
+    enabled: Boolean(ticker),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+// ─── Stock stats ─────────────────────────────────────────────────────────────
+
+export function useStockStats(ticker: string) {
+  return useQuery<Record<string, unknown>>({
+    queryKey: ["stockStats", ticker],
+    queryFn: () => apiFetch({ path: `/stocks/${ticker}/stats` }),
+    enabled: Boolean(ticker),
+    staleTime: 60_000,
+    retry: 1,
+  });
+}

@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ValidationRouteImport } from './routes/validation'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
 import { Route as MarketRouteImport } from './routes/market'
@@ -18,11 +19,19 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortfolioIndexRouteImport } from './routes/portfolio.index'
 import { Route as MarketIndexRouteImport } from './routes/market.index'
 import { Route as PortfolioContributionRouteImport } from './routes/portfolio.contribution'
+import { Route as PortfolioAllocateRouteImport } from './routes/portfolio.allocate'
 import { Route as PortfolioIdRouteImport } from './routes/portfolio.$id'
 import { Route as MarketSearchRouteImport } from './routes/market.search'
 import { Route as MarketScreenerRouteImport } from './routes/market.screener'
+import { Route as MarketMacroRouteImport } from './routes/market.macro'
+import { Route as MarketCompareRouteImport } from './routes/market.compare'
 import { Route as ResearchTypeTickerRouteImport } from './routes/research.$type.$ticker'
 
+const ValidationRoute = ValidationRouteImport.update({
+  id: '/validation',
+  path: '/validation',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -68,6 +77,11 @@ const PortfolioContributionRoute = PortfolioContributionRouteImport.update({
   path: '/contribution',
   getParentRoute: () => PortfolioRoute,
 } as any)
+const PortfolioAllocateRoute = PortfolioAllocateRouteImport.update({
+  id: '/allocate',
+  path: '/allocate',
+  getParentRoute: () => PortfolioRoute,
+} as any)
 const PortfolioIdRoute = PortfolioIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -83,6 +97,16 @@ const MarketScreenerRoute = MarketScreenerRouteImport.update({
   path: '/screener',
   getParentRoute: () => MarketRoute,
 } as any)
+const MarketMacroRoute = MarketMacroRouteImport.update({
+  id: '/macro',
+  path: '/macro',
+  getParentRoute: () => MarketRoute,
+} as any)
+const MarketCompareRoute = MarketCompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
+  getParentRoute: () => MarketRoute,
+} as any)
 const ResearchTypeTickerRoute = ResearchTypeTickerRouteImport.update({
   id: '/research/$type/$ticker',
   path: '/research/$type/$ticker',
@@ -96,9 +120,13 @@ export interface FileRoutesByFullPath {
   '/market': typeof MarketRouteWithChildren
   '/portfolio': typeof PortfolioRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/validation': typeof ValidationRoute
+  '/market/compare': typeof MarketCompareRoute
+  '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
   '/market/search': typeof MarketSearchRoute
   '/portfolio/$id': typeof PortfolioIdRoute
+  '/portfolio/allocate': typeof PortfolioAllocateRoute
   '/portfolio/contribution': typeof PortfolioContributionRoute
   '/market/': typeof MarketIndexRoute
   '/portfolio/': typeof PortfolioIndexRoute
@@ -109,9 +137,13 @@ export interface FileRoutesByTo {
   '/ai': typeof AiRoute
   '/health': typeof HealthRoute
   '/settings': typeof SettingsRoute
+  '/validation': typeof ValidationRoute
+  '/market/compare': typeof MarketCompareRoute
+  '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
   '/market/search': typeof MarketSearchRoute
   '/portfolio/$id': typeof PortfolioIdRoute
+  '/portfolio/allocate': typeof PortfolioAllocateRoute
   '/portfolio/contribution': typeof PortfolioContributionRoute
   '/market': typeof MarketIndexRoute
   '/portfolio': typeof PortfolioIndexRoute
@@ -125,9 +157,13 @@ export interface FileRoutesById {
   '/market': typeof MarketRouteWithChildren
   '/portfolio': typeof PortfolioRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/validation': typeof ValidationRoute
+  '/market/compare': typeof MarketCompareRoute
+  '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
   '/market/search': typeof MarketSearchRoute
   '/portfolio/$id': typeof PortfolioIdRoute
+  '/portfolio/allocate': typeof PortfolioAllocateRoute
   '/portfolio/contribution': typeof PortfolioContributionRoute
   '/market/': typeof MarketIndexRoute
   '/portfolio/': typeof PortfolioIndexRoute
@@ -142,9 +178,13 @@ export interface FileRouteTypes {
     | '/market'
     | '/portfolio'
     | '/settings'
+    | '/validation'
+    | '/market/compare'
+    | '/market/macro'
     | '/market/screener'
     | '/market/search'
     | '/portfolio/$id'
+    | '/portfolio/allocate'
     | '/portfolio/contribution'
     | '/market/'
     | '/portfolio/'
@@ -155,9 +195,13 @@ export interface FileRouteTypes {
     | '/ai'
     | '/health'
     | '/settings'
+    | '/validation'
+    | '/market/compare'
+    | '/market/macro'
     | '/market/screener'
     | '/market/search'
     | '/portfolio/$id'
+    | '/portfolio/allocate'
     | '/portfolio/contribution'
     | '/market'
     | '/portfolio'
@@ -170,9 +214,13 @@ export interface FileRouteTypes {
     | '/market'
     | '/portfolio'
     | '/settings'
+    | '/validation'
+    | '/market/compare'
+    | '/market/macro'
     | '/market/screener'
     | '/market/search'
     | '/portfolio/$id'
+    | '/portfolio/allocate'
     | '/portfolio/contribution'
     | '/market/'
     | '/portfolio/'
@@ -186,11 +234,19 @@ export interface RootRouteChildren {
   MarketRoute: typeof MarketRouteWithChildren
   PortfolioRoute: typeof PortfolioRouteWithChildren
   SettingsRoute: typeof SettingsRoute
+  ValidationRoute: typeof ValidationRoute
   ResearchTypeTickerRoute: typeof ResearchTypeTickerRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/validation': {
+      id: '/validation'
+      path: '/validation'
+      fullPath: '/validation'
+      preLoaderRoute: typeof ValidationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -254,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortfolioContributionRouteImport
       parentRoute: typeof PortfolioRoute
     }
+    '/portfolio/allocate': {
+      id: '/portfolio/allocate'
+      path: '/allocate'
+      fullPath: '/portfolio/allocate'
+      preLoaderRoute: typeof PortfolioAllocateRouteImport
+      parentRoute: typeof PortfolioRoute
+    }
     '/portfolio/$id': {
       id: '/portfolio/$id'
       path: '/$id'
@@ -275,6 +338,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketScreenerRouteImport
       parentRoute: typeof MarketRoute
     }
+    '/market/macro': {
+      id: '/market/macro'
+      path: '/macro'
+      fullPath: '/market/macro'
+      preLoaderRoute: typeof MarketMacroRouteImport
+      parentRoute: typeof MarketRoute
+    }
+    '/market/compare': {
+      id: '/market/compare'
+      path: '/compare'
+      fullPath: '/market/compare'
+      preLoaderRoute: typeof MarketCompareRouteImport
+      parentRoute: typeof MarketRoute
+    }
     '/research/$type/$ticker': {
       id: '/research/$type/$ticker'
       path: '/research/$type/$ticker'
@@ -286,12 +363,16 @@ declare module '@tanstack/react-router' {
 }
 
 interface MarketRouteChildren {
+  MarketCompareRoute: typeof MarketCompareRoute
+  MarketMacroRoute: typeof MarketMacroRoute
   MarketScreenerRoute: typeof MarketScreenerRoute
   MarketSearchRoute: typeof MarketSearchRoute
   MarketIndexRoute: typeof MarketIndexRoute
 }
 
 const MarketRouteChildren: MarketRouteChildren = {
+  MarketCompareRoute: MarketCompareRoute,
+  MarketMacroRoute: MarketMacroRoute,
   MarketScreenerRoute: MarketScreenerRoute,
   MarketSearchRoute: MarketSearchRoute,
   MarketIndexRoute: MarketIndexRoute,
@@ -302,12 +383,14 @@ const MarketRouteWithChildren =
 
 interface PortfolioRouteChildren {
   PortfolioIdRoute: typeof PortfolioIdRoute
+  PortfolioAllocateRoute: typeof PortfolioAllocateRoute
   PortfolioContributionRoute: typeof PortfolioContributionRoute
   PortfolioIndexRoute: typeof PortfolioIndexRoute
 }
 
 const PortfolioRouteChildren: PortfolioRouteChildren = {
   PortfolioIdRoute: PortfolioIdRoute,
+  PortfolioAllocateRoute: PortfolioAllocateRoute,
   PortfolioContributionRoute: PortfolioContributionRoute,
   PortfolioIndexRoute: PortfolioIndexRoute,
 }
@@ -323,6 +406,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarketRoute: MarketRouteWithChildren,
   PortfolioRoute: PortfolioRouteWithChildren,
   SettingsRoute: SettingsRoute,
+  ValidationRoute: ValidationRoute,
   ResearchTypeTickerRoute: ResearchTypeTickerRoute,
 }
 export const routeTree = rootRouteImport

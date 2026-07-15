@@ -70,7 +70,8 @@ export interface AllocationResult {
 
 export class AllocationEngine {
   /**
-   * Constrói uma carteira recomendada com base no perfil de risco.
+   * Constrói uma carteira-modelo filtrada por score e perfil de risco.
+   * O score é quality-filter (não preditor de retorno) — ver SCORE_VALIDATION.
    */
   async buildAllocation(
     config?: Partial<AllocationConfig>,

@@ -65,7 +65,9 @@ async function apiPost(path: string, body: unknown): Promise<unknown> {
 const server = new McpServer({
   name: 'urano',
   version: '1.0.0',
-  description: 'Urano — API de análise fundamentalista de ações e FIIs brasileiros. Scores, alocação, ranking e dados macroeconômicos.',
+  description:
+    'Urano — análise fundamentalista de ações e FIIs B3. Scores, alocação, ranking e macro. ' +
+    'O score é um filtro de qualidade fundamentalista (quality-filter), não um preditor de retorno superior ao mercado.',
 });
 
 // ── Ferramentas ─────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ server.tool(
 
 server.tool(
   'get_allocation',
-  'Sugere uma carteira de investimentos diversificada com base no valor a investir e perfil de risco (conservador, moderado, agressivo). Retorna quais ativos comprar, quanto alocar em cada um e por quê.',
+  'Sugere uma carteira-modelo diversificada (filtro de qualidade por score, não garantia de retorno) com base no valor a investir e perfil de risco. Retorna ativos, alocação e justificativas fundamentalistas.',
   {
     totalAmount: z.number().positive().default(10000).describe('Valor total a investir em reais'),
     riskProfile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado').describe('Perfil de risco do investidor'),
@@ -111,7 +113,7 @@ server.tool(
 
 server.tool(
   'get_ranking',
-  'Ranking das melhores ações ou FIIs por score. Permite filtrar por score mínimo.',
+  'Ranking de ações ou FIIs por score de qualidade fundamentalista (não é ranking de retorno esperado). Permite filtrar por score mínimo.',
   {
     type: z.enum(['stock', 'fii']).default('stock').describe('Tipo de ativo: stock (ações) ou fii (fundos imobiliários)'),
     limit: z.number().int().min(1).max(20).default(10).describe('Quantidade de ativos no ranking'),

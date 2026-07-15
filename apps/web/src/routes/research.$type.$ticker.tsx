@@ -3,6 +3,9 @@ import {
   useAssetDetail,
   useDividends,
   useHistory,
+  useScoreValidation,
+  useTechnicalIndicators,
+  useStockStats,
   type Asset,
   type HistoryResponse,
   type DividendsResponse,
@@ -106,12 +109,20 @@ function ResearchPage() {
         }
         subtitle={data.description ?? undefined}
         actions={
-          <Link
-            to="/ai"
-            className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 h-8 px-3 text-xs text-primary hover:bg-primary/20"
-          >
-            <Sparkles className="h-3.5 w-3.5" /> Analisar com IA
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              to="/market/compare"
+              className="inline-flex items-center gap-1.5 rounded border border-border h-8 px-3 text-xs text-muted-foreground hover:bg-surface-2"
+            >
+              Comparar
+            </Link>
+            <Link
+              to="/ai"
+              className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 h-8 px-3 text-xs text-primary hover:bg-primary/20"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Copilot
+            </Link>
+          </div>
         }
       />
 
@@ -120,6 +131,8 @@ function ResearchPage() {
 
       {detail.isSuccess ? (
         <>
+          <ExplainScoreBanner score={score} ticker={ticker} type={t} reasons={reasons} />
+
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <MetricCard label="Score" value={<ScoreBadge score={score} size="lg" />} />
             <MetricCard
@@ -318,12 +331,127 @@ function ResearchPage() {
                   <MetricRow label="VPA" value={fmtBRL(data.bvps)} />
                 </div>
               </Panel>
+
+              <TechnicalPanel ticker={ticker} />
             </div>
           </div>
         </>
       ) : null}
     </div>
   );
+}
+
+function ExplainScoreBanner({
+  score,
+  ticker,
+  type,
+  reasons,
+}: {
+  score: number | null;
+  ticker: string;
+  type: "stock" | "fii";
+  reasons: Array<{ kind: string; text: string }>;
+}) {
+  const validation = useScoreValidation();
+  const v = validation.data;
+  const pros = reasons.filter((r) => r.kind === "pro").slice(0, 2);
+  const cons = reasons.filter((r) => r.kind === "con").slice(0, 2);
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="Como ler este score"
+        actions={
+          <Link
+            to="/validation"
+            className="text-[11px] text-primary hover:underline underline-offset-2"
+          >
+            Ver validação completa
+          </Link>
+        }
+      />
+      <div className="p-3 space-y-2 text-xs leading-relaxed text-foreground/90">
+        <p>
+          <span className="font-mono font-semibold">{ticker}</span> tem score{" "}
+          <span className="font-mono font-semibold">{score ?? "—"}</span>
+          {type === "fii" ? " (FII — heurística sem o mesmo backtest das ações)." : "."}{" "}
+          {v?.verdict === "quality-filter"
+            ? "O motor foi validado como filtro de qualidade: score baixo sinaliza fundamentos mais fracos; score alto não garante retorno superior ao mercado."
+            : v?.summary
+              ? v.summary
+              : "Score de qualidade fundamentalista — não use como sinal de timing."}
+        </p>
+        {(pros.length > 0 || cons.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+            {pros.length > 0 ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-positive mb-1">
+                  Pontos fortes
+                </div>
+                <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                  {pros.map((r, i) => (
+                    <li key={i}>{r.text}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {cons.length > 0 ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-negative mb-1">
+                  Pontos de atenção
+                </div>
+                <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                  {cons.map((r, i) => (
+                    <li key={i}>{r.text}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function TechnicalPanel({ ticker }: { ticker: string }) {
+  const tech = useTechnicalIndicators(ticker);
+  const stats = useStockStats(ticker);
+  const t = tech.data as Record<string, unknown> | undefined;
+  const s = stats.data as Record<string, unknown> | undefined;
+
+  const rsi = (t?.rsi as { value?: number; signal?: string } | undefined) ?? undefined;
+  const macd = (t?.macd as { signal?: string; histogram?: number } | undefined) ?? undefined;
+  const bb =
+    (t?.bollinger as { upper?: number; middle?: number; lower?: number } | undefined) ?? undefined;
+
+  return (
+    <Panel>
+      <PanelHeader title="Mercado / técnico" />
+      {tech.isLoading || stats.isLoading ? (
+        <div className="p-3 text-xs text-muted-foreground">Carregando…</div>
+      ) : tech.isError && stats.isError ? (
+        <EmptyState title="Indicadores indisponíveis" />
+      ) : (
+        <div className="p-3">
+          <MetricRow
+            label="RSI"
+            value={rsi?.value != null ? `${fmtNum(rsi.value)} (${rsi.signal ?? "—"})` : "—"}
+          />
+          <MetricRow label="MACD sinal" value={macd?.signal ?? "—"} />
+          <MetricRow label="Bollinger mid" value={fmtNum(bb?.middle ?? null)} />
+          <MetricRow label="Máx 52s" value={fmtBRL(num(s?.high52w ?? s?.week52High))} />
+          <MetricRow label="Mín 52s" value={fmtBRL(num(s?.low52w ?? s?.week52Low))} />
+          <MetricRow label="YTD" value={fmtPct(num(s?.ytdReturn ?? s?.ytd), true)} />
+          <MetricRow label="Vol. médio" value={fmtBRL(num(s?.avgVolume ?? s?.volume), true)} />
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function num(v: unknown): number | null {
+  return typeof v === "number" && !Number.isNaN(v) ? v : null;
 }
 
 function normalizeSeries(raw: HistoryResponse | undefined): { d: string; v: number }[] {

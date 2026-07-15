@@ -10,6 +10,10 @@ import {
   Trophy,
   Search,
   Activity,
+  GitCompareArrows,
+  PieChart,
+  Landmark,
+  ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -31,6 +35,8 @@ const groups: { label: string; items: NavItem[] }[] = [
       { to: "/market", label: "Ranking", icon: Trophy, match: (p) => p === "/market" },
       { to: "/market/screener", label: "Screener", icon: Filter },
       { to: "/market/search", label: "Pesquisa", icon: Search },
+      { to: "/market/compare", label: "Comparador", icon: GitCompareArrows },
+      { to: "/market/macro", label: "Macro", icon: Landmark },
     ],
   },
   {
@@ -38,12 +44,14 @@ const groups: { label: string; items: NavItem[] }[] = [
     items: [
       { to: "/portfolio", label: "Carteiras", icon: Wallet, match: (p) => p === "/portfolio" },
       { to: "/portfolio/contribution", label: "Aportes", icon: LineChart },
+      { to: "/portfolio/allocate", label: "Alocação modelo", icon: PieChart },
     ],
   },
   {
     label: "Intelligence",
     items: [
       { to: "/ai", label: "Copilot", icon: Sparkles },
+      { to: "/validation", label: "Validação score", icon: ShieldCheck },
       { to: "/health", label: "Data Health", icon: Activity },
     ],
   },
@@ -83,19 +91,14 @@ export function Sidebar() {
                     key={item.to}
                     to={item.to}
                     className={cn(
-                      "group flex items-center gap-2 rounded px-2 h-7 text-[12.5px] transition-colors",
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] transition-colors",
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
                     )}
                   >
-                    <Icon
-                      className={cn(
-                        "h-3.5 w-3.5",
-                        active ? "text-primary" : "text-muted-foreground/80",
-                      )}
-                    />
-                    <span className="truncate">{item.label}</span>
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    {item.label}
                   </Link>
                 );
               })}
@@ -104,15 +107,17 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="border-t border-sidebar-border p-2">
+      <div className="p-2 border-t border-sidebar-border">
         <Link
           to="/settings"
           className={cn(
-            "flex items-center gap-2 rounded px-2 h-7 text-[12.5px] text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground",
-            pathname === "/settings" && "bg-sidebar-accent text-sidebar-accent-foreground",
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] transition-colors",
+            pathname === "/settings"
+              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+              : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60",
           )}
         >
-          <Settings className="h-3.5 w-3.5" />
+          <Settings className="h-3.5 w-3.5 shrink-0 opacity-80" />
           Settings
         </Link>
       </div>
