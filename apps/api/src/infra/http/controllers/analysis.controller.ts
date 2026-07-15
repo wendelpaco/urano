@@ -25,6 +25,7 @@ import {
   type FIIScoreInput,
 } from '../../../core/services/fii-score.ts';
 import { AllocationEngine } from '../../../core/services/allocation-engine.ts';
+import { flagAbsurdMetrics } from '../../../core/services/metric-sanity.ts';
 import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
 import { SCORE_VALIDATION } from '../../../core/data/score-validation.data.ts';
@@ -193,6 +194,13 @@ export async function getStockAnalysisController(
     indicators, f.sector, f.companyName, historical, momentum,
   );
 
+  const anomalies = flagAbsurdMetrics({
+    price: price || null,
+    peRatio: indicators.peRatio,
+    dividendYield: indicators.dividendYield,
+    pbRatio: indicators.pbRatio,
+  });
+
   const response = {
     ticker: result.ticker,
     companyName: result.companyName,
@@ -203,6 +211,7 @@ export async function getStockAnalysisController(
     alerts: result.alerts,
     indicators,
     price: price || null,
+    anomalies,
     dataQuality: {
       quotes: quotesOk,
       dividends: dividendsOk,
@@ -354,6 +363,12 @@ export async function getFiiAnalysisController(
 
   const score = FIIScoreCalculatorV4.calculate(input);
 
+  const anomalies = flagAbsurdMetrics({
+    price: price || null,
+    dy,
+    pvp,
+  });
+
   const response = {
     ticker: score.ticker,
     name: company.name,
@@ -396,6 +411,7 @@ export async function getFiiAnalysisController(
     dividendYield: dy || null,
     pvp,
     liquidity,
+    anomalies,
   };
 
   // Cache 15 min

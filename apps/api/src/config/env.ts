@@ -32,6 +32,13 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+
+  // When Redis rate-limit store fails: false = allow traffic (fail-open, default);
+  // true = deny with 503 (fail-closed). Prefer true in production once Redis is reliable.
+  RATE_LIMIT_FAIL_CLOSED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -44,6 +51,7 @@ function parseEnv(): Env {
     CORS_ORIGIN: process.env.CORS_ORIGIN,
     NODE_ENV: process.env.NODE_ENV,
     SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED,
+    RATE_LIMIT_FAIL_CLOSED: process.env.RATE_LIMIT_FAIL_CLOSED,
   };
 
   const result = envSchema.safeParse(raw);

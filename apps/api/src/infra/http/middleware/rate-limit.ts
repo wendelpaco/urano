@@ -30,6 +30,8 @@ export interface RateLimitStore {
 // ─── Implementação Redis ─────────────────────────────────────────────────────
 
 class RedisRateLimitStore implements RateLimitStore {
+  constructor(private readonly failClosed = false) {}
+
   async increment(key: string, windowSeconds: number): Promise<number> {
     const redisKey = `ratelimit:${key}`;
     try {
@@ -39,8 +41,12 @@ class RedisRateLimitStore implements RateLimitStore {
         await redis.expire(redisKey, windowSeconds);
       }
       return count;
-    } catch {
-      // Redis offline → permite passar (degradação)
+    } catch (err) {
+      if (this.failClosed) {
+        // Fail-closed: surface the error so the middleware can deny the request.
+        throw err;
+      }
+      // Fail-open (default): Redis offline → allow traffic (degraded).
       return 0;
     }
   }
@@ -90,6 +96,11 @@ export interface RateLimitOptions {
   publicPaths?: Set<string>;
   /** Store customizado (Redis ou memória) */
   store?: RateLimitStore;
+  /**
+   * When the store throws (e.g. Redis down): deny with 503 instead of allowing traffic.
+   * Default false = fail-open (backward compatible). Wire from env.RATE_LIMIT_FAIL_CLOSED in server.
+   */
+  failClosed?: boolean;
 }
 
 /**
@@ -101,13 +112,15 @@ export interface RateLimitOptions {
  *   X-RateLimit-Reset:       segundos até resetar
  *
  * Excedido → 429 com header Retry-After.
+ * Store failure + failClosed → 503 Service Unavailable.
  */
 export function buildRateLimiter(options: RateLimitOptions = {}) {
   const {
     limit = DEFAULT_LIMIT,
     windowSeconds = WINDOW_SECONDS,
     publicPaths = new Set(['/v1/healthcheck']),
-    store = new RedisRateLimitStore(),
+    failClosed = false,
+    store = new RedisRateLimitStore(failClosed),
   } = options;
 
   return async function rateLimiterHook(
@@ -124,7 +137,21 @@ export function buildRateLimiter(options: RateLimitOptions = {}) {
       ? createHash('sha256').update(apiKey).digest('hex')
       : 'anonymous';
 
-    const current = await store.increment(rateLimitKey, windowSeconds);
+    let current: number;
+    try {
+      current = await store.increment(rateLimitKey, windowSeconds);
+    } catch {
+      if (failClosed) {
+        reply.status(503).send({
+          error: 'ServiceUnavailable',
+          message: 'Serviço de rate limit indisponível. Tente novamente em instantes.',
+        });
+        return;
+      }
+      // Fail-open: allow traffic when store is down.
+      return;
+    }
+
     const remaining = Math.max(0, limit - current);
     const resetIn = await store.ttl(rateLimitKey);
 
@@ -145,8 +172,3 @@ export function buildRateLimiter(options: RateLimitOptions = {}) {
     }
   };
 }
-
-// ─── Middleware padrão (Redis) ───────────────────────────────────────────────
-
-/** Rate limiter pronto para uso em produção (com Redis) */
-export const rateLimiter = buildRateLimiter();

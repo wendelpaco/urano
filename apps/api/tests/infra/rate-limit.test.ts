@@ -138,4 +138,40 @@ describe('rateLimiter', () => {
 
     expect(store.keys[0]).toBe('anonymous');
   });
+
+  test('store throws + failClosed true → 503 ServiceUnavailable', async () => {
+    const store: RateLimitStore = {
+      async increment() {
+        throw new Error('redis down');
+      },
+      async ttl() {
+        return 60;
+      },
+    };
+    const hook = buildRateLimiter({ store, limit: 10, failClosed: true });
+
+    const { reply, getCaptured } = fakeReply();
+    await hook(fakeRequest('/v1/companies', 'key_a') as never, reply as never);
+
+    const captured = getCaptured();
+    expect(captured?.status).toBe(503);
+    expect(captured?.body).toHaveProperty('error', 'ServiceUnavailable');
+  });
+
+  test('store throws + failClosed false (default) → fail-open, request allowed', async () => {
+    const store: RateLimitStore = {
+      async increment() {
+        throw new Error('redis down');
+      },
+      async ttl() {
+        return 60;
+      },
+    };
+    const hook = buildRateLimiter({ store, limit: 10, failClosed: false });
+
+    const { reply, getCaptured } = fakeReply();
+    await hook(fakeRequest('/v1/companies', 'key_a') as never, reply as never);
+
+    expect(getCaptured()).toBeNull();
+  });
 });

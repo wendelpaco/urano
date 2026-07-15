@@ -18,7 +18,10 @@ const spec = {
     description:
       'API de análise fundamentalista do mercado brasileiro. Scores 0-100 para ações e FIIs, ' +
       'ranking, screener com 15 filtros, alocação de carteiras, cotações, proventos e dados macroeconômicos. ' +
-      'Dados oficiais da B3, CVM e BCB.',
+      'Dados oficiais da B3, CVM e BCB. ' +
+      'Correlação: envie ou receba `x-request-id` em todas as respostas. ' +
+      'Segurança: `x-api-key` (hash SHA-256 no banco), rate limit por key, headers ' +
+      '(X-Content-Type-Options, X-Frame-Options, Cache-Control: no-store em rotas autenticadas).',
     contact: { name: 'Urano', url: 'https://github.com/urano' },
   },
   servers: [
@@ -35,6 +38,15 @@ const spec = {
         description: 'API Key gerada via POST /keys ou bun run key:create',
       },
     },
+    parameters: {
+      RequestId: {
+        name: 'x-request-id',
+        in: 'header',
+        required: false,
+        schema: { type: 'string' },
+        description: 'ID de correlação opcional; se omitido, a API gera um UUID e ecoa em x-request-id na resposta.',
+      },
+    },
   },
   paths: {
     '/healthcheck': {
@@ -44,6 +56,23 @@ const spec = {
         description: 'Verifica disponibilidade do serviço (rota pública, sem auth).',
         security: [],
         responses: { '200': { description: 'OK' } },
+      },
+    },
+    '/metrics': {
+      get: {
+        tags: ['Sistema'],
+        summary: 'Métricas de processo (JSON)',
+        description:
+          'Snapshot autenticado de uptime e memória do processo. Não é Prometheus exposition; ' +
+          'requer x-api-key. Correlação via x-request-id (entrada opcional, sempre ecoado na resposta).',
+        parameters: [{ $ref: '#/components/parameters/RequestId' }],
+        responses: {
+          '200': {
+            description:
+              'JSON: { uptimeSeconds, memory: { rss, heapUsed }, nodeEnv }',
+          },
+          '401': { description: 'Sem x-api-key ou key inválida' },
+        },
       },
     },
 

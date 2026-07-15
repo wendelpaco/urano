@@ -46,6 +46,23 @@ export type RankingParams = {
   limit?: number;
 };
 
+/** Trust badge payload from GET /analysis/ranking (`meta` is optional for older caches). */
+export type RankingMeta = {
+  scoreVersion?: string;
+  verdict?: "edge" | "quality-filter" | "pending" | string;
+};
+
+export type RankingResponse =
+  | Asset[]
+  | {
+      items?: Asset[];
+      data?: Asset[];
+      meta?: RankingMeta;
+      type?: string;
+      total?: number;
+      filters?: unknown;
+    };
+
 export type ScreenerParams = Record<string, string | number | boolean | undefined | null>;
 
 export type Position = {
@@ -115,7 +132,7 @@ export type DividendsResponse =
     };
 
 export function useRanking(params: RankingParams = {}) {
-  return useQuery<Asset[] | { items?: Asset[]; data?: Asset[] }>({
+  return useQuery<RankingResponse>({
     queryKey: ["ranking", params],
     queryFn: () =>
       apiFetch({
@@ -124,6 +141,12 @@ export function useRanking(params: RankingParams = {}) {
       }),
     staleTime: 60_000,
   });
+}
+
+/** Extract ranking `meta` when the response is an object wrapper (not a bare array). */
+export function rankingMeta(data: RankingResponse | undefined): RankingMeta | undefined {
+  if (!data || Array.isArray(data) || typeof data !== "object") return undefined;
+  return data.meta;
 }
 
 export function useScreener(params: ScreenerParams) {

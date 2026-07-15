@@ -9,6 +9,7 @@
     "start": "bun run src/server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "lint": "echo 'no eslint configured for api'",
     "db:generate": "drizzle-kit generate",
 
     "db:migrate": "drizzle-kit migrate",

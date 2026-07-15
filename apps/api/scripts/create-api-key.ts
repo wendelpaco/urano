@@ -28,10 +28,12 @@ async function main(): Promise<void> {
   try {
     const key = generateApiKey();
     const keyHash = createHash('sha256').update(key).digest('hex');
+    // Placeholder in DB — unique, not a valid client key (auth uses keyHash only)
+    const keyStored = `ur_hashonly_${keyHash.slice(0, 24)}`;
 
     const [row] = await db
       .insert(apiKeys)
-      .values({ name, key, keyHash })
+      .values({ name, key: keyStored, keyHash })
       .returning();
 
     if (!row) {
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`🔑 API key criada: ${row.name}`);
-    console.log(`   ${row.key}`);
+    console.log(`   ${key}`);
     console.log('');
     console.log('⚠️  Guarde esta chave — ela não será exibida novamente.');
     console.log('   Use no header: x-api-key');

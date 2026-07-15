@@ -121,10 +121,11 @@ export async function authMiddleware(
  */
 async function updateLastUsed(key: string): Promise<void> {
   try {
+    const keyHash = createHash('sha256').update(key).digest('hex');
     await db
       .update(apiKeys)
       .set({ lastUsedAt: new Date() })
-      .where(eq(apiKeys.key, key));
+      .where(eq(apiKeys.keyHash, keyHash));
   } catch {
     // Silencioso — last_used_at é métrica secundária
   }

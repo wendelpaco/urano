@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { asArray, useRanking, type Asset } from "@/lib/queries";
+import { asArray, rankingMeta, useRanking, type Asset } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
-import { LoadingState, ErrorState, SkeletonRows } from "@/components/app/states";
+import { ErrorState, SkeletonRows } from "@/components/app/states";
 import { Button } from "@/components/ui/button";
 import { Filter } from "lucide-react";
 import { z } from "zod";
@@ -28,10 +28,12 @@ function RankingPage() {
   // for "Todos" we fetch both and merge client-side, same pattern as market.search.tsx.
   const stockQ = useRanking({ type: "stock", sort, order, limit: 50 });
   const fiiQ = useRanking({ type: "fii", sort, order, limit: 50 });
+  // asArray keeps table rows working whether the API returns a bare array or { data }.
   const stockItems = asArray<Asset>(stockQ.data);
   const fiiItems = asArray<Asset>(fiiQ.data);
   const items =
     type === "all" ? [...stockItems, ...fiiItems] : type === "stock" ? stockItems : fiiItems;
+  const meta = rankingMeta(stockQ.data) ?? rankingMeta(fiiQ.data);
   const q =
     type === "all"
       ? {
@@ -58,17 +60,37 @@ function RankingPage() {
       }),
     });
 
+  const scoreLabel =
+    meta?.scoreVersion != null
+      ? `Score ${meta.scoreVersion}${meta.verdict ? ` · ${meta.verdict}` : ""}`
+      : null;
+
   return (
     <div className="p-3 md:p-4 space-y-3">
       <SectionHeader
         title="Ranking"
-        subtitle="Ativos ordenados pelo score fundamentalista."
+        subtitle={
+          meta
+            ? "Ordenado por score de qualidade (não preditor de retorno)."
+            : "Ativos ordenados pelo score fundamentalista."
+        }
         actions={
-          <Button asChild variant="outline" size="sm">
-            <Link to="/market/screener">
-              <Filter className="h-3.5 w-3.5 mr-1.5" /> Screener avançado
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {scoreLabel ? (
+              <Link
+                to="/validation"
+                className="inline-flex items-center h-7 px-2 rounded border border-primary/30 bg-primary/10 text-[11px] font-semibold text-primary hover:bg-primary/15 transition-colors"
+                title="Ver validação do score"
+              >
+                {scoreLabel}
+              </Link>
+            ) : null}
+            <Button asChild variant="outline" size="sm">
+              <Link to="/market/screener">
+                <Filter className="h-3.5 w-3.5 mr-1.5" /> Screener avançado
+              </Link>
+            </Button>
+          </div>
         }
       />
 

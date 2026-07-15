@@ -8,9 +8,11 @@ import { JobWorker } from './infra/jobs/worker.ts';
 import { JobScheduler } from './infra/jobs/scheduler.ts';
 import { checkRedisConnection, redis } from './infra/services/redis.ts';
 import { checkDatabaseConnection, closeDatabaseConnection } from './infra/database/connection.ts';
-import { rateLimiter } from './infra/http/middleware/rate-limit.ts';
+import { buildRateLimiter } from './infra/http/middleware/rate-limit.ts';
 import { createGenReqId, requestIdHook } from './infra/http/middleware/request-id.ts';
 import { securityHeadersHook } from './infra/http/middleware/security-headers.ts';
+
+const rateLimiter = buildRateLimiter({ failClosed: env.RATE_LIMIT_FAIL_CLOSED });
 
 // ─── Timestamp GMT-3 (horário de Brasília) ─────────────────────────────
 function brt(d = new Date()): string {

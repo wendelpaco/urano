@@ -39,10 +39,12 @@ export async function createApiKeyController(
   const { name } = parsed.data;
   const key = generateApiKey();
   const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+  // Placeholder in DB — unique, not a valid client key (auth uses keyHash only)
+  const keyStored = `ur_hashonly_${keyHash.slice(0, 24)}`;
 
   const [row] = await db
     .insert(apiKeys)
-    .values({ name, key, keyHash })
+    .values({ name, key: keyStored, keyHash })
     .returning();
 
   logSecurityEvent('api_key.create', { apiKeyId: row!.id, name: row!.name });
@@ -50,7 +52,7 @@ export async function createApiKeyController(
   reply.status(201).send({
     id: row!.id,
     name: row!.name,
-    key: row!.key,
+    key, // plaintext returned ONCE — not recoverable from DB
     active: row!.active,
     createdAt: row!.createdAt?.toISOString(),
     message: 'Guarde esta chave. Por segurança, ela não será exibida novamente.',
@@ -94,10 +96,11 @@ export async function rotateApiKeyController(
   }
   const newKey = generateApiKey();
   const newKeyHash = crypto.createHash('sha256').update(newKey).digest('hex');
+  const keyStored = `ur_hashonly_${newKeyHash.slice(0, 24)}`;
 
   const [updated] = await db
     .update(apiKeys)
-    .set({ key: newKey, keyHash: newKeyHash })
+    .set({ key: keyStored, keyHash: newKeyHash })
     .where(eq(apiKeys.id, id))
     .returning();
 
