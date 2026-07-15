@@ -136,6 +136,41 @@ Content-Type: application/json
 
 
 ###############################################################################
+# 5b. CONTRIBUTION — Sugestão de aporte
+###############################################################################
+
+### Aporte de R$ 2.000 (perfil moderado, com posições)
+POST {{baseUrl}}/analysis/contribution
+Content-Type: application/json
+
+{
+  "amount": 2000,
+  "profile": "moderado",
+  "positions": [
+    { "ticker": "PETR4", "quantity": 100 },
+    { "ticker": "HGLG11", "quantity": 20 }
+  ]
+}
+
+### Aporte só em FIIs
+POST {{baseUrl}}/analysis/contribution
+Content-Type: application/json
+
+{ "amount": 1000, "profile": "conservador", "onlyTypes": ["fii"] }
+
+
+###############################################################################
+# 5c. SEARCH + VALIDATION
+###############################################################################
+
+### Buscar por ticker/nome
+GET {{baseUrl}}/search?q=PETR
+
+### Metadados de validação do score (filtro de qualidade)
+GET {{baseUrl}}/analysis/validation
+
+
+###############################################################################
 # 6. SCREENER AVANÇADO — Filtros combinados
 ###############################################################################
 
@@ -202,6 +237,9 @@ GET {{baseUrl}}/stocks/PETR4/corporate-events
 
 ### Eventos corporativos de um ano específico
 GET {{baseUrl}}/stocks/MGLU3/corporate-events?year=2023
+
+### Indicadores técnicos (SMA, RSI, MACD, etc.)
+GET {{baseUrl}}/stocks/PETR4/indicators
 
 
 ###############################################################################
@@ -273,63 +311,101 @@ GET {{baseUrl}}/macro/1?limit=3
 # 12b. OPENAPI — Especificação da API
 ###############################################################################
 
-### OpenAPI 3.0 spec (público)
+### OpenAPI 3.0 spec (requer API key)
 GET {{baseUrl}}/docs/openapi.json
+x-api-key: {{apiKey}}
+
+
+###############################################################################
+# 12c. HEALTH — Dados e scraper
+###############################################################################
+
+### Saúde dos dados (cobertura / freshness)
+GET {{baseUrl}}/health/data
+x-api-key: {{apiKey}}
+
+### Diagnóstico do scraper
+GET {{baseUrl}}/health/scraper
+x-api-key: {{apiKey}}
 
 
 ###############################################################################
 # 13. WALLETS + REBALANCE — Carteiras com posição atual
 ###############################################################################
 
+### Listar carteiras
+GET {{baseUrl}}/wallets
+x-api-key: {{apiKey}}
+
 ### Criar carteira
 # @name createWallet
 POST {{baseUrl}}/wallets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
-{ "userId": "00000000-0000-0000-0000-000000000001", "name": "Longo Prazo" }
+{ "name": "Longo Prazo" }
 
 ### Adicionar ativos à carteira
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "ticker": "PETR4", "targetAllocationPercent": 25 }
 
 ### Adicionar mais ativos
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "ticker": "VALE3", "targetAllocationPercent": 20 }
 
 ### Adicionar FII
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "ticker": "HGLG11", "targetAllocationPercent": 20 }
 
 ### Adicionar
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "ticker": "ABEV3", "targetAllocationPercent": 15 }
 
-### Adicionar
+### Adicionar EGIE3
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "ticker": "EGIE3", "targetAllocationPercent": 20 }
 
 ### Ver carteira completa
 GET {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+x-api-key: {{apiKey}}
+
+### Atualizar nome da carteira
+PUT {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{ "name": "Longo Prazo v2" }
+
+### Remover ativo da carteira
+# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}/assets/{{assetId}}
+# x-api-key: {{apiKey}}
 
 ### Rebalancear com R$ 5.000 (sem posição atual — só BUY)
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 { "availableAmount": 5000 }
 
 ### Rebalancear informando posição atual (sugere SELL se sobrealocado)
 POST {{baseUrl}}/wallets/{{createWallet.response.body.id}}/rebalance
 Content-Type: application/json
+x-api-key: {{apiKey}}
 
 {
   "availableAmount": 5000,
@@ -341,3 +417,8 @@ Content-Type: application/json
     { "ticker": "EGIE3", "quantity": 30 }
   ]
 }
+
+### Remover carteira
+# DELETE {{baseUrl}}/wallets/{{createWallet.response.body.id}}
+# x-api-key: {{apiKey}}
+

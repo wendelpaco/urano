@@ -1,3 +1,4 @@
+import { useCallback, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
@@ -340,4 +341,117 @@ export function useStockStats(ticker: string) {
     staleTime: 60_000,
     retry: 1,
   });
+}
+
+// ─── Dividends normalize ─────────────────────────────────────────────────────
+
+/** Normalize flexible dividend API shapes into `{ d, v }` series. */
+export function normalizeDividends(raw: DividendsResponse | undefined): { d: string; v: number }[] {
+  if (!raw) return [];
+  const arr = Array.isArray(raw)
+    ? raw
+    : (raw.monthlyHistory ?? raw.data ?? raw.items ?? raw.dividends ?? []);
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((p) => ({
+      d: (p.date ?? p.paymentDate ?? p.d ?? "").toString().slice(0, 10),
+      v: Number(p.value ?? p.amount ?? p.v),
+    }))
+    .filter((p) => p.d && !Number.isNaN(p.v));
+}
+
+// ─── Watchlist (localStorage) ────────────────────────────────────────────────
+
+export const WATCHLIST_KEY = "urano.watchlist";
+export const WATCHLIST_EVENT = "urano:watchlist";
+
+export type WatchlistItem = {
+  ticker: string;
+  type: "stock" | "fii";
+};
+
+let watchlistCache: WatchlistItem[] = [];
+let watchlistRaw: string | null = null;
+
+function parseWatchlist(raw: string | null): WatchlistItem[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((x) => {
+        if (!x || typeof x !== "object") return null;
+        const rec = x as Record<string, unknown>;
+        const ticker = String(rec.ticker ?? "")
+          .trim()
+          .toUpperCase();
+        const type = rec.type === "fii" ? "fii" : "stock";
+        if (!ticker) return null;
+        return { ticker, type } as WatchlistItem;
+      })
+      .filter((x): x is WatchlistItem => Boolean(x));
+  } catch {
+    return [];
+  }
+}
+
+/** Stable snapshot for useSyncExternalStore (must not allocate a new array every call). */
+function getWatchlistSnapshot(): WatchlistItem[] {
+  if (typeof window === "undefined") return watchlistCache;
+  const raw = localStorage.getItem(WATCHLIST_KEY);
+  if (raw === watchlistRaw) return watchlistCache;
+  watchlistRaw = raw;
+  watchlistCache = parseWatchlist(raw);
+  return watchlistCache;
+}
+
+function writeWatchlist(items: WatchlistItem[]) {
+  if (typeof window === "undefined") return;
+  const raw = JSON.stringify(items);
+  localStorage.setItem(WATCHLIST_KEY, raw);
+  watchlistRaw = raw;
+  watchlistCache = items;
+  window.dispatchEvent(new Event(WATCHLIST_EVENT));
+}
+
+function subscribeWatchlist(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  const handler = () => onStoreChange();
+  window.addEventListener(WATCHLIST_EVENT, handler);
+  window.addEventListener("storage", handler);
+  return () => {
+    window.removeEventListener(WATCHLIST_EVENT, handler);
+    window.removeEventListener("storage", handler);
+  };
+}
+
+const EMPTY_WATCHLIST: WatchlistItem[] = [];
+
+/** Reactive watchlist backed by `localStorage` (`urano.watchlist`). */
+export function useWatchlist() {
+  const items = useSyncExternalStore(
+    subscribeWatchlist,
+    getWatchlistSnapshot,
+    () => EMPTY_WATCHLIST,
+  );
+
+  const add = useCallback((item: WatchlistItem) => {
+    const ticker = item.ticker.trim().toUpperCase();
+    if (!ticker) return;
+    const type: "stock" | "fii" = item.type === "fii" ? "fii" : "stock";
+    const current = getWatchlistSnapshot();
+    if (current.some((x) => x.ticker === ticker)) return;
+    writeWatchlist([...current, { ticker, type }]);
+  }, []);
+
+  const remove = useCallback((ticker: string) => {
+    const t = ticker.trim().toUpperCase();
+    writeWatchlist(getWatchlistSnapshot().filter((x) => x.ticker !== t));
+  }, []);
+
+  const clear = useCallback(() => {
+    writeWatchlist([]);
+  }, []);
+
+  return { items, add, remove, clear };
 }

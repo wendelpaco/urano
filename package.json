@@ -7,6 +7,9 @@
   "scripts": {
     "dev:api": "bun --filter urano-api dev",
     "dev:web": "bun --filter urano-web dev",
+    "start:api": "bun --filter urano-api start",
+    "test": "bun --filter urano-api test",
+    "test:api": "bun --filter urano-api test",
     "typecheck": "bun --filter '*' typecheck",
     "lint": "bun --filter '*' lint --fix"
   }

@@ -31,10 +31,13 @@ services:
     networks:
       - urano-net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # requirepass is set — must AUTH before PING
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
 
 volumes:
   pgdata:

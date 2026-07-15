@@ -14,6 +14,8 @@ import {
   PieChart,
   Landmark,
   ShieldCheck,
+  Eye,
+  Banknote,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -37,12 +39,14 @@ const groups: { label: string; items: NavItem[] }[] = [
       { to: "/market/search", label: "Pesquisa", icon: Search },
       { to: "/market/compare", label: "Comparador", icon: GitCompareArrows },
       { to: "/market/macro", label: "Macro", icon: Landmark },
+      { to: "/watchlist", label: "Watchlist", icon: Eye },
     ],
   },
   {
     label: "Portfolio",
     items: [
       { to: "/portfolio", label: "Carteiras", icon: Wallet, match: (p) => p === "/portfolio" },
+      { to: "/portfolio/income", label: "Proventos / Renda", icon: Banknote },
       { to: "/portfolio/contribution", label: "Aportes", icon: LineChart },
       { to: "/portfolio/allocate", label: "Alocação modelo", icon: PieChart },
     ],

@@ -128,6 +128,17 @@ const spec = {
         responses: { '200': { description: 'Eventos' } },
       },
     },
+    '/stocks/{ticker}/indicators': {
+      get: {
+        tags: ['Ações'], summary: 'Indicadores técnicos (SMA, RSI, MACD, etc.)',
+        parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'PETR4' }],
+        responses: {
+          '200': { description: 'Indicadores técnicos calculados sobre ~1y de preços' },
+          '404': { description: 'Dados insuficientes (< 20 pontos)' },
+          '502': { description: 'Indisponível' },
+        },
+      },
+    },
     '/stocks/quotes': {
       get: {
         tags: ['Ações'], summary: 'Cotações em lote (até 20)',
@@ -199,35 +210,63 @@ const spec = {
       },
     },
 
+    // ── Search ───────────────────────────────────────────────────────────
+    '/search': {
+      get: {
+        tags: ['Análise'], summary: 'Buscar ativos por ticker ou nome',
+        parameters: [
+          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 50 }, example: 'PETR' },
+        ],
+        responses: { '200': { description: 'Resultados da busca (pode disparar scrape em background se ticker desconhecido)' }, '400': { description: 'Query inválida' } },
+      },
+    },
+
     // ── Analysis ─────────────────────────────────────────────────────────
     '/analysis/stocks/{ticker}': {
       get: {
-        tags: ['Análise'], summary: 'Score completo de ação (0-100)',
+        tags: ['Análise'],
+        summary: 'Score de qualidade fundamentalista da ação (0-100)',
+        description:
+          'Score é um filtro de qualidade fundamentalista (screen de fundamentos), não um preditor de retornos em excesso.',
         parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'PETR4' }],
-        responses: { '200': { description: 'Score com breakdown, reasons, alerts e indicadores' } },
+        responses: { '200': { description: 'Score com breakdown, reasons, alerts e indicadores' }, '404': { description: 'Não encontrado' } },
       },
     },
     '/analysis/fiis/{ticker}': {
       get: {
-        tags: ['Análise'], summary: 'Score completo de FII (0-100)',
+        tags: ['Análise'],
+        summary: 'Score de qualidade fundamentalista do FII (0-100)',
+        description:
+          'Score é um filtro de qualidade fundamentalista (screen de fundamentos), não um preditor de retornos em excesso.',
         parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'HGLG11' }],
-        responses: { '200': { description: 'Score FII com classificação e recomendação' } },
+        responses: { '200': { description: 'Score FII com classificação e recomendação' }, '404': { description: 'Não encontrado' } },
       },
     },
     '/analysis/ranking': {
       get: {
-        tags: ['Análise'], summary: 'Ranking por score',
+        tags: ['Análise'],
+        summary: 'Ranking por score de qualidade',
+        description:
+          'Ordena ativos pelo score de qualidade fundamentalista (filtro de qualidade, não preditor de excess returns).',
         parameters: [
           { name: 'type', in: 'query', schema: { type: 'string', enum: ['stock', 'fii'], default: 'stock' } },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 10 } },
-          { name: 'minScore', in: 'query', schema: { type: 'integer' }, description: 'Score mínimo (0-100)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 10, minimum: 1, maximum: 500 } },
+          {
+            name: 'minScore', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 100 },
+            description: 'Filtro de qualidade mínima (0-100); não implica expectativa de retorno',
+          },
+          { name: 'sort', in: 'query', schema: { type: 'string', default: 'score' }, description: 'Campo numérico ou ticker' },
+          { name: 'order', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'], default: 'desc' } },
         ],
-        responses: { '200': { description: 'Ranking' } },
+        responses: { '200': { description: 'Ranking' }, '400': { description: 'Query inválida' } },
       },
     },
     '/analysis/allocate': {
       post: {
-        tags: ['Análise'], summary: 'Sugerir alocação de carteira',
+        tags: ['Análise'],
+        summary: 'Sugerir alocação de carteira',
+        description:
+          'Monta carteira por perfil de risco entre ativos que passam no filtro de qualidade (score). Score não prediz excess returns.',
         requestBody: {
           content: {
             'application/json': {
@@ -238,14 +277,17 @@ const spec = {
                   riskProfile: { type: 'string', enum: ['conservador', 'moderado', 'agressivo'], default: 'moderado' },
                   stockPercent: { type: 'number' },
                   fiiPercent: { type: 'number' },
-                  minScore: { type: 'number' },
+                  minScore: {
+                    type: 'number',
+                    description: 'Filtro de qualidade mínima (0-100); não prediz retorno em excesso',
+                  },
                   maxAssets: { type: 'integer' },
                 },
               },
             },
           },
         },
-        responses: { '200': { description: 'Carteira sugerida' } },
+        responses: { '200': { description: 'Carteira sugerida' }, '400': { description: 'Payload inválido' } },
       },
     },
     '/analysis/compare': {
@@ -265,7 +307,52 @@ const spec = {
             },
           },
         },
-        responses: { '200': { description: 'Comparação com bestPick e avgScore' } },
+        responses: { '200': { description: 'Comparação com bestPick e avgScore' }, '400': { description: 'Payload inválido' } },
+      },
+    },
+    '/analysis/contribution': {
+      post: {
+        tags: ['Análise'],
+        summary: 'Sugerir aporte (contribution advisor)',
+        description:
+          'Sugere onde alocar um aporte dado o perfil e posições atuais, usando score como filtro de qualidade fundamentalista (não preditor de excess returns).',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['amount'],
+                properties: {
+                  amount: { type: 'number', description: 'Valor do aporte (R$)' },
+                  profile: { type: 'string', enum: ['conservador', 'moderado', 'agressivo'], default: 'moderado' },
+                  positions: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        ticker: { type: 'string' },
+                        quantity: { type: 'number' },
+                      },
+                    },
+                    default: [],
+                  },
+                  onlyTypes: { type: 'array', items: { type: 'string', enum: ['stock', 'fii'] } },
+                  excludeSectors: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'Sugestão de aporte com warnings de data health' }, '400': { description: 'Payload inválido' } },
+      },
+    },
+    '/analysis/validation': {
+      get: {
+        tags: ['Análise'],
+        summary: 'Metadados de validação do score',
+        description:
+          'Dados de validação/limites do score como filtro de qualidade (não como preditor de retornos).',
+        responses: { '200': { description: 'Resultados de validação do score' } },
       },
     },
 
@@ -274,7 +361,10 @@ const spec = {
       get: {
         tags: ['Screener'], summary: 'Filtrar ações por 15 indicadores',
         parameters: [
-          { name: 'minScore', in: 'query', schema: { type: 'integer' } },
+          {
+            name: 'minScore', in: 'query', schema: { type: 'integer' },
+            description: 'Filtro de qualidade mínima (score); não implica expectativa de retorno',
+          },
           { name: 'maxScore', in: 'query', schema: { type: 'integer' } },
           { name: 'minPE', in: 'query', schema: { type: 'number' } },
           { name: 'maxPE', in: 'query', schema: { type: 'number' } },
@@ -321,17 +411,82 @@ const spec = {
 
     // ── Wallets ──────────────────────────────────────────────────────────
     '/wallets': {
-      get: { tags: ['Carteiras'], summary: 'Listar carteiras', responses: { '200': { description: 'Carteiras' } } },
+      get: { tags: ['Carteiras'], summary: 'Listar carteiras da API key', responses: { '200': { description: 'Carteiras' } } },
       post: {
         tags: ['Carteiras'], summary: 'Criar carteira',
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' } } } } } },
-        responses: { '201': { description: 'Criada' } },
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name'],
+                properties: { name: { type: 'string', minLength: 1, maxLength: 100 } },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Criada' }, '400': { description: 'Payload inválido' } },
+      },
+    },
+    '/wallets/{walletId}': {
+      get: {
+        tags: ['Carteiras'], summary: 'Detalhes da carteira com ativos',
+        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Carteira + assets' }, '404': { description: 'Não encontrada' } },
+      },
+      put: {
+        tags: ['Carteiras'], summary: 'Atualizar carteira',
+        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 100 } } },
+            },
+          },
+        },
+        responses: { '200': { description: 'Atualizada' }, '400': { description: 'Payload inválido' }, '404': { description: 'Não encontrada' } },
+      },
+      delete: {
+        tags: ['Carteiras'], summary: 'Remover carteira',
+        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Removida' }, '404': { description: 'Não encontrada' } },
+      },
+    },
+    '/wallets/{walletId}/assets': {
+      post: {
+        tags: ['Carteiras'], summary: 'Adicionar ou atualizar ativo na carteira',
+        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['ticker', 'targetAllocationPercent'],
+                properties: {
+                  ticker: { type: 'string', example: 'PETR4' },
+                  targetAllocationPercent: { type: 'number', minimum: 0, maximum: 100 },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Ativo adicionado/atualizado' }, '400': { description: 'Payload inválido' }, '404': { description: 'Carteira não encontrada' } },
+      },
+    },
+    '/wallets/{walletId}/assets/{assetId}': {
+      delete: {
+        tags: ['Carteiras'], summary: 'Remover ativo da carteira',
+        parameters: [
+          { name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+          { name: 'assetId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+        ],
+        responses: { '200': { description: 'Ativo removido' }, '404': { description: 'Carteira ou ativo não encontrado' } },
       },
     },
     '/wallets/{walletId}/rebalance': {
       post: {
         tags: ['Carteiras'], summary: 'Calcular rebalanceamento',
-        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         requestBody: {
           content: {
             'application/json': {
@@ -349,7 +504,7 @@ const spec = {
             },
           },
         },
-        responses: { '200': { description: 'Sugestões de compra/venda' } },
+        responses: { '200': { description: 'Sugestões de compra/venda' }, '404': { description: 'Carteira não encontrada' } },
       },
     },
 
@@ -359,21 +514,37 @@ const spec = {
       post: {
         tags: ['Auth'], summary: 'Criar API key',
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' } } } } } },
-        responses: { '201': { description: 'Chave criada (segredo exibido uma única vez)' } },
+        responses: { '201': { description: 'Chave criada (segredo exibido uma única vez)' }, '400': { description: 'Payload inválido' } },
       },
     },
     '/keys/{id}/rotate': {
       post: {
         tags: ['Auth'], summary: 'Rotacionar API key',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        responses: { '200': { description: 'Nova chave' } },
+        responses: { '200': { description: 'Nova chave' }, '404': { description: 'Não encontrada' } },
       },
     },
     '/keys/{id}': {
       delete: {
         tags: ['Auth'], summary: 'Desativar API key',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        responses: { '200': { description: 'Desativada' } },
+        responses: { '200': { description: 'Desativada' }, '404': { description: 'Não encontrada' } },
+      },
+    },
+
+    // ── Health & diagnostics ─────────────────────────────────────────────
+    '/health/data': {
+      get: {
+        tags: ['Sistema'],
+        summary: 'Saúde dos dados (cobertura, freshness)',
+        responses: { '200': { description: 'Métricas de data health + warnings' } },
+      },
+    },
+    '/health/scraper': {
+      get: {
+        tags: ['Sistema'],
+        summary: 'Diagnóstico do scraper (jobs, circuit breakers, rate limiters)',
+        responses: { '200': { description: 'Status operacional do pipeline de scraping' } },
       },
     },
 
@@ -381,7 +552,7 @@ const spec = {
     '/docs/openapi.json': {
       get: {
         tags: ['Sistema'], summary: 'Especificação OpenAPI 3.0',
-        security: [], responses: { '200': { description: 'OpenAPI JSON' } },
+        responses: { '200': { description: 'OpenAPI JSON' } },
       },
     },
   },

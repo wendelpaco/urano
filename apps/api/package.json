@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun run src/server.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
+
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
