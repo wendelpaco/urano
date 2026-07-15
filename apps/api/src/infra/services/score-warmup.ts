@@ -47,7 +47,8 @@ export interface WarmupResult {
 
 const SCORE_TTL = 3600; // 1 hora para scores individuais
 const RANKING_TTL = 1800; // 30 min para ranking completo (igual ao endpoint)
-const CONCURRENCY = 4; // paralelismo para warmup (moderado para não pesar)
+// Concorrência 1: StatusInvest só aguenta ~0.5 req/s; paralelismo vira 429 em cascata
+const CONCURRENCY = 1;
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 

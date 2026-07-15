@@ -60,9 +60,19 @@ export default defineConfig(({ command, mode }) => {
       ignoreOutdatedRequests: true,
     },
     server: {
-      host: "::",
+      host: true, // 0.0.0.0 + IPv6 — acessível via localhost e IP da LAN
       port: 8080,
       watch: { awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 } },
+      // Dev: browser fala só com :8080. /v1 → API local. Zero CORS / PNA.
+      proxy: {
+        "/v1": {
+          target: process.env.URANO_API_PROXY_TARGET ?? "http://127.0.0.1:3333",
+          changeOrigin: true,
+          // allocate/ranking frios podem passar de 30s se cache estiver vazio
+          timeout: 120_000,
+          proxyTimeout: 120_000,
+        },
+      },
     },
     plugins: [
       ...(mode === "development"

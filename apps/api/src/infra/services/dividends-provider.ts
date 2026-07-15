@@ -9,8 +9,9 @@
  */
 
 import { getOrSet } from './redis.ts';
-import { withRetry } from '../../shared/retry.ts';
+import { withRetry, RateLimitError } from '../../shared/retry.ts';
 import { statusInvestLimiter } from './rate-limiter.ts';
+import { statusInvestCircuitBreaker } from './circuit-breaker.ts';
 import { getDividendsEndpoint } from '../../shared/ticker-utils.ts';
 import type { DividendEvent } from '../../core/services/dividends-analyzer.ts';
 import {
@@ -96,11 +97,11 @@ export class DividendsProvider {
           );
         }
 
-        // 3) Rede
+        // 3) Rede — sem retry em 429 (penalty global + circuit já protegem)
         const events = await withRetry(() => this.doFetch(ticker), {
-          maxRetries: 1,
-          initialDelay: 500,
-          maxDelay: 2000,
+          maxRetries: 0,
+          initialDelay: 1000,
+          maxDelay: 5000,
           timeout: 15_000,
         });
 
@@ -137,7 +138,8 @@ export class DividendsProvider {
     // Usa utilitário centralizado que distingue Units de FIIs
     const { path, params, isFii } = getDividendsEndpoint(ticker);
 
-    // Rate limit centralizado (compartilhado com outros scrapers do StatusInvest)
+    // Se SI em cooldown, não gasta request — caller usa DB/null
+    await statusInvestCircuitBreaker.beforeRequest();
     await statusInvestLimiter.acquire();
 
     const url = `${this.baseUrl}${path}${params}`;
@@ -149,9 +151,26 @@ export class DividendsProvider {
       },
     });
 
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retrySec = retryAfter ? parseInt(retryAfter, 10) || 15 : 15;
+      const retryMs = retrySec * 1000;
+      statusInvestLimiter.penalize(retryMs);
+      await statusInvestCircuitBreaker.onFailure(
+        'rate-limit',
+        `StatusInvest dividends 429 (Retry-After: ${retrySec}s)`,
+      );
+      throw new RateLimitError(
+        `StatusInvest HTTP 429 (Retry-After: ${retrySec}s)`,
+        retryMs,
+      );
+    }
+
     if (!response.ok) {
       throw new Error(`StatusInvest HTTP ${response.status} para ${ticker}`);
     }
+
+    await statusInvestCircuitBreaker.onSuccess();
 
     const text = await response.text();
     if (!text || text.trim() === '[]' || text.trim() === 'null') {

@@ -50,7 +50,25 @@ const app = Fastify({
   },
 });
 
-await app.register(cors, { origin: [env.CORS_ORIGIN], methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] });
+// CORS_ORIGIN aceita um host ou lista separada por vírgula
+// (ex.: http://localhost:8080,http://10.4.20.13:8080).
+const corsOrigins = env.CORS_ORIGIN.split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+await app.register(cors, {
+  origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  // Chrome Private Network Access: front em localhost → API em IP privado
+  allowedHeaders: ['Content-Type', 'x-api-key', 'x-request-id', 'Authorization'],
+});
+
+// Chrome PNA preflight exige este header além do ACAO
+app.addHook('onRequest', async (request, reply) => {
+  if (request.headers['access-control-request-private-network'] === 'true') {
+    void reply.header('Access-Control-Allow-Private-Network', 'true');
+  }
+});
 
 // Request correlation id, security headers, rate limiting (does not touch CORS)
 app.addHook('onRequest', requestIdHook);
@@ -120,7 +138,8 @@ app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
 const jobStore = new JobStore();
 const jobWorker = new JobWorker(jobStore);
 const scheduler = new JobScheduler(jobStore, jobWorker, {
-  enabled: env.SCHEDULER_ENABLED, checkInterval: 30_000, maxConcurrentJobs: 3, staleTimeout: 300_000,
+  // maxConcurrentJobs=2: menos pressão no StatusInvest (rate limit free ~0.5 rps)
+  enabled: env.SCHEDULER_ENABLED, checkInterval: 30_000, maxConcurrentJobs: 2, staleTimeout: 300_000,
 });
 scheduler.start().catch((err) => console.warn('[scheduler] Falha ao iniciar:', err.message));
 

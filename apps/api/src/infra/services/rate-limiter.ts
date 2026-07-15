@@ -1,14 +1,8 @@
 /**
  * Rate Limiter Centralizado por Domínio
  *
- * TokenBucket compartilhado entre todos os serviços que batem no mesmo host.
- * Isso evita que múltiplos scrapers/workers estourem o rate limit do servidor.
- *
- * Características:
- * - Uma instância por domínio (ex: statusinvest.com.br, yahoo.com)
- * - Thread-safe via Promises (single-threaded JS, mas seguro para concorrência)
- * - Jitter opcional: adiciona aleatoriedade de até 20% no intervalo
- * - Estatísticas: total de aquisições, tempo de espera acumulado
+ * TokenBucket serializado (fila) — evita thundering herd quando N corrotinas
+ * chamam acquire() ao mesmo tempo (warmup + scheduler + requests HTTP).
  */
 
 // ─── TokenBucket ─────────────────────────────────────────────────────────────
@@ -20,161 +14,191 @@ export class TokenBucket {
   private readonly maxTokens: number;
   private readonly jitter: boolean;
 
-  // Stats (para monitoramento)
+  /** Fila de aquisição — garante serialização entre awaiters concorrentes */
+  private chain: Promise<void> = Promise.resolve();
+
+  /** Pausa extra após 429 (ms absoluto no relógio) */
+  private penaltyUntil = 0;
+
   public totalAcquisitions = 0;
   public totalWaitMs = 0;
+  public totalPenalties = 0;
 
   constructor(options: {
-    /** Tokens por segundo (ex: 1.5 = 1 requisição a cada 667ms) */
+    /** Tokens por segundo (ex: 0.5 = 1 req a cada 2s) */
     ratePerSecond: number;
-    /** Máximo de tokens acumulados (permite pequena rajada inicial) */
+    /** Máximo de tokens acumulados (rajada). Prefira 1 em fontes sensíveis. */
     maxTokens?: number;
-    /** Adiciona jitter de até 20% no tempo de espera */
     jitter?: boolean;
   }) {
     const rate = options.ratePerSecond;
-    this.maxTokens = options.maxTokens ?? Math.max(2, Math.ceil(rate));
+    this.maxTokens = options.maxTokens ?? 1;
     this.tokens = this.maxTokens;
     this.lastRefill = Date.now();
-    this.refillRate = rate / 1000; // tokens por ms
+    this.refillRate = rate / 1000;
     this.jitter = options.jitter ?? true;
   }
 
   /**
    * Aguarda até que um token esteja disponível e o consome.
-   *
-   * @returns O tempo de espera em ms (0 se token estava disponível)
+   * Serializado: só um waiter avança por vez.
    */
   async acquire(): Promise<number> {
-    this.refill();
-    this.totalAcquisitions++;
+    const run = async (): Promise<number> => {
+      this.totalAcquisitions++;
+      let waited = 0;
 
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return 0;
+      // Respeita penalty de 429 global
+      const now0 = Date.now();
+      if (this.penaltyUntil > now0) {
+        const p = this.penaltyUntil - now0;
+        await sleep(p);
+        waited += p;
+      }
+
+      this.refill();
+
+      if (this.tokens < 1) {
+        let waitMs = Math.ceil((1 - this.tokens) / this.refillRate);
+        if (this.jitter && waitMs > 0) {
+          waitMs += Math.floor(Math.random() * waitMs * 0.2);
+        }
+        // Floor mínimo 50ms evita spin
+        waitMs = Math.max(50, waitMs);
+        await sleep(waitMs);
+        waited += waitMs;
+        this.refill();
+      }
+
+      this.tokens = Math.max(0, this.tokens - 1);
+      this.totalWaitMs += waited;
+      return waited;
+    };
+
+    // Encadeia na fila (mutex por promise)
+    const prev = this.chain;
+    let release!: () => void;
+    this.chain = new Promise<void>((r) => {
+      release = r;
+    });
+    await prev;
+    try {
+      return await run();
+    } finally {
+      release();
     }
-
-    // Calcula quanto tempo esperar até o próximo token
-    let waitMs = Math.ceil((1 - this.tokens) / this.refillRate);
-
-    // Adiciona jitter: +0% a +20% aleatório para evitar thundering herd
-    if (this.jitter && waitMs > 0) {
-      const jitterAmount = Math.floor(Math.random() * waitMs * 0.2);
-      waitMs += jitterAmount;
-    }
-
-    this.totalWaitMs += waitMs;
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-
-    this.tokens = 0;
-    this.lastRefill = Date.now();
-    return waitMs;
   }
 
-  /** Retorna ms estimados até próximo token (sem esperar) */
+  /**
+   * Após HTTP 429: congela o bucket por `ms` (ex.: Retry-After).
+   * Novas aquisições esperam o penalty antes de liberar tokens.
+   */
+  penalize(ms: number): void {
+    const until = Date.now() + Math.max(0, ms);
+    if (until > this.penaltyUntil) {
+      this.penaltyUntil = until;
+      this.tokens = 0;
+      this.totalPenalties++;
+      console.warn(
+        `[rate-limit] ⏸️ penalty ${Math.round(ms / 1000)}s (bucket pausado até o Retry-After)`,
+      );
+    }
+  }
+
   estimateWait(): number {
     this.refill();
-    if (this.tokens >= 1) return 0;
-    return Math.ceil((1 - this.tokens) / this.refillRate);
+    const penaltyLeft = Math.max(0, this.penaltyUntil - Date.now());
+    if (this.tokens >= 1 && penaltyLeft === 0) return 0;
+    const tokenWait =
+      this.tokens >= 1 ? 0 : Math.ceil((1 - this.tokens) / this.refillRate);
+    return Math.max(penaltyLeft, tokenWait);
   }
 
   private refill(): void {
     const now = Date.now();
+    // Não recarrega tokens durante penalty
+    if (now < this.penaltyUntil) {
+      this.lastRefill = now;
+      return;
+    }
     const elapsed = now - this.lastRefill;
     this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
     this.lastRefill = now;
   }
 }
 
-// ─── Registro Central de Rate Limiters ──────────────────────────────────────
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
-/**
- * RateLimiterRegistry mantém UMA instância de TokenBucket por domínio.
- *
- * Uso:
- *   const limiter = rateLimiterRegistry.get('statusinvest.com.br');
- *   await limiter.acquire();
- *   // faz a requisição...
- */
+// ─── Registro ────────────────────────────────────────────────────────────────
+
 class RateLimiterRegistry {
   private buckets = new Map<string, TokenBucket>();
 
-  /**
-   * Obtém (ou cria) o rate limiter para um domínio.
-   *
-   * @param domain   Domínio do serviço (ex: 'statusinvest.com.br')
-   * @param ratePerSecond  Requisições por segundo permitidas
-   * @param maxTokens      Máximo de tokens acumulados (rajada inicial)
-   */
-  get(
-    domain: string,
-    ratePerSecond: number,
-    maxTokens?: number,
-  ): TokenBucket {
+  get(domain: string, ratePerSecond: number, maxTokens?: number): TokenBucket {
     const existing = this.buckets.get(domain);
     if (existing) return existing;
-
     const bucket = new TokenBucket({ ratePerSecond, maxTokens, jitter: true });
     this.buckets.set(domain, bucket);
     return bucket;
   }
 
-  /** Lista todos os domínios registrados com suas estatísticas */
-  getStats(): Record<string, { acquired: number; totalWaitMs: number; estimatedWaitMs: number }> {
-    const stats: Record<string, { acquired: number; totalWaitMs: number; estimatedWaitMs: number }> = {};
+  getStats(): Record<
+    string,
+    { acquired: number; totalWaitMs: number; estimatedWaitMs: number; penalties: number }
+  > {
+    const stats: Record<
+      string,
+      { acquired: number; totalWaitMs: number; estimatedWaitMs: number; penalties: number }
+    > = {};
     for (const [domain, bucket] of this.buckets) {
       stats[domain] = {
         acquired: bucket.totalAcquisitions,
         totalWaitMs: bucket.totalWaitMs,
         estimatedWaitMs: bucket.estimateWait(),
+        penalties: bucket.totalPenalties,
       };
     }
     return stats;
   }
 }
 
-/** Singleton — use esta instância em toda a aplicação */
 export const rateLimiterRegistry = new RateLimiterRegistry();
 
-// ─── Limitadores pré-configurados ───────────────────────────────────────────
+// ─── Pré-configurados ────────────────────────────────────────────────────────
 
 /**
- * StatusInvest: generoso em limites explícitos, mas na prática começa a
- * retornar 429 acima de ~2 req/s sustentadas. Usamos 1.5 req/s com
- * rajada inicial de 2 para equilibrar velocidade e segurança.
+ * StatusInvest: na prática 429 em rajadas > ~1 req/s.
+ * 0.5 req/s + maxTokens=1 + fila serial = ~1 req a cada 2s, sem burst.
  */
 export const statusInvestLimiter = rateLimiterRegistry.get(
   'statusinvest.com.br',
-  1.5,  // req/s
-  2,    // max tokens
+  0.5,
+  1,
 );
 
-/**
- * Yahoo Finance v8 (chart API): uso razoável gratuito.
- * ~5 req/s é seguro; rajada de 5 permite carregar dashboard rapidamente.
- */
+/** Yahoo chart: um pouco mais permissivo, mas sem rajada grande. */
 export const yahooLimiter = rateLimiterRegistry.get(
   'query1.finance.yahoo.com',
-  5,  // req/s
-  5,  // max tokens
+  2,
+  2,
 );
 
 /**
- * CVM (dados.cvm.gov.br): dados públicos, ZIP de 12MB.
- * 1 req/s é conservador; raramente falha por rate limit.
+ * Investidor10 JSON (batch/chart): primária de cotação.
+ * Conservador — site comercial, evita 429 em warmup.
  */
-export const cvmLimiter = rateLimiterRegistry.get(
-  'dados.cvm.gov.br',
-  1,  // req/s
-  1,  // max tokens
+export const investidor10Limiter = rateLimiterRegistry.get(
+  'investidor10.com.br',
+  1,
+  1,
 );
 
-/**
- * Fundamentus (fundamentus.com.br): site clássico brasileiro.
- * 2 req/s — mais tolerante que StatusInvest.
- */
+export const cvmLimiter = rateLimiterRegistry.get('dados.cvm.gov.br', 1, 1);
+
 export const fundamentusLimiter = rateLimiterRegistry.get(
   'www.fundamentus.com.br',
-  2,  // req/s
-  2,  // max tokens
+  1,
+  1,
 );

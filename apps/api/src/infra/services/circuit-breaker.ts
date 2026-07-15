@@ -314,11 +314,11 @@ export class CircuitOpenError extends Error {
 
 // ─── Circuit Breakers Pré-Configurados ───────────────────────────────────────
 
-/** StatusInvest: abre após 5 falhas consecutivas de rate-limit, cooldown 120s */
+/** StatusInvest: abre cedo em 429 e descansa mais (fonte free sensível) */
 export const statusInvestCircuitBreaker = new CircuitBreaker({
   service: 'statusinvest',
-  failureThreshold: 5,
-  cooldownMs: 120_000, // 2 minutos
+  failureThreshold: 3,
+  cooldownMs: 180_000, // 3 minutos
   failureTypes: ['rate-limit', 'server-error'],
 });
 
@@ -328,6 +328,14 @@ export const yahooCircuitBreaker = new CircuitBreaker({
   failureThreshold: 3,
   cooldownMs: 60_000, // 1 minuto
   failureTypes: ['rate-limit', 'server-error'],
+});
+
+/** Investidor10: primária de cotação JSON; cooldown curto o bastante para fallback Yahoo/SI */
+export const investidor10CircuitBreaker = new CircuitBreaker({
+  service: 'investidor10',
+  failureThreshold: 4,
+  cooldownMs: 120_000,
+  failureTypes: ['rate-limit', 'server-error', 'network-error'],
 });
 
 /** CVM: abre após 3 falhas, cooldown 300s (dados grandes, espera mais) */
@@ -348,6 +356,7 @@ export async function getCircuitBreakerStats(): Promise<
   Record<string, CircuitStateData>
 > {
   const breakers = [
+    investidor10CircuitBreaker,
     statusInvestCircuitBreaker,
     yahooCircuitBreaker,
     cvmCircuitBreaker,

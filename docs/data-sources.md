@@ -6,14 +6,16 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 
 | Prioridade | Fonte | Uso principal | Confiabilidade |
 |---|---|---|---|
-| 1 | **CVM / B3 (oficial)** | Fundamentals de empresas listadas (DRE/BPA/BPP/DFC via dados públicos CVM); universo de tickers B3 | Alta — base do score de ações |
+| 1 | **CVM / B3 (oficial)** | Fundamentals (ETL **mensal**); FII informe; universo B3 | Alta — base do score de ações |
 | 2 | **BCB** | Séries macro (Selic, IPCA, câmbio, etc.) via API SGS pública | Alta — séries oficiais |
-| 3 | **Yahoo Finance** | Cotações, histórico OHLCV, **IBOV (`^BVSP`)**, momento, volume | Média — gratuito, sem SLA; circuit breaker + retry |
-| 4 | **StatusInvest (scraper / JSON)** | Proventos (persistidos em `dividend_events`), indicadores FII, fallback de cotação | Baixa/média — **scrapers frágeis**; HTML e endpoints mudam sem aviso |
+| 3 | **Investidor10 (JSON)** | **Primária de cotação/histórico** (`batch`, `chart`); não substitui CVM | Média — API não documentada; rate limit + circuit |
+| 4 | **Yahoo Finance** | Fallback cotação/histórico OHLCV, **IBOV (`^BVSP`)**, volume | Média — gratuito, sem SLA |
+| 5 | **StatusInvest** | Proventos (`dividend_events`), indicadores FII, **último** fallback de cotação | Baixa/média — HTML frágil; 429 frequentes |
 
 ### Pacote A (free-only) — implementado
 
-- Cotação/histórico com `source` + `asOf` (`statusinvest` | `yahoo`)
+- Cotação/histórico com `source` + `asOf` (`investidor10` \| `yahoo` \| `statusinvest`)
+- Cadeia de mercado: **Investidor10 → Yahoo → StatusInvest** (`stock-quote-service`)
 - `GET /v1/benchmarks` e `/v1/benchmarks/:id` (IBOV; IFIX experimental)
 - Proventos: Redis → Postgres `dividend_events` (24h) → StatusInvest
 - Macro BCB expandido (CDI, IGP-M, SELIC diária, desemprego, …) com `source: bcb_sgs`
@@ -44,9 +46,13 @@ Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + p
 
 ### Cotações e histórico
 
-- **Primário:** Yahoo Finance (símbolo `.SA`).
-- **Fallback / enriquecimento:** StatusInvest quando Yahoo falha ou no fluxo lazy scrape.
-- Cache Redis (TTL curto a médio) para reduzir chamadas.
+- **Primário (rede):** Investidor10 JSON
+  - `GET https://investidor10.com.br/api/cotacoes/batch?tickers=PRIO3,PETR4`
+  - `GET https://investidor10.com.br/api/cotacoes/acao/chart/PRIO3/`
+- **Fallback 1:** Yahoo Finance (símbolo `.SA`, OHLCV completo).
+- **Fallback 2:** StatusInvest scrape (último recurso).
+- Cache Redis (~5 min quote, ~30 min history).
+- IBOV / índices: Yahoo (`^BVSP`) — fora do path de ações B3.
 
 ### Macro
 
@@ -88,7 +94,8 @@ Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + p
 |---|---|
 | CVM | `apps/api/src/infra/services/cvm-storage-service.ts`, `workers/cvm-sync-worker.ts` |
 | BCB | `apps/api/src/infra/http/controllers/macro.controller.ts` |
-| Yahoo | `apps/api/src/infra/services/stock-quote-service.ts`, `market-data-service.ts` |
+| Investidor10 | `investidor10-provider.ts` (batch + chart) |
+| Yahoo / cadeia de quote | `stock-quote-service.ts`, `market-data-service.ts` |
 | StatusInvest | `statusinvest-scraper.ts`, `dividends-provider.ts`, `scrapers/statusinvest-parse.ts` |
 | Lazy / composição | `lazy-data-service.ts` |
 

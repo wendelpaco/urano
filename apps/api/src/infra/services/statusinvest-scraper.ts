@@ -310,23 +310,27 @@ export class StatusInvestScraper {
    * - Retry inteligente (3 tentativas, jitter, Retry-After)
    */
   private async fetchPage(url: string): Promise<string> {
-    // Circuit breaker: verifica se o circuito está aberto
+    // Circuit breaker: rejeita cedo se StatusInvest está em cooldown (evita spam de 429)
     await statusInvestCircuitBreaker.beforeRequest();
 
-    // Rate limit: aguarda token disponível
+    // Rate limit serializado (1 token; fila global entre scrapers/warmup/dividends)
     await statusInvestLimiter.acquire();
 
     try {
+      // maxRetries baixo: retentar 429 em massa piora o ban. Preferir fallback Yahoo.
       const html = await withRetry(async () => {
         const headers = this.getHeaders(this.baseUrl + '/');
         const response = await fetch(url, { headers });
 
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');
-          const retrySec = retryAfter ? parseInt(retryAfter, 10) || 5 : 5;
+          const retrySec = retryAfter ? parseInt(retryAfter, 10) || 15 : 15;
+          const retryMs = retrySec * 1000;
+          // Pausa o bucket global — outras corrotinas também esperam
+          statusInvestLimiter.penalize(retryMs);
           throw new RateLimitError(
             `StatusInvest HTTP 429 (Retry-After: ${retrySec}s)`,
-            retrySec * 1000,
+            retryMs,
           );
         }
 
@@ -336,24 +340,21 @@ export class StatusInvestScraper {
 
         return response.text();
       }, {
-        maxRetries: 3,
-        initialDelay: 1000,
-        maxDelay: 30_000,
+        maxRetries: 1,
+        initialDelay: 2000,
+        maxDelay: 20_000,
         timeout: 15_000,
       });
 
-      // Sucesso: notifica circuit breaker
       await statusInvestCircuitBreaker.onSuccess();
       return html;
     } catch (error) {
-      // Classifica o erro para o circuit breaker
       if (error instanceof RateLimitError) {
         await statusInvestCircuitBreaker.onFailure('rate-limit', error.message);
       } else if (error instanceof Error && error.message.includes('HTTP 5')) {
         await statusInvestCircuitBreaker.onFailure('server-error', error.message);
-      } else {
-        await statusInvestCircuitBreaker.onFailure('network-error', (error as Error).message);
       }
+      // 404 / client-error não contam no circuit (não é outage da fonte)
       throw error;
     }
   }

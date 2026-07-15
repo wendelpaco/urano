@@ -952,10 +952,18 @@ export async function getAllocationController(
   if (!parsed.success)
     return sendZodError(reply, parsed.error, 'Payload inválido.');
 
-  const engine = new AllocationEngine();
-  const result = await engine.buildAllocation(parsed.data);
-
-  reply.send(result);
+  try {
+    const engine = new AllocationEngine();
+    const result = await engine.buildAllocation(parsed.data);
+    reply.send(result);
+  } catch (err) {
+    request.log.error({ err }, 'allocation failed');
+    reply.status(503).send({
+      error: 'ServiceUnavailable',
+      message:
+        'Falha ao montar alocação (fontes de preço/score indisponíveis). Tente de novo em instantes.',
+    });
+  }
 }
 
 // ─── GET /v1/analysis/validation ─────────────────────────────────────────────

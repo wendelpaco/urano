@@ -150,9 +150,11 @@ export async function withRetry<T>(
 
       // Última tentativa → lança
       if (attempt === opts.maxRetries) {
-        console.warn(
-          `[retry] ❌ Esgotadas ${opts.maxRetries + 1} tentativas: ${lastError.message}`,
-        );
+        if (opts.maxRetries > 0) {
+          console.warn(
+            `[retry] esgotado (${opts.maxRetries + 1}x): ${lastError.message.slice(0, 100)}`,
+          );
+        }
         throw lastError;
       }
 
@@ -161,30 +163,32 @@ export async function withRetry<T>(
 
       // Erro de cliente (4xx não 429): não faz sentido retentar
       if (kind === 'client-error') {
-        console.warn(
-          `[retry] ❌ Erro de cliente (não retentável): ${lastError.message}`,
-        );
+        // 404 Yahoo/SI são esperados p/ tickers delistados — log curto
+        if (!/HTTP 404/.test(lastError.message)) {
+          console.warn(`[retry] client: ${lastError.message.slice(0, 100)}`);
+        }
         throw lastError;
       }
 
       // Calcula delay
       let delayMs: number;
       if (kind === 'rate-limit' && retryAfterMs) {
-        // 429: usa Retry-After como base, com jitter + backoff progressivo
-        const baseDelay = Math.max(retryAfterMs, opts.initialDelay * Math.pow(opts.backoffFactor, attempt));
+        // 429: espera o Retry-After completo (sem retry agressivo em paralelo)
+        const baseDelay = Math.max(
+          retryAfterMs,
+          opts.initialDelay * Math.pow(opts.backoffFactor, attempt),
+        );
         delayMs = calculateDelayWithJitter(Math.min(baseDelay, opts.maxDelay));
         console.warn(
-          `[retry] ⚡ Rate limit (429) — tentativa ${attempt + 1}/${opts.maxRetries} ` +
-            `em ${Math.round(delayMs / 1000)}s (Retry-After: ${retryAfterMs / 1000}s)`,
+          `[retry] 429 → espera ${Math.round(delayMs / 1000)}s ` +
+            `(${attempt + 1}/${opts.maxRetries})`,
         );
       } else {
-        // Backoff normal: exponential com jitter
         const baseDelay = opts.initialDelay * Math.pow(opts.backoffFactor, attempt);
         delayMs = calculateDelayWithJitter(Math.min(baseDelay, opts.maxDelay));
         console.warn(
-          `[retry] ${kind === 'server-error' ? '🔥 Servidor' : '🌐 Rede'} — ` +
-            `tentativa ${attempt + 1}/${opts.maxRetries} ` +
-            `em ${Math.round(delayMs / 1000)}s: ${lastError.message.slice(0, 80)}`,
+          `[retry] ${kind === 'server-error' ? '5xx' : 'net'} ` +
+            `${attempt + 1}/${opts.maxRetries} +${Math.round(delayMs / 1000)}s`,
         );
       }
 

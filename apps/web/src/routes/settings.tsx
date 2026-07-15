@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { apiSettings } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { apiSettings, pingHealthcheck, apiFetch, ApiError } from "@/lib/api";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, Check, ExternalLink, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { useHealthData } from "@/components/app/HealthBanner";
 import { HealthBadge } from "@/components/app/badges";
 
 export const Route = createFileRoute("/settings")({
@@ -26,9 +26,20 @@ function SettingsPage() {
   const [authMsg, setAuthMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    setBaseUrl(apiSettings.getBaseUrl());
+    // Migra misconfig antiga (:3333) → same-origin e limpa o campo
+    const stored = apiSettings.getStoredBaseUrl();
+    if (stored && /:(3333|3000)(\/|$)/.test(stored)) {
+      apiSettings.setBaseUrl(""); // same-origin via proxy
+      setBaseUrl("");
+      toast.message("Base URL corrigida", {
+        description: "Removemos a porta da API (:3333). Usando o front (:8080) + proxy.",
+      });
+    } else {
+      setBaseUrl(stored);
+    }
     setKey(apiSettings.getKey());
     const m = sessionStorage.getItem("urano.auth.msg");
     if (m) {
@@ -37,7 +48,35 @@ function SettingsPage() {
     }
   }, []);
 
-  const health = useHealthData();
+  // 1) Ping público — define se a API responde (badge principal)
+  const ping = useQuery({
+    queryKey: ["health", "ping", tick],
+    queryFn: () => pingHealthcheck(),
+    staleTime: 10_000,
+    retry: 1,
+    enabled: typeof window !== "undefined",
+  });
+
+  // 2) Auth opcional — não bloqueia o status de conexão
+  const auth = useQuery({
+    queryKey: ["health", "auth", tick, key ? "has-key" : "no-key"],
+    queryFn: async (): Promise<"ok" | "missing" | "invalid"> => {
+      const k = apiSettings.getKey();
+      if (!k) return "missing";
+      try {
+        await apiFetch({ path: "/health/data" });
+        return "ok";
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          return e.status === 401 ? "invalid" : "ok";
+        }
+        throw e;
+      }
+    },
+    staleTime: 10_000,
+    retry: 0,
+    enabled: typeof window !== "undefined" && ping.isSuccess,
+  });
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,8 +90,19 @@ function SettingsPage() {
     apiSettings.setKey(key);
     setSaved(true);
     toast.success("Configurações salvas");
+    setTick((t) => t + 1);
     setTimeout(() => setSaved(false), 1500);
   };
+
+  const effectiveBase = typeof window !== "undefined" ? apiSettings.getBaseUrl() : "";
+
+  const badgeStatus = ping.isLoading
+    ? "warn"
+    : ping.isError
+      ? "error"
+      : ping.data?.status === "ok"
+        ? "ok"
+        : "warn";
 
   return (
     <div className="p-6 md:p-10 max-w-5xl">
@@ -72,9 +122,6 @@ function SettingsPage() {
           <div>
             <div className="font-semibold text-negative">Autenticação inválida (401)</div>
             <div className="text-muted-foreground mt-0.5">{authMsg}</div>
-            <div className="text-muted-foreground text-xs mt-1">
-              Corrija a API Key abaixo e salve para continuar.
-            </div>
           </div>
         </div>
       ) : null}
@@ -104,13 +151,20 @@ function SettingsPage() {
                 id="baseUrl"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.urano.example.com"
+                placeholder="(vazio = mesmo host do front — recomendado)"
                 className="font-mono"
                 autoComplete="off"
                 spellCheck={false}
               />
-              <p className="text-[11px] text-muted-foreground">
-                Endereço base do backend Urano. Todas as chamadas serão feitas a partir deste host.
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Em dev: <strong>deixe vazio</strong> (ou{" "}
+                <code className="px-1 rounded bg-surface-2">http://localhost:8080</code>). Não use{" "}
+                <code className="px-1 rounded bg-surface-2">:3333</code> e não coloque{" "}
+                <code className="px-1 rounded bg-surface-2">/v1</code> — o client e o proxy tratam
+                isso.
+              </p>
+              <p className="text-[11px] font-mono text-muted-foreground">
+                Efetivo agora: {effectiveBase || "—"}
               </p>
             </div>
 
@@ -126,15 +180,13 @@ function SettingsPage() {
                 type="password"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="sk-…"
+                placeholder="ur_… (bun run key:create em apps/api)"
                 className="font-mono"
                 autoComplete="off"
                 spellCheck={false}
               />
               <p className="text-[11px] text-muted-foreground">
-                Enviada como <code className="px-1 rounded bg-surface-2">x-api-key</code> em cada
-                requisição. Guardada apenas em{" "}
-                <code className="px-1 rounded bg-surface-2">localStorage</code>.
+                Enviada como <code className="px-1 rounded bg-surface-2">x-api-key</code>.
               </p>
             </div>
 
@@ -148,8 +200,13 @@ function SettingsPage() {
                   "Salvar configurações"
                 )}
               </Button>
-              <Button type="button" variant="outline" onClick={() => health.refetch()}>
-                Testar conexão
+              <Button
+                type="button"
+                variant="outline"
+                disabled={ping.isFetching}
+                onClick={() => setTick((t) => t + 1)}
+              >
+                {ping.isFetching ? "Testando…" : "Testar conexão"}
               </Button>
             </div>
           </form>
@@ -159,31 +216,49 @@ function SettingsPage() {
           <PanelHeader title="Status da API" />
           <div className="p-6 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Endpoint</span>
-              <HealthBadge
-                status={
-                  health.isLoading
-                    ? "warn"
-                    : health.isError
-                      ? "error"
-                      : (health.data?.status ?? "ok")
-                }
-              />
+              <span className="text-xs text-muted-foreground">Conexão</span>
+              <HealthBadge status={badgeStatus} />
             </div>
             <div className="text-[11px] text-muted-foreground break-all font-mono">
-              {baseUrl || "não configurado"}
+              {effectiveBase}/v1/healthcheck
             </div>
-            {health.isError ? (
-              <div className="text-xs text-negative">{(health.error as Error).message}</div>
+
+            {ping.isLoading || ping.isFetching ? (
+              <div className="text-xs text-muted-foreground">Testando conexão…</div>
             ) : null}
-            {health.data?.sources?.length ? (
-              <div className="space-y-1.5 pt-2 border-t border-border">
-                {health.data.sources.map((s) => (
-                  <div key={s.name} className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{s.name}</span>
-                    <HealthBadge status={s.status ?? "ok"} />
-                  </div>
-                ))}
+
+            {ping.isError ? (
+              <div className="text-xs text-negative whitespace-pre-wrap">
+                {(ping.error as Error).message}
+              </div>
+            ) : null}
+
+            {ping.isSuccess ? (
+              <div className="space-y-1.5 pt-2 border-t border-border text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">API</span>
+                  <span className="text-positive">{ping.data.status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Database</span>
+                  <span>{ping.data.checks?.database ?? "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Redis</span>
+                  <span>{ping.data.checks?.redis ?? "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">API Key</span>
+                  <span>
+                    {auth.isLoading
+                      ? "…"
+                      : auth.data === "ok"
+                        ? "válida"
+                        : auth.data === "invalid"
+                          ? "inválida"
+                          : "não informada"}
+                  </span>
+                </div>
               </div>
             ) : null}
           </div>
@@ -192,7 +267,7 @@ function SettingsPage() {
 
       <div className="mt-4 text-[11px] text-muted-foreground flex items-center gap-1">
         <ExternalLink className="h-3 w-3" />
-        Todas as configurações são armazenadas localmente no seu navegador.
+        Configurações só no navegador (localStorage).
       </div>
     </div>
   );

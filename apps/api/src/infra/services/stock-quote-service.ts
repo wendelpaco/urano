@@ -1,12 +1,21 @@
-import { getOrSet } from './redis.ts';
+import { getOrSet, redis } from './redis.ts';
 import { withRetry, RateLimitError } from '../../shared/retry.ts';
 import { yahooLimiter } from './rate-limiter.ts';
-import { yahooCircuitBreaker } from './circuit-breaker.ts';
+import {
+  yahooCircuitBreaker,
+  statusInvestCircuitBreaker,
+  investidor10CircuitBreaker,
+  CircuitOpenError,
+} from './circuit-breaker.ts';
 import { StatusInvestScraper } from './statusinvest-scraper.ts';
+import { investidor10Provider } from './investidor10-provider.ts';
+import { isFii } from '../../shared/ticker-utils.ts';
 
 /**
  * Dados de cotação em tempo real de um ativo da B3.
- * Obtidos via Yahoo Finance (gratuito, sem API key).
+ *
+ * Mercado (preço/histórico): Investidor10 → Yahoo → StatusInvest
+ * Fundamentals oficiais: CVM mensal (fora deste serviço)
  */
 export interface StockHistoryPoint {
   date: string;
@@ -17,7 +26,7 @@ export interface StockHistoryPoint {
   volume: number;
 }
 
-export type QuoteSource = 'statusinvest' | 'yahoo';
+export type QuoteSource = 'investidor10' | 'statusinvest' | 'yahoo';
 
 export interface StockHistory {
   ticker: string;
@@ -88,69 +97,125 @@ interface YahooFinanceResponse {
 }
 
 /**
- * Serviço de cotações em tempo real com cache Redis.
+ * Serviço de cotações com cache Redis.
  *
- * Fonte primária: StatusInvest (mais confiável para B3)
- * Fallback: Yahoo Finance v8 API (gratuita, uso razoável)
+ * Ordem de mercado (free):
+ *  1. Investidor10 (JSON batch/chart) — primária
+ *  2. Yahoo Finance
+ *  3. StatusInvest (último recurso)
  *
- * Cache:
- *  - Cotação: 120s (2 min, suficiente para dashboards)
- *  - Histórico: 30 min (dados diários, não mudam intraday)
- *
- * Rate limit: 5 req/s para Yahoo Finance (centralizado)
+ * Cache: cotação 5 min · histórico 30 min
  */
 export class StockQuoteService {
   private readonly baseUrl =
     'https://query1.finance.yahoo.com/v8/finance/chart';
   private readonly statusInvest = new StatusInvestScraper();
+  private readonly quoteTtlSec = 300;
 
   /**
    * Busca cotação atual de um ticker da B3.
-   *
-   * Cache Redis de 120s (vs 30s anterior) — cotações B3 têm delay natural
-   * de 15 min para dados gratuitos, então 2 min é seguro e reduz chamadas.
    */
   async getQuote(ticker: string): Promise<StockQuote> {
     const cacheKey = `quote:${ticker.toUpperCase()}`;
-
-    return getOrSet(cacheKey, 120, () =>
-      // StatusInvest como fonte PRIMÁRIA (dados B3 mais confiáveis para ações brasileiras)
-      this.fetchFromStatusInvest(ticker).catch((siErr) => {
-        console.warn(`[quote] StatusInvest falhou para ${ticker} (${(siErr as Error).message}), tentando Yahoo...`);
-        const symbol = this.toYahooSymbol(ticker);
-        return withRetry(() => this.fetchQuote(symbol, ticker), {
-          maxRetries: 2,
-          initialDelay: 1000,
-          maxDelay: 15_000,
-          timeout: 10_000,
-        });
-      }));
+    return getOrSet(cacheKey, this.quoteTtlSec, () => this.resolveQuote(ticker));
   }
 
   /**
-   * Busca cotações de múltiplos tickers com controle de concorrência.
-   * Processa em lotes de 2 para não estourar rate limit do Yahoo.
+   * Cadeia: Investidor10 → Yahoo → StatusInvest
    */
-  async getQuotes(tickers: string[]): Promise<Map<string, StockQuote>> {
-    // Processa sequencialmente (cada chamada já tem cache Redis de 120s,
-    // então chamadas repetidas são instantâneas). Para tickers novos,
-    // o rate limiter do Yahoo garante espaçamento.
-    const results: (StockQuote | null)[] = [];
-    for (const ticker of tickers) {
+  private async resolveQuote(ticker: string): Promise<StockQuote> {
+    const symbol = this.toYahooSymbol(ticker);
+    const errors: string[] = [];
+
+    // 1) Investidor10
+    if (!(await this.isCircuitOpen(investidor10CircuitBreaker))) {
       try {
-        const quote = await this.getQuote(ticker);
-        results.push(quote);
-      } catch {
-        results.push(null);
+        const hit = await investidor10Provider.getQuote(ticker);
+        const asOf = hit.lastUpdate
+          ? this.i10UpdateToIso(hit.lastUpdate)
+          : new Date().toISOString();
+        console.log(`[quote] ✅ I10 ${ticker.toUpperCase()} R$ ${hit.price}`);
+        return this.minimalQuote(ticker, hit.price, 'investidor10', asOf, symbol);
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          errors.push(`i10:${(err as Error).message?.slice(0, 60)}`);
+        }
       }
     }
 
+    // 2) Yahoo
+    try {
+      return await withRetry(() => this.fetchQuote(symbol, ticker), {
+        maxRetries: 1,
+        initialDelay: 800,
+        maxDelay: 8_000,
+        timeout: 10_000,
+      });
+    } catch (err) {
+      errors.push(`yahoo:${(err as Error).message?.slice(0, 60)}`);
+    }
+
+    // 3) StatusInvest (último)
+    if (!(await this.isCircuitOpen(statusInvestCircuitBreaker))) {
+      try {
+        return await this.fetchFromStatusInvest(ticker);
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          errors.push(`si:${(err as Error).message?.slice(0, 60)}`);
+        }
+      }
+    }
+
+    throw new Error(
+      `Cotação indisponível para ${ticker} (${errors.join(' | ') || 'sem fontes'})`,
+    );
+  }
+
+  /**
+   * Lote: tenta batch I10 para misses de cache; resto via getQuote (cadeia completa).
+   */
+  async getQuotes(tickers: string[]): Promise<Map<string, StockQuote>> {
     const map = new Map<string, StockQuote>();
-    for (let i = 0; i < tickers.length; i++) {
-      const quote = results[i];
-      const ticker = tickers[i]!;
-      if (quote) {
-        map.set(ticker.toUpperCase(), quote);
+    const missing: string[] = [];
+
+    for (const raw of tickers) {
+      const t = raw.toUpperCase();
+      try {
+        const cached = await redis.get(`quote:${t}`);
+        if (cached) {
+          map.set(t, JSON.parse(cached) as StockQuote);
+          continue;
+        }
+      } catch { /* redis offline */ }
+      missing.push(t);
+    }
+
+    if (missing.length > 0 && !(await this.isCircuitOpen(investidor10CircuitBreaker))) {
+      try {
+        const batch = await investidor10Provider.getBatchQuotes(missing);
+        for (const [t, hit] of batch) {
+          const asOf = hit.lastUpdate
+            ? this.i10UpdateToIso(hit.lastUpdate)
+            : new Date().toISOString();
+          const q = this.minimalQuote(t, hit.price, 'investidor10', asOf);
+          map.set(t, q);
+          try {
+            await redis.setex(`quote:${t}`, this.quoteTtlSec, JSON.stringify(q));
+          } catch { /* ok */ }
+        }
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          console.warn(`[quote] I10 batch: ${(err as Error).message?.slice(0, 80)}`);
+        }
+      }
+    }
+
+    for (const t of missing) {
+      if (map.has(t)) continue;
+      try {
+        map.set(t, await this.getQuote(t));
+      } catch {
+        /* null skip */
       }
     }
 
@@ -158,13 +223,9 @@ export class StockQuoteService {
   }
 
   /**
-   * Busca histórico de preços de um ticker.
-   *
-   * Cache Redis de 30 min (vs 5 min anterior) — dados diários não mudam
-   * intraday. A Yahoo API é chamada com muito menos frequência.
-   *
-   * @param ticker Ticker B3 (ex: PETR4)
-   * @param range  Período: '1mo', '3mo', '6mo', '1y', '2y', '5y'
+   * Histórico diário: I10 chart → Yahoo.
+   * Range Yahoo: '1mo' | '3mo' | '6mo' | '1y' | '2y' | '5y'
+   * I10 costuma cobrir ~1y; ranges longos preferem Yahoo se I10 for curto.
    */
   async getHistory(
     ticker: string,
@@ -173,13 +234,144 @@ export class StockQuoteService {
     const symbol = this.toYahooSymbol(ticker);
     const cacheKey = `history:${ticker.toUpperCase()}:${range}`;
 
-    return getOrSet(cacheKey, 1800, () =>
-      withRetry(() => this.fetchHistory(symbol, ticker, range), {
-        maxRetries: 2,
-        initialDelay: 1000,
-        maxDelay: 15_000,
-        timeout: 10_000,
-      }));
+    return getOrSet(cacheKey, 1800, () => this.resolveHistory(ticker, symbol, range));
+  }
+
+  private async resolveHistory(
+    ticker: string,
+    symbol: string,
+    range: string,
+  ): Promise<StockHistory> {
+    const minPoints = this.minPointsForRange(range);
+
+    if (!(await this.isCircuitOpen(investidor10CircuitBreaker))) {
+      try {
+        const series = await investidor10Provider.getDailyChart(ticker);
+        const sliced = this.sliceSeriesByRange(series, range);
+        if (sliced.length >= Math.min(minPoints, 5)) {
+          const points: StockHistoryPoint[] = sliced.map((p) => ({
+            date: p.date,
+            open: p.close,
+            high: p.close,
+            low: p.close,
+            close: p.close,
+            volume: 0,
+          }));
+          return {
+            ticker: ticker.toUpperCase(),
+            symbol,
+            range,
+            points,
+            source: 'investidor10',
+            asOf: new Date().toISOString(),
+          };
+        }
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          console.warn(
+            `[history] I10→Yahoo ${ticker}: ${(err as Error).message?.slice(0, 80)}`,
+          );
+        }
+      }
+    }
+
+    return withRetry(() => this.fetchHistory(symbol, ticker, range), {
+      maxRetries: 1,
+      initialDelay: 1000,
+      maxDelay: 15_000,
+      timeout: 10_000,
+    });
+  }
+
+  private async isCircuitOpen(
+    breaker: { currentState: () => Promise<string> },
+  ): Promise<boolean> {
+    try {
+      return (await breaker.currentState()) === 'OPEN';
+    } catch {
+      return false;
+    }
+  }
+
+  private minimalQuote(
+    ticker: string,
+    price: number,
+    source: QuoteSource,
+    asOf: string,
+    symbol?: string,
+  ): StockQuote {
+    const p = Math.round(price * 100) / 100;
+    return {
+      ticker: ticker.toUpperCase(),
+      symbol: symbol ?? this.toYahooSymbol(ticker),
+      price: p,
+      currency: 'BRL',
+      change: 0,
+      changePercent: 0,
+      previousClose: p,
+      open: p,
+      dayHigh: p,
+      dayLow: p,
+      volume: 0,
+      marketCap: null,
+      updatedAt: asOf,
+      source,
+      asOf,
+    };
+  }
+
+  private i10UpdateToIso(lastUpdate: string): string {
+    // "2026-07-15 17:46:00" → assume BRT
+    const m = lastUpdate.trim().match(
+      /^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/,
+    );
+    if (m) {
+      const [, d, hh, mi, ss = '00'] = m;
+      return `${d}T${hh}:${mi}:${ss}-03:00`;
+    }
+    return new Date().toISOString();
+  }
+
+  private minPointsForRange(range: string): number {
+    switch (range) {
+      case '1mo':
+        return 15;
+      case '3mo':
+        return 40;
+      case '6mo':
+        return 80;
+      case '1y':
+        return 150;
+      case '2y':
+        return 300;
+      case '5y':
+        return 600;
+      default:
+        return 15;
+    }
+  }
+
+  private sliceSeriesByRange(
+    series: Array<{ date: string; close: number }>,
+    range: string,
+  ): Array<{ date: string; close: number }> {
+    if (series.length === 0) return series;
+    const days: Record<string, number> = {
+      '1mo': 31,
+      '3mo': 93,
+      '6mo': 186,
+      '1y': 370,
+      '2y': 740,
+      '5y': 1850,
+    };
+    const window = days[range] ?? 370;
+    const last = series[series.length - 1]!.date;
+    const end = new Date(`${last}T00:00:00Z`).getTime();
+    const start = end - window * 86_400_000;
+    return series.filter((p) => {
+      const t = new Date(`${p.date}T00:00:00Z`).getTime();
+      return t >= start;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -392,25 +584,22 @@ export class StockQuoteService {
     let avgDailyLiquidity = 0;
     let marketCap: number | null = null;
 
-    try {
+    // Uma rota só (FII vs ação) — evita 2 hits SI por ticker no warmup
+    if (isFii(ticker)) {
+      const r = await scraper.fetchFII(ticker);
+      price = r.price;
+    } else {
       const r = await scraper.fetchStock(ticker);
       price = r.price;
       avgDailyLiquidity = r.avgDailyLiquidity;
       marketCap = r.marketCap;
-    } catch { /* ok */ }
-
-    if (price <= 0) {
-      try {
-        const r = await scraper.fetchFII(ticker);
-        price = r.price;
-      } catch { /* ok */ }
     }
 
     if (price <= 0) {
       throw new Error(`StatusInvest: preço não disponível para ${ticker}`);
     }
 
-    console.log(`[quote] ✅ StatusInvest resgatou ${ticker} a R$ ${price}`);
+    console.log(`[quote] ✅ StatusInvest ${ticker} R$ ${price}`);
 
     const asOf = new Date().toISOString();
     return {
