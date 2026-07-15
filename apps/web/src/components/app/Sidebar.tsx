@@ -17,6 +17,7 @@ import {
   Eye,
   Banknote,
   BookMarked,
+  BarChart3,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -40,6 +41,7 @@ const groups: { label: string; items: NavItem[] }[] = [
       { to: "/market/search", label: "Pesquisa", icon: Search },
       { to: "/market/compare", label: "Comparador", icon: GitCompareArrows },
       { to: "/market/macro", label: "Macro", icon: Landmark },
+      { to: "/market/benchmarks", label: "Benchmarks", icon: BarChart3 },
       { to: "/watchlist", label: "Watchlist", icon: Eye },
     ],
   },

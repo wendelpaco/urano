@@ -301,6 +301,29 @@ export type ScoreValidation = {
     totalYears: number;
   } | null;
   pillarCorrelations: Record<string, number> | null;
+  dataPolicy?: {
+    freeSourcesOnly?: boolean;
+    fundamentals?: string;
+    prices?: string;
+    macro?: string;
+    dividends?: string;
+  };
+  ibov?: {
+    source: string;
+    symbol: string;
+    asOf: string;
+    byYear: Record<string, number | null>;
+    yearsWithData: number[];
+    note: string;
+    vsTopN?: {
+      n: number;
+      avgPortfolio: number;
+      avgIbov: number | null;
+      ibovYears: number;
+      deltaAvgPp: number | null;
+    };
+  } | null;
+  generatedAt?: string;
 };
 
 export function useScoreValidation() {
@@ -308,6 +331,36 @@ export function useScoreValidation() {
     queryKey: ["scoreValidation"],
     queryFn: () => apiFetch({ path: "/analysis/validation" }),
     staleTime: 30 * 60_000,
+  });
+}
+
+export function useBenchmarks() {
+  return useQuery<{
+    total?: number;
+    data?: Array<{
+      id: string;
+      name: string;
+      yahooSymbol: string;
+      price: number | null;
+      changePercent: number | null;
+      source: string;
+      asOf: string | null;
+      error?: string;
+    }>;
+    note?: string;
+  }>({
+    queryKey: ["benchmarks"],
+    queryFn: () => apiFetch({ path: "/benchmarks" }),
+    staleTime: 120_000,
+  });
+}
+
+export function useBenchmark(id: string | undefined, range = "1y") {
+  return useQuery<Record<string, unknown>>({
+    queryKey: ["benchmark", id, range],
+    queryFn: () => apiFetch({ path: `/benchmarks/${id}`, query: { range } }),
+    enabled: Boolean(id),
+    staleTime: 120_000,
   });
 }
 

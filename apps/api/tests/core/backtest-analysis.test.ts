@@ -5,6 +5,7 @@ import {
   pillarCorrelations,
   scoreBuckets,
   topNStrategy,
+  calendarYearReturnsFromCloses,
   type BacktestRow,
 } from '../../src/core/services/backtest-analysis.ts';
 
@@ -88,5 +89,41 @@ describe('topNStrategy', () => {
     expect(result.years[1]?.portfolioReturn).toBe(0);
     expect(result.winYears).toBe(1); // só 2020 ganha do mercado
     expect(result.avgPortfolio).toBe(15);
+  });
+
+  it('compara com IBOV externo quando informado', () => {
+    const rows: BacktestRow[] = [
+      row({ year: 2020, ticker: 'AAAA3', score: 90, return12m: 40 }),
+      row({ year: 2020, ticker: 'BBBB3', score: 80, return12m: 20 }),
+      row({ year: 2020, ticker: 'CCCC3', score: 10, return12m: -30 }),
+    ];
+    const result = topNStrategy(rows, 2, { 2020: 5 });
+    expect(result.years[0]?.ibovReturn).toBe(5);
+    expect(result.avgIbov).toBe(5);
+    expect(result.winYearsVsIbov).toBe(1); // portfolio 30 > ibov 5
+    expect(result.ibovYears).toBe(1);
+  });
+});
+
+describe('calendarYearReturnsFromCloses', () => {
+  it('calcula retorno civil a partir de closes reais', () => {
+    const points = [
+      { date: '2019-12-30', close: 100 },
+      { date: '2020-01-02', close: 100 },
+      { date: '2020-06-15', close: 110 },
+      { date: '2021-01-04', close: 120 },
+      { date: '2022-01-03', close: 150 },
+    ];
+    const rets = calendarYearReturnsFromCloses(points, [2020, 2021]);
+    // 2020: 120/100 - 1 = 20%
+    expect(rets[2020]).toBe(20);
+    // 2021: 150/120 - 1 = 25%
+    expect(rets[2021]).toBe(25);
+  });
+
+  it('retorna null quando falta preço de fim de janela', () => {
+    const points = [{ date: '2020-01-02', close: 100 }];
+    const rets = calendarYearReturnsFromCloses(points, [2020]);
+    expect(rets[2020]).toBeNull();
   });
 });

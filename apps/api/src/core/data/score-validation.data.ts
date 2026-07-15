@@ -13,11 +13,27 @@ export interface ScoreValidation {
   topN: {
     n: number;
     avgPortfolio: number;              // % média anual da estratégia
-    avgMarket: number;                 // % média anual do universo
+    avgMarket: number;                 // % média anual do universo coberto (não IBOV)
     winYears: number;
     totalYears: number;
   } | null;
   pillarCorrelations: Record<string, number> | null;
+  /**
+   * Benchmark de mercado real (IBOV). Preenchido em runtime via Yahoo ^BVSP
+   * no controller de validation — campos estáticos documentam a fonte.
+   */
+  ibovBenchmark?: {
+    source: string;
+    symbol: string;
+    note: string;
+  };
+  dataPolicy: {
+    freeSourcesOnly: boolean;
+    fundamentals: string;
+    prices: string;
+    macro: string;
+    dividends: string;
+  };
 }
 
 export const SCORE_VALIDATION: ScoreValidation = {
@@ -26,7 +42,7 @@ export const SCORE_VALIDATION: ScoreValidation = {
   yearsTested: [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
   verdict: 'quality-filter',
   summary:
-    'Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi 28,4% ao ano contra 25,4% da média do mercado (universo coberto) — uma vantagem pequena, e a estratégia só ganhou em 6 dos 10 anos testados. O score não ordena bem as melhores ações (os decis de score mais alto não renderam mais que os intermediários), mas a faixa de score mais baixa teve retorno nitidamente pior que as demais, então ele funciona melhor como filtro de empresas fracas do que como sinal de retorno esperado.',
+    'Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi 28,4% ao ano contra 25,4% da média do mercado (universo coberto) — uma vantagem pequena, e a estratégia só ganhou em 6 dos 10 anos testados. O score não ordena bem as melhores ações (os decis de score mais alto não renderam mais que os intermediários), mas a faixa de score mais baixa teve retorno nitidamente pior que as demais, então ele funciona melhor como filtro de empresas fracas do que como sinal de retorno esperado. A média do universo NÃO é o IBOV; o endpoint de validação anexa retornos reais do IBOV (^BVSP via Yahoo) quando a série está disponível.',
   topN: {
     n: 10,
     avgPortfolio: 28.4,
@@ -42,5 +58,17 @@ export const SCORE_VALIDATION: ScoreValidation = {
     dividends: 0,
     quality: -0.026,
     momentum: 0,
+  },
+  ibovBenchmark: {
+    source: 'yahoo',
+    symbol: '^BVSP',
+    note: 'Retornos anuais civis calculados de closes reais Yahoo; ver campo ibov no response em runtime.',
+  },
+  dataPolicy: {
+    freeSourcesOnly: true,
+    fundamentals: 'CVM (DFP/ITR) — oficial',
+    prices: 'Yahoo Finance + StatusInvest (fallback) — gratuitos, sem SLA',
+    macro: 'BCB SGS — oficial e gratuito',
+    dividends: 'StatusInvest → Postgres dividend_events; DMPL CVM como fallback anual',
   },
 };

@@ -78,15 +78,105 @@ function ValidationPage() {
             </div>
           </Panel>
 
+          {v.ibov?.vsTopN ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <MetricCard
+                label={`Top ${v.ibov.vsTopN.n} (média a.a.)`}
+                value={fmtPct(v.ibov.vsTopN.avgPortfolio)}
+              />
+              <MetricCard
+                label="IBOV real (média a.a.)"
+                value={
+                  v.ibov.vsTopN.avgIbov != null ? fmtPct(v.ibov.vsTopN.avgIbov) : "—"
+                }
+              />
+              <MetricCard
+                label="Delta vs IBOV"
+                value={
+                  v.ibov.vsTopN.deltaAvgPp != null
+                    ? fmtPct(v.ibov.vsTopN.deltaAvgPp, true)
+                    : "—"
+                }
+                tone={
+                  (v.ibov.vsTopN.deltaAvgPp ?? 0) > 0
+                    ? "positive"
+                    : (v.ibov.vsTopN.deltaAvgPp ?? 0) < 0
+                      ? "negative"
+                      : "neutral"
+                }
+              />
+              <MetricCard
+                label="Anos IBOV com dado"
+                value={`${v.ibov.vsTopN.ibovYears}`}
+              />
+            </div>
+          ) : null}
+
+          {v.ibov?.byYear ? (
+            <Panel>
+              <PanelHeader
+                title="IBOV por ano civil (Yahoo ^BVSP — dados reais)"
+                actions={
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    asOf {v.ibov.asOf?.slice(0, 19) ?? "—"}
+                  </span>
+                }
+              />
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="text-left px-3 h-8">Ano</th>
+                    <th className="text-right px-3 h-8">Retorno %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(v.ibov.byYear)
+                    .sort(([a], [b]) => Number(a) - Number(b))
+                    .map(([year, ret]) => (
+                      <tr key={year} className="border-b border-border/60">
+                        <td className="px-3 h-8 font-mono">{year}</td>
+                        <td className="px-3 h-8 text-right tabular">
+                          {ret == null ? "—" : fmtPct(ret)}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              <p className="p-3 text-[11px] text-muted-foreground">{v.ibov.note}</p>
+            </Panel>
+          ) : null}
+
+          {v.dataPolicy ? (
+            <Panel>
+              <PanelHeader title="Política de dados (só fontes gratuitas)" />
+              <div className="p-3 text-xs space-y-1 text-muted-foreground">
+                <div>
+                  Fundamentals:{" "}
+                  <span className="text-foreground">{v.dataPolicy.fundamentals}</span>
+                </div>
+                <div>
+                  Preços: <span className="text-foreground">{v.dataPolicy.prices}</span>
+                </div>
+                <div>
+                  Macro: <span className="text-foreground">{v.dataPolicy.macro}</span>
+                </div>
+                <div>
+                  Proventos:{" "}
+                  <span className="text-foreground">{v.dataPolicy.dividends}</span>
+                </div>
+              </div>
+            </Panel>
+          ) : null}
+
           {v.topN ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MetricCard
                 label={`Top ${v.topN.n} (média a.a.)`}
                 value={fmtPct(v.topN.avgPortfolio)}
               />
-              <MetricCard label="Universo (média a.a.)" value={fmtPct(v.topN.avgMarket)} />
+              <MetricCard label="Universo coberto (média a.a.)" value={fmtPct(v.topN.avgMarket)} />
               <MetricCard
-                label="Anos com vantagem"
+                label="Anos com vantagem vs universo"
                 value={`${v.topN.winYears}/${v.topN.totalYears}`}
               />
               <MetricCard

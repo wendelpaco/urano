@@ -905,7 +905,60 @@ export async function getValidationController(
   _request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  reply.send(SCORE_VALIDATION);
+  // Anexa IBOV real (Yahoo ^BVSP) — série pública gratuita, calculada de closes reais
+  let ibov: Awaited<
+    ReturnType<typeof import('../../services/ibov-benchmark.ts').fetchIbovCalendarReturns>
+  > & {
+    vsTopN?: {
+      n: number;
+      avgPortfolio: number;
+      avgIbov: number | null;
+      ibovYears: number;
+      deltaAvgPp: number | null;
+    };
+  } | null = null;
+
+  try {
+    const { fetchIbovCalendarReturns } = await import(
+      '../../services/ibov-benchmark.ts'
+    );
+    const bench = await fetchIbovCalendarReturns(SCORE_VALIDATION.yearsTested);
+    const ibovVals = SCORE_VALIDATION.yearsTested
+      .map((y) => bench.byYear[y])
+      .filter((v): v is number => typeof v === 'number');
+    const avgIbov =
+      ibovVals.length > 0
+        ? +(ibovVals.reduce((s, v) => s + v, 0) / ibovVals.length).toFixed(2)
+        : null;
+    const avgPortfolio = SCORE_VALIDATION.topN?.avgPortfolio ?? null;
+
+    ibov = {
+      ...bench,
+      vsTopN: SCORE_VALIDATION.topN
+        ? {
+            n: SCORE_VALIDATION.topN.n,
+            avgPortfolio: SCORE_VALIDATION.topN.avgPortfolio,
+            avgIbov,
+            ibovYears: ibovVals.length,
+            deltaAvgPp:
+              avgPortfolio != null && avgIbov != null
+                ? +(avgPortfolio - avgIbov).toFixed(2)
+                : null,
+          }
+        : undefined,
+    };
+  } catch (err) {
+    console.warn(
+      '[validation] IBOV Yahoo indisponível:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  reply.send({
+    ...SCORE_VALIDATION,
+    ibov,
+    generatedAt: new Date().toISOString(),
+  });
 }
 
 // ─── GET /v1/search ─────────────────────────────────────────────────────────

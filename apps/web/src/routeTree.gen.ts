@@ -28,6 +28,7 @@ import { Route as MarketSearchRouteImport } from './routes/market.search'
 import { Route as MarketScreenerRouteImport } from './routes/market.screener'
 import { Route as MarketMacroRouteImport } from './routes/market.macro'
 import { Route as MarketCompareRouteImport } from './routes/market.compare'
+import { Route as MarketBenchmarksRouteImport } from './routes/market.benchmarks'
 import { Route as ResearchTypeTickerRouteImport } from './routes/research.$type.$ticker'
 
 const WatchlistRoute = WatchlistRouteImport.update({
@@ -125,6 +126,11 @@ const MarketCompareRoute = MarketCompareRouteImport.update({
   path: '/compare',
   getParentRoute: () => MarketRoute,
 } as any)
+const MarketBenchmarksRoute = MarketBenchmarksRouteImport.update({
+  id: '/benchmarks',
+  path: '/benchmarks',
+  getParentRoute: () => MarketRoute,
+} as any)
 const ResearchTypeTickerRoute = ResearchTypeTickerRouteImport.update({
   id: '/research/$type/$ticker',
   path: '/research/$type/$ticker',
@@ -141,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/validation': typeof ValidationRoute
   '/watchlist': typeof WatchlistRoute
+  '/market/benchmarks': typeof MarketBenchmarksRoute
   '/market/compare': typeof MarketCompareRoute
   '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/validation': typeof ValidationRoute
   '/watchlist': typeof WatchlistRoute
+  '/market/benchmarks': typeof MarketBenchmarksRoute
   '/market/compare': typeof MarketCompareRoute
   '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
@@ -184,6 +192,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/validation': typeof ValidationRoute
   '/watchlist': typeof WatchlistRoute
+  '/market/benchmarks': typeof MarketBenchmarksRoute
   '/market/compare': typeof MarketCompareRoute
   '/market/macro': typeof MarketMacroRoute
   '/market/screener': typeof MarketScreenerRoute
@@ -208,6 +217,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/validation'
     | '/watchlist'
+    | '/market/benchmarks'
     | '/market/compare'
     | '/market/macro'
     | '/market/screener'
@@ -228,6 +238,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/validation'
     | '/watchlist'
+    | '/market/benchmarks'
     | '/market/compare'
     | '/market/macro'
     | '/market/screener'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/validation'
     | '/watchlist'
+    | '/market/benchmarks'
     | '/market/compare'
     | '/market/macro'
     | '/market/screener'
@@ -411,6 +423,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketCompareRouteImport
       parentRoute: typeof MarketRoute
     }
+    '/market/benchmarks': {
+      id: '/market/benchmarks'
+      path: '/benchmarks'
+      fullPath: '/market/benchmarks'
+      preLoaderRoute: typeof MarketBenchmarksRouteImport
+      parentRoute: typeof MarketRoute
+    }
     '/research/$type/$ticker': {
       id: '/research/$type/$ticker'
       path: '/research/$type/$ticker'
@@ -422,6 +441,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface MarketRouteChildren {
+  MarketBenchmarksRoute: typeof MarketBenchmarksRoute
   MarketCompareRoute: typeof MarketCompareRoute
   MarketMacroRoute: typeof MarketMacroRoute
   MarketScreenerRoute: typeof MarketScreenerRoute
@@ -430,6 +450,7 @@ interface MarketRouteChildren {
 }
 
 const MarketRouteChildren: MarketRouteChildren = {
+  MarketBenchmarksRoute: MarketBenchmarksRoute,
   MarketCompareRoute: MarketCompareRoute,
   MarketMacroRoute: MarketMacroRoute,
   MarketScreenerRoute: MarketScreenerRoute,
