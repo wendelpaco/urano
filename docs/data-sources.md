@@ -8,8 +8,16 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 |---|---|---|---|
 | 1 | **CVM / B3 (oficial)** | Fundamentals de empresas listadas (DRE/BPA/BPP/DFC via dados públicos CVM); universo de tickers B3 | Alta — base do score de ações |
 | 2 | **BCB** | Séries macro (Selic, IPCA, câmbio, etc.) via API SGS pública | Alta — séries oficiais |
-| 3 | **Yahoo Finance** | Cotações, histórico OHLCV, momento, volume, eventos | Média — gratuito, sem SLA; circuit breaker + retry |
-| 4 | **StatusInvest (scraper / JSON)** | Proventos, indicadores rápidos, dados de FII, fallback de cotação | Baixa/média — **scrapers frágeis**; HTML e endpoints mudam sem aviso |
+| 3 | **Yahoo Finance** | Cotações, histórico OHLCV, **IBOV (`^BVSP`)**, momento, volume | Média — gratuito, sem SLA; circuit breaker + retry |
+| 4 | **StatusInvest (scraper / JSON)** | Proventos (persistidos em `dividend_events`), indicadores FII, fallback de cotação | Baixa/média — **scrapers frágeis**; HTML e endpoints mudam sem aviso |
+
+### Pacote A (free-only) — implementado
+
+- Cotação/histórico com `source` + `asOf` (`statusinvest` | `yahoo`)
+- `GET /v1/benchmarks` e `/v1/benchmarks/:id` (IBOV; IFIX experimental)
+- Proventos: Redis → Postgres `dividend_events` (24h) → StatusInvest
+- Macro BCB expandido (CDI, IGP-M, SELIC diária, desemprego, …) com `source: bcb_sgs`
+- **Sem APIs pagas** (brapi etc. fora do caminho crítico)
 
 Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + preço Yahoo; macro vem do BCB; scrapers preenchem lacunas (FIIs, proventos, lazy load) e **nunca** substituem CVM quando CVM existe.
 

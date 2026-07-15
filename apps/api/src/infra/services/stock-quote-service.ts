@@ -17,11 +17,16 @@ export interface StockHistoryPoint {
   volume: number;
 }
 
+export type QuoteSource = 'statusinvest' | 'yahoo';
+
 export interface StockHistory {
   ticker: string;
   symbol: string;
   range: string;
   points: StockHistoryPoint[];
+  /** Provenance — free data package A */
+  source: QuoteSource;
+  asOf: string; // ISO timestamp when series was fetched
 }
 
 export interface StockQuote {
@@ -38,6 +43,9 @@ export interface StockQuote {
   volume: number;
   marketCap: number | null;
   updatedAt: string;
+  /** Provenance — free data package A */
+  source: QuoteSource;
+  asOf: string; // ISO; same as updatedAt for live quotes
 }
 
 interface YahooFinanceHistoryResponse {
@@ -262,6 +270,7 @@ export class StockQuoteService {
       ? (change / previousClose) * 100
       : 0;
 
+    const asOf = new Date().toISOString();
     return {
       ticker: originalTicker.toUpperCase(),
       symbol,
@@ -275,7 +284,9 @@ export class StockQuoteService {
       dayLow: meta.regularMarketDayLow ?? price,
       volume: meta.regularMarketVolume ?? 0,
       marketCap: meta.marketCap ?? null,
-      updatedAt: new Date().toISOString(),
+      updatedAt: asOf,
+      source: 'yahoo',
+      asOf,
     };
   }
 
@@ -359,11 +370,14 @@ export class StockQuoteService {
       });
     }
 
+    const asOf = new Date().toISOString();
     return {
       ticker: originalTicker.toUpperCase(),
       symbol,
       range,
       points,
+      source: 'yahoo',
+      asOf,
     };
   }
 
@@ -398,6 +412,7 @@ export class StockQuoteService {
 
     console.log(`[quote] ✅ StatusInvest resgatou ${ticker} a R$ ${price}`);
 
+    const asOf = new Date().toISOString();
     return {
       ticker: ticker.toUpperCase(),
       symbol: `${ticker.toUpperCase()}.SA`,
@@ -411,8 +426,39 @@ export class StockQuoteService {
       dayLow: price,
       volume: avgDailyLiquidity || 0,
       marketCap,
-      updatedAt: new Date().toISOString(),
+      updatedAt: asOf,
+      source: 'statusinvest',
+      asOf,
     };
+  }
+
+  /**
+   * Benchmark / índice via Yahoo (ex.: IBOV = ^BVSP).
+   * Não usa StatusInvest — símbolos de índice são Yahoo-only.
+   */
+  async getIndexHistory(
+    yahooSymbol: string,
+    range: string = '1y',
+  ): Promise<StockHistory> {
+    const cacheKey = `index-history:${yahooSymbol}:${range}`;
+    return getOrSet(cacheKey, 1800, () =>
+      withRetry(() => this.fetchHistory(yahooSymbol, yahooSymbol, range), {
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 15_000,
+        timeout: 10_000,
+      }));
+  }
+
+  async getIndexQuote(yahooSymbol: string): Promise<StockQuote> {
+    const cacheKey = `index-quote:${yahooSymbol}`;
+    return getOrSet(cacheKey, 120, () =>
+      withRetry(() => this.fetchQuote(yahooSymbol, yahooSymbol.replace('^', '')), {
+        maxRetries: 2,
+        initialDelay: 1000,
+        maxDelay: 15_000,
+        timeout: 10_000,
+      }));
   }
 }
 

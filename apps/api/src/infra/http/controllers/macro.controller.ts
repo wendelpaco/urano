@@ -39,13 +39,19 @@ interface MacroSeries {
   history: MacroSeriesPoint[];
 }
 
+/** Séries BCB SGS — 100% gratuitas (API pública). */
 const MACRO_SERIES: Record<string, { name: string; unit: string }> = {
   '432': { name: 'SELIC (% a.m.)', unit: '%' },
-  '4189': { name: 'SELIC (% a.a.)', unit: '%' },
+  '4189': { name: 'SELIC meta (% a.a.)', unit: '%' },
+  '11': { name: 'SELIC diária (% a.d.)', unit: '%' },
+  '12': { name: 'CDI diário (% a.d.)', unit: '%' },
+  '4392': { name: 'CDI acumulado no mês (%)', unit: '%' },
   '433': { name: 'IPCA (% mensal)', unit: '%' },
   '13522': { name: 'IPCA 12 meses (%)', unit: '%' },
+  '189': { name: 'IGP-M (% mensal)', unit: '%' },
   '4389': { name: 'PIB (R$ milhões)', unit: 'BRL' },
   '1': { name: 'Câmbio USD/BRL', unit: 'BRL' },
+  '256': { name: 'Taxa de desemprego PNAD (%)', unit: '%' },
 };
 
 async function fetchBcbSeries(code: string, limit = 12): Promise<MacroSeriesPoint[]> {
@@ -90,7 +96,13 @@ export async function listMacroController(
     return results;
   });
 
-  reply.send({ total: indicators.length, data: indicators });
+  reply.send({
+    total: indicators.length,
+    data: indicators,
+    source: 'bcb_sgs',
+    asOf: new Date().toISOString(),
+    dataQuality: { freeSourcesOnly: true, official: true },
+  });
 }
 
 /**
@@ -132,5 +144,8 @@ export async function getMacroSeriesController(
     latest,
     total: history.length,
     history,
+    source: 'bcb_sgs',
+    asOf: new Date().toISOString(),
+    dataQuality: { freeSourcesOnly: true, official: true },
   });
 }

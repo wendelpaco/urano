@@ -13,6 +13,10 @@ import { withRetry } from '../../shared/retry.ts';
 import { statusInvestLimiter } from './rate-limiter.ts';
 import { getDividendsEndpoint } from '../../shared/ticker-utils.ts';
 import type { DividendEvent } from '../../core/services/dividends-analyzer.ts';
+import {
+  loadFreshDividends,
+  persistDividends,
+} from '../database/dividend-queries.ts';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -42,20 +46,60 @@ export class DividendsProvider {
    * @param ticker Ticker B3 (ex: PETR4, KNCR11)
    * @returns DividendEvent[] ou null se indisponível
    */
+  /**
+   * Ordem free-only:
+   * 1) Redis cache
+   * 2) Postgres canônico se fresco (<24h)
+   * 3) StatusInvest JSON → persiste no Postgres
+   */
   async fetchDividends(ticker: string): Promise<DividendEvent[] | null> {
     const cacheKey = `dividends:${ticker.toUpperCase()}`;
 
     try {
-      return await getOrSet(cacheKey, 86_400, () =>
-        withRetry(() => this.doFetch(ticker), {
+      return await getOrSet(cacheKey, 86_400, async () => {
+        // 2) DB canônico
+        try {
+          const fromDb = await loadFreshDividends(ticker);
+          if (fromDb && fromDb.events.length >= 0) {
+            // empty array is valid (ticker sem proventos mas sync recente)
+            // only skip network if we have any row OR explicit empty sync — require events or known ticker fetch
+            if (fromDb.events.length > 0) {
+              return fromDb.events;
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[DividendsProvider] DB read falhou para ${ticker}:`,
+            (err as Error).message,
+          );
+        }
+
+        // 3) Rede
+        const events = await withRetry(() => this.doFetch(ticker), {
           maxRetries: 1,
           initialDelay: 500,
           maxDelay: 2000,
           timeout: 15_000,
-        }),
-      );
+        });
+
+        if (events && events.length > 0) {
+          void persistDividends(ticker, events, 'statusinvest').catch((e) =>
+            console.warn(
+              `[DividendsProvider] persist falhou ${ticker}:`,
+              (e as Error).message,
+            ),
+          );
+        }
+
+        return events;
+      });
     } catch {
-      // Degradação: retorna null, caller usa fallback DMPL
+      // Última chance: DB mesmo se “stale” não — só fresh. Degrada null → DMPL
+      try {
+        const fromDb = await loadFreshDividends(ticker);
+        if (fromDb?.events.length) return fromDb.events;
+      } catch { /* ok */ }
+
       console.warn(`[DividendsProvider] Indisponível para ${ticker}, retornando null`);
       return null;
     }

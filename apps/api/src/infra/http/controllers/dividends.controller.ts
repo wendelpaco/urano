@@ -122,8 +122,12 @@ export async function getDividendsController(
     ticker,
     companyName: company.name,
     source: dmplFallback
+      ? 'cvm_dmpl'
+      : 'statusinvest',
+    sourceLabel: dmplFallback
       ? 'CVM — DMPL (Demonstração das Mutações do Patrimônio Líquido)'
-      : 'StatusInvest (proventos mensais)',
+      : 'StatusInvest (proventos mensais; cache Redis + Postgres canônico)',
+    asOf: new Date().toISOString(),
     total: events.length,
     totalValuePerShare: Math.round(totalPerShare * 100) / 100,
     data: events,
@@ -132,6 +136,7 @@ export async function getDividendsController(
     dataQuality: {
       dividends: dividendsAvailable,
       dmplFallback,
+      freeSourcesOnly: true,
     },
   });
 }

@@ -26,6 +26,10 @@ import { scraperDiagnosticsController } from '../controllers/diagnostics.control
 import { contributionController } from '../controllers/contribution.controller.ts';
 import { metricsController } from '../controllers/metrics.controller.ts';
 import {
+  listBenchmarksController,
+  getBenchmarkController,
+} from '../controllers/benchmark.controller.ts';
+import {
   createWalletController,
   listWalletsController,
   getWalletController,
@@ -93,6 +97,10 @@ export async function routesPlugin(
 
   app.get('/macro', { ...market }, listMacroController);
   app.get('/macro/:series', { ...market }, getMacroSeriesController);
+
+  // Benchmarks free (Yahoo IBOV / IFIX experimental)
+  app.get('/benchmarks', { ...market }, listBenchmarksController);
+  app.get('/benchmarks/:id', { ...market }, getBenchmarkController);
 
   app.get('/screener', { ...market }, screenerController);
 

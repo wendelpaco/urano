@@ -290,6 +290,37 @@ export const dailySnapshots = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// dividend_events — Proventos por cota (canônico; free sources: StatusInvest)
+// ═══════════════════════════════════════════════════════════════════════════
+export const dividendEvents = pgTable(
+  'dividend_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    eventDate: date('event_date').notNull(), // data-com ou data do evento
+    paymentDate: date('payment_date'),
+    value: decimal('value', { precision: 18, scale: 8 }).notNull(),
+    type: varchar('type', { length: 32 }).notNull(), // DIVIDEND | JCP | RENDIMENTO | …
+    source: varchar('source', { length: 32 }).notNull().default('statusinvest'),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_dividend_events_ticker_date_type_value').on(
+      table.ticker,
+      table.eventDate,
+      table.type,
+      table.value,
+    ),
+    index('idx_dividend_events_ticker_date').on(table.ticker, table.eventDate.desc()),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // api_keys — API Keys para autenticação de clientes
 // ═══════════════════════════════════════════════════════════════════════════
 export const apiKeys = pgTable(
