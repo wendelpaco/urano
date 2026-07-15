@@ -77,9 +77,11 @@ export function getDividendsEndpoint(ticker: string): {
   const upper = ticker.toUpperCase();
 
   if (fii) {
+    // chartProventsType=2 devolve assetEarningsModels com histórico longo (~10y).
+    // Sem o param a API costuma truncar a ~12–24 meses (backtest FII fica sem DY).
     return {
       path: '/fii/companytickerprovents',
-      params: `?ticker=${upper}`,
+      params: `?ticker=${upper}&chartProventsType=2`,
       isFii: true,
     };
   }

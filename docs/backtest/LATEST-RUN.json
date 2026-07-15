@@ -1,5 +1,5 @@
 {
-  "frozenAt": "2026-07-15T19:10:10.142Z",
+  "frozenAt": "2026-07-15T19:29:57.568Z",
   "scoreVersion": "v1",
   "staticVerdict": "quality-filter",
   "stockStrategy": {
@@ -77,51 +77,51 @@
     ]
   },
   "fiiBacktest": {
-    "runId": "4be7c04b-377b-4eb0-9988-fb813d15094c",
-    "createdAt": "2026-07-15T19:06:34.288Z",
+    "runId": "9d313acb-a22f-4102-bdd8-b0fd1798a126",
+    "createdAt": "2026-07-15T19:29:49.888Z",
     "observations": 155,
     "tickers": 31,
     "byYear": [
       {
         "year": 2021,
-        "avgTotal": -3.02,
+        "avgTotal": -0.1,
         "avgPrice": -3.02,
-        "avgDiv": 0,
+        "avgDiv": 2.92,
         "n": 31
       },
       {
         "year": 2022,
-        "avgTotal": -3.1,
+        "avgTotal": 4.21,
         "avgPrice": -3.1,
-        "avgDiv": 0,
+        "avgDiv": 7.31,
         "n": 31
       },
       {
         "year": 2023,
-        "avgTotal": 6.4,
+        "avgTotal": 14.22,
         "avgPrice": 6.4,
-        "avgDiv": 0,
+        "avgDiv": 7.82,
         "n": 31
       },
       {
         "year": 2024,
-        "avgTotal": -15.63,
+        "avgTotal": -5.91,
         "avgPrice": -15.63,
-        "avgDiv": 0,
+        "avgDiv": 9.72,
         "n": 31
       },
       {
         "year": 2025,
-        "avgTotal": 19.18,
+        "avgTotal": 19.82,
         "avgPrice": 8,
-        "avgDiv": 11.17,
+        "avgDiv": 11.81,
         "n": 31
       }
     ],
     "dyPredictsNext": {
       "n": 124,
-      "correlation": 0,
-      "interpretation": "Sem relação clara entre DY passado e total return futuro."
+      "correlation": 0.323,
+      "interpretation": "DY mais alto no ano anterior tende a associar-se a melhor total return no ano seguinte (sinal fraco/moderado)."
     },
     "dataQuality": {
       "freeSourcesOnly": true,

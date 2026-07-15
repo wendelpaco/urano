@@ -91,7 +91,12 @@ export async function getBenchmarkController(
   reply: FastifyReply,
 ): Promise<void> {
   const params = z
-    .object({ id: z.enum(['ibov', 'ifix']) })
+    .object({
+      id: z
+        .string()
+        .transform((s) => s.toLowerCase())
+        .pipe(z.enum(['ibov', 'ifix'])),
+    })
     .safeParse(request.params);
   if (!params.success) return sendZodError(reply, params.error, 'Benchmark inválido (ibov|ifix).');
 

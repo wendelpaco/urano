@@ -91,7 +91,7 @@ export async function getDividendsController(
     }
   }
 
-  const totalPerShare = events.reduce((sum, e) => sum + e.valuePerShare, 0);
+  const dmplTotalPerShare = events.reduce((sum, e) => sum + e.valuePerShare, 0);
 
   // Onda 1d: busca proventos mensais do StatusInvest + análise
   let monthlyHistory: Array<{ date: string; value: number; type: string; ticker: string }> | null = null;
@@ -118,6 +118,21 @@ export async function getDividendsController(
     // Provider falhou → degradado, mantém DMPL
   }
 
+  // DMPL (ações) preenche total/data. FIIs em geral só têm monthlyHistory —
+  // sem este fallback a API devolvia total=0 com 100+ eventos no histórico.
+  let total = events.length;
+  let totalValuePerShare = Math.round(dmplTotalPerShare * 100) / 100;
+  if (events.length === 0 && monthlyHistory && monthlyHistory.length > 0) {
+    total = monthlyHistory.length;
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 1);
+    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    const trailing = monthlyHistory.filter((e) => e.date >= cutoffIso);
+    const window = trailing.length > 0 ? trailing : monthlyHistory.slice(0, 12);
+    const sum = window.reduce((s, e) => s + e.value, 0);
+    totalValuePerShare = Math.round(sum * 100) / 100;
+  }
+
   reply.send({
     ticker,
     companyName: company.name,
@@ -128,8 +143,9 @@ export async function getDividendsController(
       ? 'CVM — DMPL (Demonstração das Mutações do Patrimônio Líquido)'
       : 'StatusInvest (proventos mensais; cache Redis + Postgres canônico)',
     asOf: new Date().toISOString(),
-    total: events.length,
-    totalValuePerShare: Math.round(totalPerShare * 100) / 100,
+    total,
+    totalValuePerShare,
+    /** Eventos anuais DMPL (ações). FIIs: [] — use monthlyHistory. */
     data: events,
     monthlyHistory,
     analysis,

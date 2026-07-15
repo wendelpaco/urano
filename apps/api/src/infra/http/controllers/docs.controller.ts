@@ -292,8 +292,8 @@ const spec = {
             name: 'id',
             in: 'path',
             required: true,
-            schema: { type: 'string', enum: ['IBOV', 'IFIX'] },
-            example: 'IBOV',
+            schema: { type: 'string', enum: ['ibov', 'ifix'] },
+            example: 'ibov',
           },
           {
             name: 'years',

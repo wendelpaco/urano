@@ -20,20 +20,42 @@ import {
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
+/** Item cru do StatusInvest (ações e FIIs usam campos diferentes). */
 interface StatusInvestProvent {
-  dataCom?: string;       // "2025-06-15"
+  dataCom?: string; // ISO "2025-06-15" (ações)
   dataPagamento?: string;
-  valor: string;          // "0.1023"
-  tipo?: string;          // "Dividendo" | "JCP" | "Rendimento" | "Amortização"
-  assetType?: number;     // 1 = ação, 2 = FII
+  valor?: string | number; // "0.1023" ou 0.1023
+  tipo?: string; // "Dividendo" | "JCP" | "Rendimento" | "Amortização"
+  assetType?: number;
+  // FII companytickerprovents:
+  ed?: string; // data-com DD/MM/YYYY
+  pd?: string; // pagamento DD/MM/YYYY
+  v?: number; // valor por cota
+  et?: string; // tipo ("Rendimento")
+  etd?: string;
 }
 
-type StatusInvestResponse = Array<{
-  dataCom: string;
-  valor: string;
-  tipo: string;
-  assetType?: number;
-}>;
+type StatusInvestResponse = StatusInvestProvent[];
+
+/** Converte "DD/MM/YYYY" ou "YYYY-MM-DD" → ISO date ou null. */
+function toIsoDate(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  return null;
+}
+
+function parseValor(item: StatusInvestProvent): number {
+  if (typeof item.v === 'number' && Number.isFinite(item.v)) return item.v;
+  if (typeof item.valor === 'number' && Number.isFinite(item.valor)) return item.valor;
+  if (typeof item.valor === 'string') {
+    const n = parseFloat(item.valor.replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 
@@ -161,26 +183,39 @@ export class DividendsProvider {
 
   private mapToEvents(
     raw: StatusInvestResponse,
-    ticker: string,
+    _ticker: string,
   ): DividendEvent[] {
+    // Histórico longo para backtest FII/ações (fonte free retorna ~10y em FII)
     const now = new Date();
-    const fourYearsAgo = new Date(now);
-    fourYearsAgo.setFullYear(fourYearsAgo.getFullYear() - 4);
-    const cutoff = fourYearsAgo.toISOString().slice(0, 10);
+    const lookback = new Date(now);
+    lookback.setFullYear(lookback.getFullYear() - 12);
+    const cutoff = lookback.toISOString().slice(0, 10);
 
-    return raw
-      .filter((item) => {
-        // Filtra datas inválidas ou muito antigas
-        const date = item.dataCom?.slice(0, 10);
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-        return date >= cutoff;
-      })
-      .map((item) => ({
-        date: item.dataCom!.slice(0, 10),
-        value: parseFloat(item.valor) || 0,
-        type: this.mapType(item.tipo),
-      }))
-      .filter((e) => e.value > 0);
+    const events: DividendEvent[] = [];
+    for (const item of raw) {
+      // Prefer data-com; fallback pagamento. Aceita ISO ou BR.
+      const date =
+        toIsoDate(item.dataCom) ??
+        toIsoDate(item.ed) ??
+        toIsoDate(item.dataPagamento) ??
+        toIsoDate(item.pd);
+      if (!date || date < cutoff) continue;
+      const value = parseValor(item);
+      if (!(value > 0)) continue;
+      events.push({
+        date,
+        value,
+        type: this.mapType(item.tipo ?? item.et ?? item.etd),
+      });
+    }
+    // Dedup por data+valor (API às vezes repete ajustados)
+    const seen = new Set<string>();
+    return events.filter((e) => {
+      const k = `${e.date}|${e.value}|${e.type}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   }
 
   /**

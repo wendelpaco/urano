@@ -1,0 +1,4 @@
+
+# Postgres dumps locais
+backups/
+*.sql.gz
