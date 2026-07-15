@@ -79,6 +79,98 @@ export function computeTotalReturn(
 /**
  * Momentum simplificado a partir de série de preços até `asOf` (look-ahead free se asOf for a data do score).
  */
+function firstCloseOnOrAfter(
+  sorted: PricePoint[],
+  isoDay: string,
+): PricePoint | null {
+  for (const p of sorted) {
+    if (p.date >= isoDay) return p;
+  }
+  return null;
+}
+
+/**
+ * Total return por ano civil: primeiro close ≥ Y-01-01 → primeiro close ≥ Y+1-01-01.
+ * Proventos com data em [start, end) (início inclusivo, fim exclusivo).
+ */
+export function calendarYearTotalReturns(
+  prices: PricePoint[],
+  dividends: CashEvent[],
+  years: number[],
+): Record<number, TotalReturnResult | null> {
+  const sorted = [...prices]
+    .filter((p) => p.close > 0 && /^\d{4}-\d{2}-\d{2}/.test(p.date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const out: Record<number, TotalReturnResult | null> = {};
+  for (const y of years) {
+    const start = firstCloseOnOrAfter(sorted, `${y}-01-01`);
+    const end = firstCloseOnOrAfter(sorted, `${y + 1}-01-01`);
+    if (!start || !end || start.close <= 0) {
+      out[y] = null;
+      continue;
+    }
+    const divs = dividends.filter(
+      (d) => d.value > 0 && d.date >= start.date && d.date < end.date,
+    );
+    const dividendsSum = +divs.reduce((s, d) => s + d.value, 0).toFixed(6);
+    const priceReturnPct = +(((end.close - start.close) / start.close) * 100).toFixed(2);
+    const dividendReturnPct = +((dividendsSum / start.close) * 100).toFixed(2);
+    out[y] = {
+      startDate: start.date,
+      endDate: end.date,
+      startPrice: start.close,
+      endPrice: end.close,
+      priceReturnPct,
+      dividendReturnPct,
+      totalReturnPct: +(priceReturnPct + dividendReturnPct).toFixed(2),
+      dividendsSum,
+      dividendEvents: divs.length,
+      sourceNote:
+        'Ano civil: 1º close ≥ Y-01-01 → 1º close ≥ Y+1-01-01 + proventos [start,end).',
+    };
+  }
+  return out;
+}
+
+/**
+ * DY do ano Y (proventos em Y / preço início Y) → total return do ano Y+1.
+ */
+export function trailingDyAndNextTotalReturn(
+  prices: PricePoint[],
+  dividends: CashEvent[],
+  years: number[],
+): Array<{
+  year: number;
+  nextYear: number;
+  trailingDyPct: number;
+  nextTotalReturnPct: number;
+}> {
+  const annual = calendarYearTotalReturns(prices, dividends, [
+    ...years,
+    ...years.map((y) => y + 1),
+  ]);
+  const pairs: Array<{
+    year: number;
+    nextYear: number;
+    trailingDyPct: number;
+    nextTotalReturnPct: number;
+  }> = [];
+
+  for (const y of years) {
+    const trY = annual[y];
+    const trNext = annual[y + 1];
+    if (!trY || !trNext || trY.startPrice <= 0) continue;
+    pairs.push({
+      year: y,
+      nextYear: y + 1,
+      trailingDyPct: +((trY.dividendsSum / trY.startPrice) * 100).toFixed(2),
+      nextTotalReturnPct: trNext.totalReturnPct,
+    });
+  }
+  return pairs;
+}
+
 export function momentumFromCloses(
   prices: PricePoint[],
   asOf: string,

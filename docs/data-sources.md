@@ -29,6 +29,8 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 - **P/VP FII**: prioridade `price / navPerShare` CVM; fallback StatusInvest
 - **Total return FII**: `GET /v1/fiis/:ticker/total-return` (cota Yahoo + proventos)
 - **Backtest ações**: DY via DMPL CVM; momentum 3M/6M com preços reais na data do score
+- **Backtest FII total return**: `bun run backtest:fii` → `fii_backtest_years` + correlação DY→TR+1
+- Validação: campo `fiiBacktest` no `GET /analysis/validation` após o worker
 
 Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + preço Yahoo; macro vem do BCB; scrapers preenchem lacunas (FIIs, proventos, lazy load) e **nunca** substituem CVM quando CVM existe.
 

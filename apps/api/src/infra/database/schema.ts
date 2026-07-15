@@ -436,6 +436,55 @@ export const backtestStrategyYears = pgTable(
 // ═══════════════════════════════════════════════════════════════════════════
 // fii_cvm_monthly — Informes mensais CVM (dados reais open data)
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// fii_backtest_years — Total return anual real (cota + proventos)
+// ═══════════════════════════════════════════════════════════════════════════
+export const fiiBacktestYears = pgTable(
+  'fii_backtest_years',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    year: smallint('year').notNull(),
+    startPrice: decimal('start_price', { precision: 12, scale: 4 }),
+    endPrice: decimal('end_price', { precision: 12, scale: 4 }),
+    priceReturnPct: decimal('price_return_pct', { precision: 8, scale: 2 }),
+    dividendReturnPct: decimal('dividend_return_pct', { precision: 8, scale: 2 }),
+    totalReturnPct: decimal('total_return_pct', { precision: 8, scale: 2 }),
+    dividendsSum: decimal('dividends_sum', { precision: 12, scale: 6 }),
+    dividendEvents: smallint('dividend_events').default(0),
+    score: smallint('score'),
+    pvp: decimal('pvp', { precision: 8, scale: 4 }),
+    priceSource: varchar('price_source', { length: 32 }),
+    divSource: varchar('div_source', { length: 32 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_fii_backtest_run_ticker_year').on(table.runId, table.ticker, table.year),
+    index('idx_fii_backtest_run').on(table.runId),
+    index('idx_fii_backtest_ticker_year').on(table.ticker, table.year),
+  ],
+);
+
+export const fiiBacktestDyPairs = pgTable(
+  'fii_backtest_dy_pairs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull(),
+    ticker: varchar('ticker', { length: 10 }).notNull(),
+    year: smallint('year').notNull(),
+    nextYear: smallint('next_year').notNull(),
+    trailingDyPct: decimal('trailing_dy_pct', { precision: 8, scale: 2 }).notNull(),
+    nextTotalReturnPct: decimal('next_total_return_pct', { precision: 8, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index('idx_fii_dy_pairs_run').on(table.runId)],
+);
+
 export const fiiCvmMonthly = pgTable(
   'fii_cvm_monthly',
   {

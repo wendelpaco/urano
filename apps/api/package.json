@@ -26,6 +26,7 @@
     "key:create": "bun run scripts/create-api-key.ts",
     "warm-cache": "bun run scripts/warm-cache.ts",
     "backtest": "bun run src/infra/workers/backtest.ts",
+    "backtest:fii": "bun run src/infra/workers/fii-backtest.ts",
     "backup": "bash scripts/backup-postgres.sh"
   },
   "devDependencies": {

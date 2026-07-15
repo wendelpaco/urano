@@ -1035,10 +1035,29 @@ export async function getValidationController(
     );
   }
 
+  // 3) Backtest FII total return (se já rodou worker)
+  let fiiBacktest: Awaited<
+    ReturnType<
+      typeof import('../../database/fii-backtest-queries.ts').getLatestFiiBacktestSummary
+    >
+  > = null;
+  try {
+    const { getLatestFiiBacktestSummary } = await import(
+      '../../database/fii-backtest-queries.ts'
+    );
+    fiiBacktest = await getLatestFiiBacktestSummary();
+  } catch (err) {
+    console.warn(
+      '[validation] fii backtest:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   reply.send({
     ...SCORE_VALIDATION,
     strategy,
     ibov,
+    fiiBacktest,
     generatedAt: new Date().toISOString(),
   });
 }
