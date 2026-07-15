@@ -905,7 +905,38 @@ export async function getValidationController(
   _request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  // Anexa IBOV real (Yahoo ^BVSP) — série pública gratuita, calculada de closes reais
+  // 1) Série top-N vs universo vs IBOV persistida no último backtest (dados reais)
+  let strategy: {
+    runId: string;
+    scoreVersion: string;
+    n: number;
+    summary: ReturnType<
+      typeof import('../../database/backtest-queries.ts').summarizeStrategyYears
+    >;
+  } | null = null;
+
+  try {
+    const {
+      getLatestStrategyYears,
+      summarizeStrategyYears,
+    } = await import('../../database/backtest-queries.ts');
+    const latest = await getLatestStrategyYears(10);
+    if (latest) {
+      strategy = {
+        runId: latest.runId,
+        scoreVersion: latest.scoreVersion,
+        n: 10,
+        summary: summarizeStrategyYears(latest.years),
+      };
+    }
+  } catch (err) {
+    console.warn(
+      '[validation] strategy years DB:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 2) IBOV live (Yahoo) — preenche anos mesmo sem backtest re-rodado
   let ibov: Awaited<
     ReturnType<typeof import('../../services/ibov-benchmark.ts').fetchIbovCalendarReturns>
   > & {
@@ -915,6 +946,7 @@ export async function getValidationController(
       avgIbov: number | null;
       ibovYears: number;
       deltaAvgPp: number | null;
+      source: 'persisted_backtest' | 'verdict_static';
     };
   } | null = null;
 
@@ -922,30 +954,47 @@ export async function getValidationController(
     const { fetchIbovCalendarReturns } = await import(
       '../../services/ibov-benchmark.ts'
     );
-    const bench = await fetchIbovCalendarReturns(SCORE_VALIDATION.yearsTested);
-    const ibovVals = SCORE_VALIDATION.yearsTested
-      .map((y) => bench.byYear[y])
-      .filter((v): v is number => typeof v === 'number');
+    const years =
+      strategy?.summary.byYear.map((y) => y.year) ?? SCORE_VALIDATION.yearsTested;
+    const bench = await fetchIbovCalendarReturns(years);
+
+    const avgPortfolio =
+      strategy?.summary.avgPortfolio ?? SCORE_VALIDATION.topN?.avgPortfolio ?? null;
     const avgIbov =
-      ibovVals.length > 0
-        ? +(ibovVals.reduce((s, v) => s + v, 0) / ibovVals.length).toFixed(2)
-        : null;
-    const avgPortfolio = SCORE_VALIDATION.topN?.avgPortfolio ?? null;
+      strategy?.summary.avgIbov ??
+      (() => {
+        const vals = years
+          .map((y) => bench.byYear[y])
+          .filter((v): v is number => typeof v === 'number');
+        return vals.length
+          ? +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2)
+          : null;
+      })();
 
     ibov = {
       ...bench,
-      vsTopN: SCORE_VALIDATION.topN
-        ? {
-            n: SCORE_VALIDATION.topN.n,
-            avgPortfolio: SCORE_VALIDATION.topN.avgPortfolio,
-            avgIbov,
-            ibovYears: ibovVals.length,
-            deltaAvgPp:
-              avgPortfolio != null && avgIbov != null
-                ? +(avgPortfolio - avgIbov).toFixed(2)
-                : null,
-          }
-        : undefined,
+      // Prefer byYear from persisted strategy (portfolio vs ibov same years)
+      byYear: strategy
+        ? Object.fromEntries(
+            strategy.summary.byYear.map((y) => [
+              y.year,
+              y.ibovReturn ?? bench.byYear[y.year] ?? null,
+            ]),
+          )
+        : bench.byYear,
+      vsTopN: {
+        n: strategy?.n ?? SCORE_VALIDATION.topN?.n ?? 10,
+        avgPortfolio: avgPortfolio ?? 0,
+        avgIbov,
+        ibovYears:
+          strategy?.summary.ibovYears ??
+          years.filter((y) => bench.byYear[y] != null).length,
+        deltaAvgPp:
+          avgPortfolio != null && avgIbov != null
+            ? +(avgPortfolio - avgIbov).toFixed(2)
+            : null,
+        source: strategy ? 'persisted_backtest' : 'verdict_static',
+      },
     };
   } catch (err) {
     console.warn(
@@ -956,6 +1005,7 @@ export async function getValidationController(
 
   reply.send({
     ...SCORE_VALIDATION,
+    strategy,
     ibov,
     generatedAt: new Date().toISOString(),
   });

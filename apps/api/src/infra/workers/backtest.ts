@@ -15,7 +15,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { db } from '../database/connection.ts';
-import { backtestResults, companies, companyFundamentals } from '../database/schema.ts';
+import { backtestResults, backtestStrategyYears, companies, companyFundamentals } from '../database/schema.ts';
 import { stockQuoteService } from '../services/stock-quote-service.ts';
 import { calcAllIndicators } from '../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../core/services/stock-score.ts';
@@ -259,6 +259,17 @@ async function main(): Promise<void> {
     console.warn('  IBOV Yahoo indisponível:', e instanceof Error ? e.message : e);
   }
 
+  const strategyRows: Array<{
+    runId: string;
+    scoreVersion: string;
+    n: number;
+    year: number;
+    portfolioReturn: string;
+    universeReturn: string;
+    ibovReturn: string | null;
+    ibovSource: string | null;
+  }> = [];
+
   for (const n of [3, 5, 10]) {
     const s = topNStrategy(allResults, n, ibovByYear);
     const vsMkt = (s.avgPortfolio - s.avgMarket).toFixed(1);
@@ -268,6 +279,25 @@ async function main(): Promise<void> {
       `  Top ${String(n).padStart(2)}: Retorno médio ${s.avgPortfolio.toFixed(1)}%  |  vs Universo ${vsMkt}pp  |  vs IBOV ${vsIbov}pp  |  ganha univ. ${s.winYears}/${s.totalYears}` +
         (s.winYearsVsIbov != null ? `  |  ganha IBOV ${s.winYearsVsIbov}/${s.ibovYears}` : ''),
     );
+
+    for (const y of s.years) {
+      strategyRows.push({
+        runId,
+        scoreVersion: SCORE_VERSION,
+        n,
+        year: y.year,
+        portfolioReturn: String(y.portfolioReturn),
+        universeReturn: String(y.marketReturn),
+        ibovReturn:
+          typeof y.ibovReturn === 'number' ? String(y.ibovReturn) : null,
+        ibovSource: typeof y.ibovReturn === 'number' ? 'yahoo_^BVSP' : null,
+      });
+    }
+  }
+
+  if (strategyRows.length > 0) {
+    await db.insert(backtestStrategyYears).values(strategyRows);
+    console.log(`\n💾 Estratégias gravadas em backtest_strategy_years (${strategyRows.length} linhas)`);
   }
 
   // ═══ DIAGNÓSTICO DO MODELO ═══

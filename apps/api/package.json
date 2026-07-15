@@ -16,6 +16,7 @@
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
     "worker:sync": "bun run src/infra/workers/cvm-sync-worker.ts",
+    "worker:fii-cvm": "bun run src/infra/workers/cvm-fii-sync-worker.ts",
     "worker:jobs": "bun run src/infra/workers/job-runner.ts",
     "worker": "SCHEDULER_ENABLED=true bun run src/server.ts",
     "start:api-only": "SCHEDULER_ENABLED=false bun run src/server.ts",

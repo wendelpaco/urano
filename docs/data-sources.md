@@ -19,6 +19,13 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 - Macro BCB expandido (CDI, IGP-M, SELIC diária, desemprego, …) com `source: bcb_sgs`
 - **Sem APIs pagas** (brapi etc. fora do caminho crítico)
 
+### Estatísticas fortes + CVM FII — implementado
+
+- `backtest_strategy_years`: top-N vs universo vs IBOV **ano a ano** (persistido no `bun run backtest`)
+- `GET /v1/analysis/validation` lê série persistida (`strategy`) + IBOV live
+- **CVM FII** Informe Mensal: `bun run worker:fii-cvm [ano]` → `fii_cvm_monthly`
+- `GET /v1/fiis/:ticker/cvm` — PL / cotas / VP por cota oficiais
+
 Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + preço Yahoo; macro vem do BCB; scrapers preenchem lacunas (FIIs, proventos, lazy load) e **nunca** substituem CVM quando CVM existe.
 
 ## Por domínio

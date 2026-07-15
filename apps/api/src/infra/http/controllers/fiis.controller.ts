@@ -300,6 +300,59 @@ export async function getFiiOperationalController(
   }
 }
 
+/**
+ * GET /v1/fiis/:ticker/cvm
+ * PL / cotas / VP por cota a partir do Informe Mensal CVM (open data real).
+ * Requer sync prévio: `bun run worker:fii-cvm [ano]`
+ */
+export async function getFiiCvmController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+  const { ticker } = parsed.data;
+
+  const { cvmFiiService } = await import('../../services/cvm-fii-service.ts');
+  const latest = await cvmFiiService.getLatestByTicker(ticker);
+  if (!latest) {
+    reply.status(404).send({
+      error: 'NotFound',
+      message: `Sem informe CVM em cache para "${ticker}". Rode: bun run worker:fii-cvm`,
+      source: 'cvm_inf_mensal',
+    });
+    return;
+  }
+
+  const history = await cvmFiiService.getHistoryByTicker(ticker, 24);
+  reply.send({
+    ticker,
+    source: latest.source,
+    asOf: latest.extractedAt?.toISOString?.() ?? latest.extractedAt,
+    latest: {
+      cnpj: latest.cnpj,
+      fundName: latest.fundName,
+      referenceDate: latest.referenceDate,
+      netAssets: latest.netAssets != null ? Number(latest.netAssets) : null,
+      sharesOutstanding:
+        latest.sharesOutstanding != null ? Number(latest.sharesOutstanding) : null,
+      navPerShare: latest.navPerShare != null ? Number(latest.navPerShare) : null,
+    },
+    history: history.map((h) => ({
+      referenceDate: h.referenceDate,
+      netAssets: h.netAssets != null ? Number(h.netAssets) : null,
+      sharesOutstanding:
+        h.sharesOutstanding != null ? Number(h.sharesOutstanding) : null,
+      navPerShare: h.navPerShare != null ? Number(h.navPerShare) : null,
+    })),
+    dataQuality: {
+      freeSourcesOnly: true,
+      official: true,
+      note: 'Informe Mensal Estruturado CVM — dados abertos oficiais.',
+    },
+  });
+}
+
 export async function fiiScreenerController(
   request: FastifyRequest,
   reply: FastifyReply,

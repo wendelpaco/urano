@@ -407,3 +407,57 @@ export const backtestResults = pgTable(
     index('idx_backtest_ticker').on(table.ticker),
   ],
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// backtest_strategy_years — Top-N vs universo vs IBOV (série ano a ano)
+// ═══════════════════════════════════════════════════════════════════════════
+export const backtestStrategyYears = pgTable(
+  'backtest_strategy_years',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull(),
+    scoreVersion: varchar('score_version', { length: 20 }).notNull(),
+    n: smallint('n').notNull(),
+    year: smallint('year').notNull(),
+    portfolioReturn: decimal('portfolio_return', { precision: 8, scale: 2 }).notNull(),
+    universeReturn: decimal('universe_return', { precision: 8, scale: 2 }).notNull(),
+    ibovReturn: decimal('ibov_return', { precision: 8, scale: 2 }),
+    ibovSource: varchar('ibov_source', { length: 32 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_backtest_strategy_run_n_year').on(table.runId, table.n, table.year),
+    index('idx_backtest_strategy_run').on(table.runId),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// fii_cvm_monthly — Informes mensais CVM (dados reais open data)
+// ═══════════════════════════════════════════════════════════════════════════
+export const fiiCvmMonthly = pgTable(
+  'fii_cvm_monthly',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cnpj: char('cnpj', { length: 14 }).notNull(),
+    ticker: varchar('ticker', { length: 10 }),
+    fundName: varchar('fund_name', { length: 255 }),
+    referenceDate: date('reference_date').notNull(),
+    netAssets: decimal('net_assets', { precision: 20, scale: 2 }),
+    sharesOutstanding: decimal('shares_outstanding', { precision: 20, scale: 4 }),
+    navPerShare: decimal('nav_per_share', { precision: 18, scale: 6 }),
+    source: varchar('source', { length: 32 }).notNull().default('cvm_inf_mensal'),
+    raw: jsonb('raw').$type<Record<string, unknown>>(),
+    extractedAt: timestamp('extracted_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_fii_cvm_cnpj_ref').on(table.cnpj, table.referenceDate),
+    index('idx_fii_cvm_ticker_ref').on(table.ticker, table.referenceDate.desc()),
+  ],
+);
