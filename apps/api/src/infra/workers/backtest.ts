@@ -130,12 +130,47 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
     const endPrice = await getPriceAtDate(ticker, endDate.toISOString().slice(0, 10));
 
     const indicators = calcAllIndicators(current, startPrice);
+    // DY real via DMPL CVM (já em calcAllIndicators); reforço se campos snake_case
+    if (indicators.dividendYield == null) {
+      const div = Number(current.dividends_paid ?? 0) + Number(current.jcp_paid ?? 0);
+      const sh = Number(current.shares_outstanding ?? 0);
+      if (div > 0 && sh > 0 && startPrice > 0) {
+        indicators.dividendYield = +((div / (sh * startPrice)) * 100).toFixed(2);
+      }
+    }
+
+    // Momentum real look-ahead-free: retornos 3M/6M até a data de referência
+    let momentum: import('../services/market-data-service.ts').MarketMomentum | undefined;
+    try {
+      const d0 = new Date(refDate);
+      const d3 = new Date(d0); d3.setMonth(d3.getMonth() - 3);
+      const d6 = new Date(d0); d6.setMonth(d6.getMonth() - 6);
+      const p3 = await getPriceAtDate(ticker, d3.toISOString().slice(0, 10));
+      const p6 = await getPriceAtDate(ticker, d6.toISOString().slice(0, 10));
+      const return3m =
+        p3 && p3 > 0 ? +(((startPrice - p3) / p3) * 100).toFixed(1) : null;
+      const return6m =
+        p6 && p6 > 0 ? +(((startPrice - p6) / p6) * 100).toFixed(1) : null;
+      if (return3m != null || return6m != null) {
+        momentum = {
+          ticker,
+          price: startPrice,
+          return3m,
+          return6m,
+          drawdownFrom52WeekHigh: null,
+          annualizedVolatility: null,
+          avgVolume: null,
+        };
+      }
+    } catch { /* ok */ }
+
     const historical = buildHistorical(tickerRows);
     const scoreResult = StockScoreCalculator.calculate(
       indicators,
       (current.sector as string) || null,
       String(current.name),
       historical,
+      momentum,
     );
 
     results.push({

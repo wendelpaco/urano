@@ -25,6 +25,10 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 - `GET /v1/analysis/validation` lê série persistida (`strategy`) + IBOV live
 - **CVM FII** Informe Mensal: `bun run worker:fii-cvm [ano]` → `fii_cvm_monthly`
 - `GET /v1/fiis/:ticker/cvm` — PL / cotas / VP por cota oficiais
+- **Link CNPJ↔ticker**: `bun run worker:fii-link` (auto após fii-cvm)
+- **P/VP FII**: prioridade `price / navPerShare` CVM; fallback StatusInvest
+- **Total return FII**: `GET /v1/fiis/:ticker/total-return` (cota Yahoo + proventos)
+- **Backtest ações**: DY via DMPL CVM; momentum 3M/6M com preços reais na data do score
 
 Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + preço Yahoo; macro vem do BCB; scrapers preenchem lacunas (FIIs, proventos, lazy load) e **nunca** substituem CVM quando CVM existe.
 

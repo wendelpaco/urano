@@ -24,6 +24,18 @@ function makeRow(overrides: Record<string, unknown> = {}): Record<string, unknow
 describe('calcAllIndicators', () => {
   // ─── Golden test: PETR4 com dados simulados ────────────────────────────
 
+  it('deve calcular DY a partir de dividendos/JCP CVM quando há preço e ações', () => {
+    const price = 10;
+    const row = makeRow({
+      sharesOutstanding: 100,
+      dividendsPaid: 50,
+      jcpPaid: 50,
+    });
+    // DY = 100 / (100 * 10) * 100 = 10%
+    const result = calcAllIndicators(row, price);
+    expect(result.dividendYield).toBe(10);
+  });
+
   it('deve calcular indicadores corretamente para empresa saudável', () => {
     const price = 35.0;
     const row = makeRow();

@@ -37,6 +37,17 @@ async function main() {
     }
   }
 
+  // Auto-link CNPJ ↔ tickers conhecidos (nome)
+  try {
+    const { linkFiiCnpjToTickers } = await import('../services/fii-link-service.ts');
+    const link = await linkFiiCnpjToTickers();
+    console.log(
+      `🔗 link: linked=${link.linked} companies=${link.updatedCompanies}`,
+    );
+  } catch (e) {
+    console.warn('🔗 link skip:', e instanceof Error ? e.message : e);
+  }
+
   await closeDatabaseConnection().catch(() => {});
   process.exit(0);
 }

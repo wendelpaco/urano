@@ -301,6 +301,60 @@ export async function getFiiOperationalController(
 }
 
 /**
+ * GET /v1/fiis/:ticker/total-return?range=1y
+ * Total return real: variação de cota (Yahoo) + soma de proventos (StatusInvest/DB).
+ */
+export async function getFiiTotalReturnController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = paramsSchema.safeParse(request.params);
+  if (!parsed.success) return sendZodError(reply, parsed.error, 'Ticker inválido.');
+  const query = z
+    .object({ range: z.enum(['1mo', '3mo', '6mo', '1y', '2y', '5y']).default('1y') })
+    .safeParse(request.query);
+  if (!query.success) return sendZodError(reply, query.error, 'Query inválida.');
+
+  const { ticker } = parsed.data;
+  const { range } = query.data;
+
+  try {
+    const { computeTotalReturn } = await import(
+      '../../../core/services/total-return.ts'
+    );
+    const history = await stockQuoteService.getHistory(ticker, range);
+    const proventos = (await dividendsProvider.fetchDividends(ticker)) ?? [];
+    const tr = computeTotalReturn(
+      history.points.map((p) => ({ date: p.date, close: p.close })),
+      proventos.map((d) => ({ date: d.date, value: d.value })),
+    );
+    if (!tr) {
+      reply.status(404).send({
+        error: 'NotEnoughData',
+        message: `Histórico insuficiente para total return de ${ticker}.`,
+      });
+      return;
+    }
+    reply.send({
+      ticker,
+      range,
+      ...tr,
+      sources: {
+        price: history.source,
+        priceAsOf: history.asOf,
+        dividends: 'statusinvest_or_db',
+      },
+      dataQuality: { freeSourcesOnly: true, official: false },
+    });
+  } catch (error) {
+    reply.status(502).send({
+      error: 'TotalReturnUnavailable',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * GET /v1/fiis/:ticker/cvm
  * PL / cotas / VP por cota a partir do Informe Mensal CVM (open data real).
  * Requer sync prévio: `bun run worker:fii-cvm [ano]`

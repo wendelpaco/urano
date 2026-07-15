@@ -8,7 +8,7 @@ import { listCompaniesController, listSectorsController, getCompanyByTickerContr
 import { getLatestFundamentalsController, getFundamentalsHistoryController } from '../controllers/fundamentals.controller.ts';
 import { getStockQuoteController, getBatchQuotesController, getStockHistoryController, getStockStatsController, getCorporateEventsController, getTechnicalIndicatorsController } from '../controllers/stocks.controller.ts';
 import { getDividendsController } from '../controllers/dividends.controller.ts';
-import { listFiisController, getFiiByTickerController, getFiiHistoryController, fiiScreenerController, getFiiOperationalController, getFiiCvmController } from '../controllers/fiis.controller.ts';
+import { listFiisController, getFiiByTickerController, getFiiHistoryController, fiiScreenerController, getFiiOperationalController, getFiiCvmController, getFiiTotalReturnController } from '../controllers/fiis.controller.ts';
 import { listMacroController, getMacroSeriesController } from '../controllers/macro.controller.ts';
 import { createApiKeyController, listApiKeysController, deleteApiKeyController, rotateApiKeyController } from '../controllers/auth.controller.ts';
 import { screenerController } from '../controllers/screener.controller.ts';
@@ -95,6 +95,7 @@ export async function routesPlugin(
   app.get('/fiis/:ticker/history', { ...market }, getFiiHistoryController);
   app.get('/fiis/:ticker/operational', { ...market }, getFiiOperationalController);
   app.get('/fiis/:ticker/cvm', { ...market }, getFiiCvmController);
+  app.get('/fiis/:ticker/total-return', { ...market }, getFiiTotalReturnController);
 
   app.get('/macro', { ...market }, listMacroController);
   app.get('/macro/:series', { ...market }, getMacroSeriesController);

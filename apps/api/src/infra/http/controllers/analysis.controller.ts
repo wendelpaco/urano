@@ -308,26 +308,54 @@ export async function getFiiAnalysisController(
     /* provider indisponível */
   }
 
-  // P/VP + DY do cache Redis com fallback para scraper direto
+  // P/VP + DY: prioridade CVM (VP oficial) > Redis > StatusInvest
   let dyFromScraper: number | null = null;
   let pvp: number | null = null;
   let pvpOk = false;
+  let pvpSource: 'cvm' | 'statusinvest' | null = null;
+  let cvmNav: number | null = null;
+  let cvmRef: string | null = null;
+
+  try {
+    const { cvmFiiService } = await import('../../services/cvm-fii-service.ts');
+    const cvm = await cvmFiiService.getLatestByTicker(ticker);
+    if (cvm?.navPerShare != null) {
+      const nav = Number(cvm.navPerShare);
+      if (nav > 0) {
+        cvmNav = nav;
+        cvmRef = String(cvm.referenceDate);
+        if (price > 0) {
+          pvp = +(price / nav).toFixed(3);
+          pvpOk = true;
+          pvpSource = 'cvm';
+        }
+      }
+    }
+  } catch { /* CVM cache vazio */ }
+
   try {
     const cachedFii = await redis.get(`fii:full:${ticker}`);
     if (cachedFii) {
       const fiiData = JSON.parse(cachedFii);
-      if (fiiData.pvp > 0) { pvp = fiiData.pvp; pvpOk = true; }
+      if (fiiData.pvp > 0 && pvp === null) {
+        pvp = fiiData.pvp;
+        pvpOk = true;
+        pvpSource = 'statusinvest';
+      }
       if (fiiData.dy12m > 0) dyFromScraper = fiiData.dy12m;
     }
   } catch { /* Redis offline */ }
 
-  // Fallback: chama scraper direto se Redis vazio
+  // Fallback: scraper direto se ainda faltar P/VP ou DY
   if (dyFromScraper === null || pvp === null) {
     try {
       const fiiData = await fiisScraper.fetchFII(ticker);
-      if (fiiData.pvp > 0 && pvp === null) { pvp = fiiData.pvp; pvpOk = true; }
+      if (fiiData.pvp > 0 && pvp === null) {
+        pvp = fiiData.pvp;
+        pvpOk = true;
+        pvpSource = 'statusinvest';
+      }
       if (fiiData.dy12m > 0 && dyFromScraper === null) dyFromScraper = fiiData.dy12m;
-      // Cacheia para próximas requisições
       if (fiiData.dividendsHistory.length > 0) {
         await redis.setex(`dividends:${ticker}`, 86400, JSON.stringify(fiiData.dividendsHistory)).catch(()=>{});
       }
@@ -404,8 +432,12 @@ export async function getFiiAnalysisController(
       quotes: quotesOk,
       dividends: dividendsOk,
       pvp: pvpOk,
+      pvpSource,
+      cvmNav,
+      cvmReferenceDate: cvmRef,
       operational: operationalOk,
       classification: score.type_source !== 'inferred',
+      freeSourcesOnly: true,
     },
     price: price || null,
     dividendYield: dy || null,

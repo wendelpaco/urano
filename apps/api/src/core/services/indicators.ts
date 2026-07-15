@@ -27,7 +27,7 @@ export function calcAllIndicators(
   const cash = Number(f.cash ?? 0);
   const equity = Number(f.equity ?? 0);
   const ocf = Number(f.operatingCashFlow ?? 0);
-  const shares = Number(f.sharesOutstanding ?? 0);
+  const shares = Number(f.sharesOutstanding ?? f.shares_outstanding ?? 0);
 
   const eps = shares > 0 ? netIncome / shares : 0;
   const bvps = shares > 0 ? equity / shares : 0;
@@ -38,9 +38,18 @@ export function calcAllIndicators(
   // total liabilities is the only debt figure the schema carries, so it proxies debt.
   const enterpriseValue = marketCap + netDebt;
 
+  // DY a partir de DMPL CVM (dividendos + JCP do ano) / (cotação × ações) — dado real oficial
+  const divPaid = Number(f.dividendsPaid ?? f.dividends_paid ?? 0);
+  const jcpPaid = Number(f.jcpPaid ?? f.jcp_paid ?? 0);
+  const totalDiv = divPaid + jcpPaid;
+  const dividendYield =
+    price > 0 && shares > 0 && totalDiv > 0
+      ? +((totalDiv / (shares * price)) * 100).toFixed(2)
+      : null;
+
   return {
     ticker: String(f.ticker ?? ''),
-    referenceDate: String(f.referenceDate ?? '').slice(0, 10),
+    referenceDate: String(f.referenceDate ?? f.reference_date ?? '').slice(0, 10),
     // Margens
     grossMargin: revenue > 0 ? +(grossProfit / revenue * 100).toFixed(2) : null,
     ebitMargin: revenue > 0 ? +(ebit / revenue * 100).toFixed(2) : null,
@@ -65,6 +74,6 @@ export function calcAllIndicators(
     fcoToNetIncome: netIncome !== 0 ? +(ocf / Math.abs(netIncome)).toFixed(2) : null,
     // Mercado
     marketCap,
-    dividendYield: null,
+    dividendYield,
   };
 }
