@@ -5,27 +5,124 @@ import { AlertTriangle, ExternalLink, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 
+export type HealthSource = {
+  name: string;
+  status?: string;
+  coverage?: number;
+  freshness?: string;
+  lastUpdate?: string;
+};
+
+export type HealthWarning = {
+  level?: "warn" | "error" | "info" | string;
+  message: string;
+  source?: string;
+  details?: unknown;
+};
+
 export type HealthData = {
   status?: string;
-  sources?: Array<{
-    name: string;
-    status?: string;
-    coverage?: number;
-    freshness?: string;
-    lastUpdate?: string;
-  }>;
-  warnings?: Array<{
-    level?: "warn" | "error" | "info" | string;
-    message: string;
-    source?: string;
-    details?: unknown;
-  }>;
+  sources?: HealthSource[];
+  warnings?: HealthWarning[];
+  fundamentals?: {
+    totalCompanies?: number;
+    withFundamentals?: number;
+    freshCompanies?: number;
+    byFiscalYear?: Array<{ fiscalYear: number; companies: number }>;
+  };
+  jobs?: {
+    enabled?: number;
+    failing?: number;
+    lastRunAt?: string | null;
+  };
+  generatedAt?: string;
 };
+
+/** API may send warnings as string[] or { message }[]. */
+function normalizeWarnings(raw: unknown): HealthWarning[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((w) => {
+    if (typeof w === "string") {
+      return { level: "warn", message: w, source: "system" };
+    }
+    if (w && typeof w === "object") {
+      const o = w as Record<string, unknown>;
+      const message = String(o.message ?? o.msg ?? o.text ?? JSON.stringify(o));
+      return {
+        level: (o.level as string) ?? "warn",
+        message,
+        source: o.source as string | undefined,
+        details: o.details,
+      };
+    }
+    return { level: "warn", message: String(w) };
+  });
+}
+
+/** Build sources panel when API omits `sources` (common on /health/data). */
+function deriveSources(data: HealthData): HealthSource[] {
+  if (Array.isArray(data.sources) && data.sources.length > 0) return data.sources;
+
+  const f = data.fundamentals;
+  const j = data.jobs;
+  const sources: HealthSource[] = [];
+
+  if (f) {
+    const total = f.totalCompanies ?? 0;
+    const withF = f.withFundamentals ?? 0;
+    const fresh = f.freshCompanies ?? 0;
+    const coverage = total > 0 ? withF / total : 0;
+    const freshness = total > 0 ? fresh / total : 0;
+    sources.push({
+      name: "CVM Fundamentals",
+      status: coverage >= 0.7 ? "ok" : coverage >= 0.4 ? "warn" : "error",
+      coverage,
+      freshness: freshness >= 0.5 ? "ok" : "stale",
+      lastUpdate: data.generatedAt,
+    });
+  }
+
+  if (j) {
+    sources.push({
+      name: "Job Scheduler",
+      status: (j.failing ?? 0) > 0 ? "warn" : "ok",
+      coverage: j.enabled && j.enabled > 0 ? 1 : 0,
+      freshness: j.lastRunAt ? "ok" : "unknown",
+      lastUpdate: j.lastRunAt ?? undefined,
+    });
+  }
+
+  sources.push({
+    name: "Market Quotes (I10/Yahoo)",
+    status: "ok",
+    coverage: undefined,
+    freshness: "live-cache",
+    lastUpdate: data.generatedAt,
+  });
+
+  return sources;
+}
+
+function normalizeHealthPayload(raw: HealthData): HealthData {
+  const warnings = normalizeWarnings(raw.warnings);
+  const sources = deriveSources(raw);
+  const hasError = warnings.some((w) => w.level === "error");
+  const hasWarn = warnings.length > 0;
+  return {
+    ...raw,
+    warnings,
+    sources,
+    status: raw.status ?? (hasError ? "error" : hasWarn ? "warn" : "ok"),
+  };
+}
 
 export function useHealthData() {
   return useQuery<HealthData>({
     queryKey: ["health", "data"],
-    queryFn: () => apiFetch<HealthData>({ path: "/health/data" }),
+    queryFn: async () => {
+      const raw = await apiFetch<HealthData>({ path: "/health/data" });
+      return normalizeHealthPayload(raw ?? {});
+    },
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     retry: 1,

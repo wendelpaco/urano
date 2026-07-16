@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
+import { normalizeAllocationAsset } from "@/lib/queries";
 import { useState } from "react";
 import { ErrorState, EmptyState } from "@/components/app/states";
 import { ScoreBadge, TickerBadge } from "@/components/app/badges";
@@ -29,11 +30,14 @@ type AllocatedAsset = {
   ticker: string;
   name?: string;
   type?: string;
+  assetType?: string;
   score?: number;
   price?: number;
   quantity?: number;
   amount?: number;
+  allocationAmount?: number;
   weight?: number;
+  allocationPercent?: number;
   sector?: string;
   reason?: string;
 };
@@ -78,7 +82,9 @@ function AllocatePage() {
   });
 
   const result = run.data;
-  const assets = result?.assets ?? [];
+  const assets = (result?.assets ?? []).map((a) =>
+    normalizeAllocationAsset(a as unknown as Record<string, unknown>),
+  ) as AllocatedAsset[];
   const summary = result?.summary;
 
   return (
@@ -242,15 +248,22 @@ function AllocatePage() {
                             <Link
                               to="/research/$type/$ticker"
                               params={{
-                                type: a.type === "fii" ? "fii" : "stock",
+                                type:
+                                  a.type === "fii" || a.assetType === "fii"
+                                    ? "fii"
+                                    : "stock",
                                 ticker: a.ticker,
                               }}
                             >
                               <TickerBadge ticker={a.ticker} />
                             </Link>
                           </td>
-                          <td className="px-3 h-9 text-muted-foreground text-xs">
-                            {a.type ?? "—"}
+                          <td className="px-3 h-9 text-muted-foreground text-xs uppercase">
+                            {a.type === "fii"
+                              ? "FII"
+                              : a.type === "stock"
+                                ? "Ação"
+                                : (a.type ?? "—")}
                           </td>
                           <td className="px-3 h-9 text-right">
                             {a.score != null ? <ScoreBadge score={a.score} /> : "—"}

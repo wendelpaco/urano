@@ -18,16 +18,28 @@ export function calcAllIndicators(
   f: Record<string, unknown>,
   price: number,
 ): FinancialIndicators {
-  const netIncome = Number(f.netIncomeParent ?? f.netIncome ?? 0);
-  const revenue = Number(f.revenue ?? 0);
-  const cogs = Math.abs(Number(f.cogs ?? 0)); // CVM reporta COGS negativo
-  const ebit = Number(f.ebit ?? 0);
-  const totalAssets = Number(f.totalAssets ?? 0);
-  const totalLiabilities = Number(f.totalLiabilities ?? 0);
-  const cash = Number(f.cash ?? 0);
-  const equity = Number(f.equity ?? 0);
-  const ocf = Number(f.operatingCashFlow ?? 0);
-  const shares = Number(f.sharesOutstanding ?? f.shares_outstanding ?? 0);
+  // Aceita camelCase (screener/ranking) e snake_case (rows cruas do Postgres).
+  const num = (...keys: string[]): number => {
+    for (const k of keys) {
+      const v = f[k];
+      if (v !== undefined && v !== null && v !== '') {
+        const n = Number(v);
+        if (!Number.isNaN(n)) return n;
+      }
+    }
+    return 0;
+  };
+
+  const netIncome = num('netIncomeParent', 'net_income_parent', 'netIncome', 'net_income');
+  const revenue = num('revenue');
+  const cogs = Math.abs(num('cogs')); // CVM reporta COGS negativo
+  const ebit = num('ebit');
+  const totalAssets = num('totalAssets', 'total_assets');
+  const totalLiabilities = num('totalLiabilities', 'total_liabilities');
+  const cash = num('cash');
+  const equity = num('equity');
+  const ocf = num('operatingCashFlow', 'operating_cash_flow');
+  const shares = num('sharesOutstanding', 'shares_outstanding');
 
   const eps = shares > 0 ? netIncome / shares : 0;
   const bvps = shares > 0 ? equity / shares : 0;
@@ -39,8 +51,8 @@ export function calcAllIndicators(
   const enterpriseValue = marketCap + netDebt;
 
   // DY a partir de DMPL CVM (dividendos + JCP do ano) / (cotação × ações) — dado real oficial
-  const divPaid = Number(f.dividendsPaid ?? f.dividends_paid ?? 0);
-  const jcpPaid = Number(f.jcpPaid ?? f.jcp_paid ?? 0);
+  const divPaid = num('dividendsPaid', 'dividends_paid');
+  const jcpPaid = num('jcpPaid', 'jcp_paid');
   const totalDiv = divPaid + jcpPaid;
   const dividendYield =
     price > 0 && shares > 0 && totalDiv > 0

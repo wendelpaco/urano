@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Panel, PanelHeader, MetricCard, SectionHeader } from "@/components/app/primitives";
 import {
+  asAssets,
   asArray,
   useRanking,
   useWallets,
@@ -88,8 +89,8 @@ function MarketSummary() {
   const stocks = useRanking({ type: "stock", limit: 100 });
   const fiis = useRanking({ type: "fii", limit: 100 });
 
-  const s = asArray<Asset>(stocks.data);
-  const f = asArray<Asset>(fiis.data);
+  const s = asAssets(stocks.data);
+  const f = asAssets(fiis.data);
   const all = [...s, ...f];
   const withChange = all.filter((a) => typeof a.changePct === "number");
   const avgChange =
@@ -150,7 +151,7 @@ function MarketSummary() {
 
 function TopAssets({ type, title }: { type: "stock" | "fii"; title: string }) {
   const q = useRanking({ type, limit: 8, sort: "score", order: "desc" });
-  const items = asArray<Asset>(q.data).slice(0, 8);
+  const items = asAssets(q.data).slice(0, 8);
 
   return (
     <Panel>
@@ -202,7 +203,7 @@ function TopAssets({ type, title }: { type: "stock" | "fii"; title: string }) {
 
 function RankingResumido() {
   const q = useRanking({ limit: 12, sort: "score", order: "desc" });
-  const items = asArray<Asset>(q.data).slice(0, 12);
+  const items = asAssets(q.data).slice(0, 12);
   return (
     <Panel>
       <PanelHeader

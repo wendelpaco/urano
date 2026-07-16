@@ -127,7 +127,7 @@ export class StockQuoteService {
     const symbol = this.toYahooSymbol(ticker);
     const errors: string[] = [];
 
-    // 1) Investidor10
+    // 1) Investidor10 (preço estável; API batch não traz variação do dia)
     if (!(await this.isCircuitOpen(investidor10CircuitBreaker))) {
       try {
         const hit = await investidor10Provider.getQuote(ticker);
@@ -135,7 +135,10 @@ export class StockQuoteService {
           ? this.i10UpdateToIso(hit.lastUpdate)
           : new Date().toISOString();
         console.log(`[quote] ✅ I10 ${ticker.toUpperCase()} R$ ${hit.price}`);
-        return this.minimalQuote(ticker, hit.price, 'investidor10', asOf, symbol);
+        const base = this.minimalQuote(ticker, hit.price, 'investidor10', asOf, symbol);
+        // Var% via Yahoo (best-effort). Em lote/ranking, I10 sozinho devolve 0.
+        // Não bloqueia o ranking se Yahoo estiver lento/fechado.
+        return this.enrichChangeFromYahoo(base, symbol, ticker);
       } catch (err) {
         if (!(err instanceof CircuitOpenError)) {
           errors.push(`i10:${(err as Error).message?.slice(0, 60)}`);
@@ -197,7 +200,8 @@ export class StockQuoteService {
           const asOf = hit.lastUpdate
             ? this.i10UpdateToIso(hit.lastUpdate)
             : new Date().toISOString();
-          const q = this.minimalQuote(t, hit.price, 'investidor10', asOf);
+          const base = this.minimalQuote(t, hit.price, 'investidor10', asOf);
+          const q = await this.enrichChangeFromYahoo(base, this.toYahooSymbol(t), t);
           map.set(t, q);
           try {
             await redis.setex(`quote:${t}`, this.quoteTtlSec, JSON.stringify(q));
@@ -318,6 +322,45 @@ export class StockQuoteService {
       source,
       asOf,
     };
+  }
+
+  /**
+   * I10 só devolve preço. Completa variação/OHLC via Yahoo (best-effort).
+   * Mantém o preço I10; se Yahoo falhar, devolve a cotação mínima.
+   */
+  /**
+   * I10 batch não traz variação. Yahoo enrich em lote (ranking/screener/aporte)
+   * derruba o processo por rate-limit/timeouts — desligado por padrão.
+   * Ative com QUOTE_ENRICH_YAHOO=true se precisar de var% em dev isolado.
+   */
+  private async enrichChangeFromYahoo(
+    base: StockQuote,
+    symbol: string,
+    ticker: string,
+  ): Promise<StockQuote> {
+    if (process.env.QUOTE_ENRICH_YAHOO !== 'true') return base;
+    try {
+      if (await this.isCircuitOpen(yahooCircuitBreaker)) return base;
+      const y = await Promise.race([
+        this.fetchQuote(symbol, ticker),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error('yahoo enrich timeout')), 4_000),
+        ),
+      ]);
+      return {
+        ...base,
+        change: y.change,
+        changePercent: y.changePercent,
+        previousClose: y.previousClose,
+        open: y.open,
+        dayHigh: y.dayHigh,
+        dayLow: y.dayLow,
+        volume: y.volume || base.volume,
+        marketCap: y.marketCap ?? base.marketCap,
+      };
+    } catch {
+      return base;
+    }
   }
 
   private i10UpdateToIso(lastUpdate: string): string {

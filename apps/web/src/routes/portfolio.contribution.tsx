@@ -30,28 +30,41 @@ type ContributionBuy = {
   ticker: string;
   quantity?: number;
   qty?: number;
+  /** API: unitPrice */
   price?: number;
+  unitPrice?: number;
+  /** API: cost */
   total?: number;
   value?: number;
+  cost?: number;
   weight?: number;
   reason?: string;
   justification?: string;
+  /** API: why string[] */
+  why?: string[];
+  score?: number;
+  name?: string;
+  assetType?: string;
 };
 
 type ContributionDiscard = {
   ticker: string;
   reason?: string;
   justification?: string;
+  why?: string | string[];
 };
 
 type ContributionResult = {
   summary?: string;
   justification?: string;
+  amount?: number;
   buys?: ContributionBuy[];
   purchases?: ContributionBuy[];
   recommendations?: ContributionBuy[];
   discards?: ContributionDiscard[];
   rejected?: ContributionDiscard[];
+  skipped?: ContributionDiscard[];
+  totals?: { invested?: number; remaining?: number };
 };
 
 function ContributionPage() {
@@ -90,8 +103,38 @@ function ContributionPage() {
   });
 
   const result: ContributionResult = run.data ?? {};
-  const buys = asArray<ContributionBuy>(result.buys ?? result.purchases ?? result.recommendations);
-  const discards = asArray<ContributionDiscard>(result.discards ?? result.rejected);
+  const amountNum = Number(amount) || result.amount || 0;
+  const buysRaw = asArray<ContributionBuy>(
+    result.buys ?? result.purchases ?? result.recommendations,
+  );
+  // API: unitPrice/cost/why[] — UI: price/total/reason
+  const buys = buysRaw.map((b) => {
+    const unit = b.price ?? b.unitPrice;
+    const total = b.total ?? b.value ?? b.cost;
+    const whyText = Array.isArray(b.why)
+      ? b.why.join(" · ")
+      : (b.reason ?? b.justification);
+    const weight =
+      b.weight ??
+      (typeof total === "number" && amountNum > 0
+        ? (total / amountNum) * 100
+        : undefined);
+    return {
+      ...b,
+      price: unit,
+      total,
+      weight,
+      reason: whyText,
+    };
+  });
+  const discards = asArray<ContributionDiscard>(
+    result.discards ?? result.rejected ?? result.skipped,
+  ).map((d) => ({
+    ...d,
+    reason: Array.isArray(d.why)
+      ? d.why.join(" · ")
+      : (d.reason ?? d.justification ?? (typeof d.why === "string" ? d.why : undefined)),
+  }));
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -247,14 +290,23 @@ function ContributionPage() {
                           <td className="px-3 h-9">
                             <TickerBadge ticker={b.ticker} />
                           </td>
-                          <td className="px-3 h-9 text-right tabular">{b.quantity ?? b.qty}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtBRL(b.price)}</td>
+                          <td className="px-3 h-9 text-right tabular">{b.quantity ?? b.qty ?? "—"}</td>
                           <td className="px-3 h-9 text-right tabular">
-                            {fmtBRL(b.total ?? b.value)}
+                            {fmtBRL(b.price ?? b.unitPrice)}
                           </td>
-                          <td className="px-3 h-9 text-right tabular">{fmtPct(b.weight, true)}</td>
-                          <td className="px-3 h-9 text-xs text-muted-foreground truncate max-w-[280px]">
-                            {b.reason ?? b.justification ?? "—"}
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtBRL(b.total ?? b.value ?? b.cost)}
+                          </td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtPct(b.weight, true)}
+                          </td>
+                          <td
+                            className="px-3 h-9 text-xs text-muted-foreground truncate max-w-[280px]"
+                            title={b.reason ?? b.justification ?? undefined}
+                          >
+                            {b.reason ??
+                              b.justification ??
+                              (Array.isArray(b.why) ? b.why.join(" · ") : "—")}
                           </td>
                         </tr>
                       ))}

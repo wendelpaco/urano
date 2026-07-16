@@ -163,11 +163,32 @@ function ComparePage() {
                             {r.score != null ? <ScoreBadge score={r.score} /> : "—"}
                           </td>
                           <td className="px-3 h-9 text-right tabular">{fmtBRL(r.price)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtNum(r.peRatio)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtNum(r.pvp)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtPct(r.roe)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtPct(r.dy)}</td>
-                          <td className="px-3 h-9 text-right tabular">{fmtPct(r.netMargin)}</td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtNum(
+                              r.peRatio ??
+                                (r as { pe?: number | null }).pe ??
+                                null,
+                            )}
+                          </td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtNum(
+                              r.pvp ?? (r as { pbRatio?: number | null }).pbRatio ?? null,
+                            )}
+                          </td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtPct(r.roe, true)}
+                          </td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtPct(
+                              r.dy ??
+                                (r as { dividendYield?: number | null }).dividendYield ??
+                                null,
+                              true,
+                            )}
+                          </td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {fmtPct(r.netMargin, true)}
+                          </td>
                           <td className="px-3 h-9 text-right tabular">{fmtNum(r.debtToEquity)}</td>
                         </tr>
                       ))}

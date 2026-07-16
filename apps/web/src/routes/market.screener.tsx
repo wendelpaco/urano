@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { fallback, zodValidator } from "@tanstack/zod-adapter";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
-import { asArray, useScreener, type Asset } from "@/lib/queries";
+import { asAssets, useScreener } from "@/lib/queries";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { ErrorState, SkeletonRows, EmptyState } from "@/components/app/states";
@@ -67,7 +67,7 @@ function ScreenerPage() {
     Object.entries(search).filter(([, v]) => v !== "" && v !== undefined),
   );
   const q = useScreener(params);
-  const items = asArray<Asset>(q.data);
+  const items = asAssets(q.data);
 
   const set = (k: keyof z.infer<typeof searchSchema>, v: string) =>
     navigate({ search: (p) => ({ ...p, [k]: v }) });
@@ -205,10 +205,23 @@ function ScreenerPage() {
                       </td>
                       <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
                       <td className="px-3 h-8 text-right">
-                        <DeltaPill value={a.changePct} alreadyPct />
+                        <DeltaPill
+                          value={
+                            a.changePct ??
+                            (a as { changePercent?: number }).changePercent
+                          }
+                          alreadyPct
+                        />
                       </td>
-                      <td className="px-3 h-8 text-right tabular">{fmtPct(a.dy, true)}</td>
-                      <td className="px-3 h-8 text-right tabular">{fmtNum(a.pe)}</td>
+                      <td className="px-3 h-8 text-right tabular">
+                        {fmtPct(
+                          a.dy ?? (a as { dividendYield?: number }).dividendYield,
+                          true,
+                        )}
+                      </td>
+                      <td className="px-3 h-8 text-right tabular">
+                        {fmtNum(a.pe ?? (a as { peRatio?: number }).peRatio)}
+                      </td>
                       <td className="px-3 h-8 text-right tabular">{fmtNum(a.pvp)}</td>
                       <td className="px-3 h-8 text-right tabular">{fmtPct(a.roe, true)}</td>
                       <td className="px-3 h-8 text-right">

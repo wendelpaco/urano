@@ -140,6 +140,16 @@ export function useRanking(params: RankingParams = {}) {
         query: params,
       }),
     staleTime: 60_000,
+    select: (raw) => {
+      if (Array.isArray(raw)) return raw.map((a) => normalizeAsset(a));
+      if (raw && typeof raw === "object" && Array.isArray(raw.data)) {
+        return { ...raw, data: raw.data.map((a) => normalizeAsset(a)) };
+      }
+      if (raw && typeof raw === "object" && Array.isArray(raw.items)) {
+        return { ...raw, items: raw.items.map((a) => normalizeAsset(a)) };
+      }
+      return raw;
+    },
   });
 }
 
@@ -155,11 +165,70 @@ export function useScreener(params: ScreenerParams) {
     queryFn: () => apiFetch({ path: "/screener", query: params }),
     staleTime: 30_000,
     placeholderData: (prev) => prev,
+    select: (raw) => {
+      if (Array.isArray(raw)) return raw.map((a) => normalizeAsset(a));
+      if (raw && typeof raw === "object") {
+        const obj = raw as { items?: Asset[]; data?: Asset[] };
+        if (Array.isArray(obj.data)) return { ...obj, data: obj.data.map((a) => normalizeAsset(a)) };
+        if (Array.isArray(obj.items)) return { ...obj, items: obj.items.map((a) => normalizeAsset(a)) };
+      }
+      return raw;
+    },
   });
 }
 
 const asNum = (v: unknown): number | undefined =>
   typeof v === "number" && !Number.isNaN(v) ? v : undefined;
+
+/**
+ * Unifica nomes de campos entre ranking/screener/allocate/detail.
+ * API pode mandar peRatio|pe, dividendYield|dy, changePercent|changePct, assetType|type.
+ */
+export function normalizeAsset(raw: Asset | Record<string, unknown>): Asset {
+  if (!raw || typeof raw !== "object") return raw as Asset;
+  const r = raw as Record<string, unknown>;
+  const ind = (r.indicators ?? {}) as Record<string, unknown>;
+
+  const dy =
+    asNum(r.dy) ??
+    asNum(r.dividendYield) ??
+    asNum(ind.dividendYield) ??
+    asNum(ind.dy);
+  const pe =
+    asNum(r.pe) ?? asNum(r.peRatio) ?? asNum(r.pl) ?? asNum(ind.peRatio);
+  const pvp =
+    asNum(r.pvp) ?? asNum(r.pbRatio) ?? asNum(ind.pbRatio) ?? asNum(ind.pvp);
+  const roe = asNum(r.roe) ?? asNum(ind.roe);
+  const changePct =
+    asNum(r.changePct) ??
+    asNum(r.changePercent) ??
+    asNum(r.dailyChangePct) ??
+    asNum(ind.changePct);
+
+  const typeRaw = r.type ?? r.assetType;
+  const type =
+    typeRaw === "fii" || typeRaw === "stock"
+      ? typeRaw
+      : typeof typeRaw === "string"
+        ? typeRaw
+        : undefined;
+
+  return {
+    ...(r as Asset),
+    type,
+    dy,
+    pe,
+    pvp,
+    roe,
+    changePct,
+    price: asNum(r.price) ?? (r.price as number | undefined),
+    score: asNum(r.score) ?? (r.score as number | undefined),
+    marketCap: asNum(r.marketCap) ?? asNum(ind.marketCap),
+    netMargin: asNum(r.netMargin) ?? asNum(ind.netMargin),
+    debtEquity: asNum(r.debtEquity) ?? asNum(r.debtToEquity) ?? asNum(ind.debtToEquity),
+    sector: (r.sector as string | undefined) ?? undefined,
+  };
+}
 
 /**
  * The detail endpoints return different shapes per asset class:
@@ -172,29 +241,29 @@ const asNum = (v: unknown): number | undefined =>
 export function flattenAssetDetail(raw: Asset, type: "stock" | "fii"): Asset {
   if (!raw || typeof raw !== "object") return raw;
   const ind = (raw.indicators ?? {}) as Record<string, unknown>;
-  const flat: Asset = {
+  let flat = normalizeAsset({
     ...raw,
     pillars: raw.pillars ?? raw.breakdown ?? raw.pilares ?? raw.scores,
-  };
+    type: raw.type ?? type,
+  });
   if (type === "fii") {
-    flat.dy = asNum(raw.dividendYield ?? raw.dy);
-    flat.pvp = asNum(raw.pvp);
-    flat.price = asNum(raw.price);
+    flat.dy = asNum(raw.dividendYield ?? raw.dy) ?? flat.dy;
+    flat.pvp = asNum(raw.pvp) ?? flat.pvp;
+    flat.price = asNum(raw.price) ?? flat.price;
     flat.liquidity = asNum(raw.liquidity);
     if (!Array.isArray(raw.reasons) && typeof raw.explanation === "string" && raw.explanation) {
       flat.reasons = [raw.explanation];
     }
   } else {
-    flat.dy = asNum(ind.dividendYield);
-    flat.pe = asNum(ind.peRatio);
-    flat.pvp = asNum(ind.pbRatio);
-    flat.roe = asNum(ind.roe);
-    flat.marketCap = asNum(ind.marketCap);
-    flat.netMargin = asNum(ind.netMargin);
-    flat.debtEquity = asNum(ind.debtToEquity);
+    flat.dy = asNum(ind.dividendYield) ?? flat.dy;
+    flat.pe = asNum(ind.peRatio) ?? flat.pe;
+    flat.pvp = asNum(ind.pbRatio) ?? flat.pvp;
+    flat.roe = asNum(ind.roe) ?? flat.roe;
+    flat.marketCap = asNum(ind.marketCap) ?? flat.marketCap;
+    flat.netMargin = asNum(ind.netMargin) ?? flat.netMargin;
+    flat.debtEquity = asNum(ind.debtToEquity) ?? flat.debtEquity;
     flat.eps = asNum(ind.eps);
     flat.bvps = asNum(ind.bvps);
-    // The API does not compute ROIC for stocks; leave undefined → renders "—".
   }
   return flat;
 }
@@ -278,11 +347,34 @@ export function useWallet(id: string | undefined) {
 export function asArray<T = unknown>(v: unknown): T[] {
   if (Array.isArray(v)) return v as T[];
   if (!v || typeof v !== "object") return [];
-  const obj = v as { items?: unknown; data?: unknown; results?: unknown };
+  const obj = v as { items?: unknown; data?: unknown; results?: unknown; assets?: unknown };
   if (Array.isArray(obj.items)) return obj.items as T[];
   if (Array.isArray(obj.data)) return obj.data as T[];
   if (Array.isArray(obj.results)) return obj.results as T[];
+  if (Array.isArray(obj.assets)) return obj.assets as T[];
   return [];
+}
+
+/** Extrai lista de ativos e aplica normalizeAsset (pe/dy/changePct/type). */
+export function asAssets(v: unknown): Asset[] {
+  return asArray<Asset | Record<string, unknown>>(v).map((row) => normalizeAsset(row));
+}
+
+/** Normalize allocation rows (API: assetType / allocationAmount / allocationPercent). */
+export function normalizeAllocationAsset(raw: Record<string, unknown>) {
+  return {
+    ...raw,
+    type: (raw.type ?? raw.assetType) as string | undefined,
+    amount: asNum(raw.amount) ?? asNum(raw.allocationAmount),
+    // API manda % 0–100; UI fmtPct com alreadyPct=true
+    weight: asNum(raw.weight) ?? asNum(raw.allocationPercent),
+    quantity: asNum(raw.quantity),
+    price: asNum(raw.price),
+    score: asNum(raw.score),
+    ticker: String(raw.ticker ?? ""),
+    name: raw.name as string | undefined,
+    sector: raw.sector as string | undefined,
+  };
 }
 
 // ─── Score validation (backtest verdict) ─────────────────────────────────────

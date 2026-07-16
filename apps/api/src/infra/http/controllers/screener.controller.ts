@@ -132,12 +132,19 @@ export async function screenerController(
     const ticker = String(r.ticker);
 
     let price = 0;
-    try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
+    let changePct: number | null = null;
+    try {
+      const q = await stockQuoteService.getQuote(ticker);
+      price = q.price;
+      changePct = typeof q.changePercent === 'number' ? q.changePercent : null;
+    } catch {
+      return null;
+    }
     if (price <= 0) return null;
 
     const indicators = calcAllIndicators(r, price);
 
-    // DY
+    // DY 12m via proventos (StatusInvest) — mesmo path do ranking
     try {
       const proventos = await dividendsProvider.fetchDividends(ticker);
       if (proventos && price > 0) {
@@ -152,21 +159,27 @@ export async function screenerController(
       indicators, (r.sector as string) || null, String(r.name),
     );
 
+    // Aliases UI (dy/pe/changePct) + nomes longos (dividendYield/peRatio)
     return {
       ticker,
       name: r.name,
+      type: 'stock' as const,
       sector: r.sector ?? null,
       price: Math.round(price * 100) / 100,
+      changePct,
+      changePercent: changePct,
       score: scoreResult.score,
+      pe: indicators.peRatio,
       peRatio: indicators.peRatio,
       pvp: indicators.pbRatio,
+      dy: indicators.dividendYield,
+      dividendYield: indicators.dividendYield,
       evEbit: indicators.evEbit,
       roe: indicators.roe,
       roa: indicators.roa,
       netMargin: indicators.netMargin,
       grossMargin: indicators.grossMargin,
       lpa: indicators.eps,
-      dividendYield: indicators.dividendYield,
       debtToEquity: indicators.debtToEquity,
       diagnosis: scoreResult.diagnosis,
     };

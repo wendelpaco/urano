@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { asArray, rankingMeta, useRanking, type Asset } from "@/lib/queries";
+import { asAssets, rankingMeta, useRanking } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
@@ -28,9 +28,9 @@ function RankingPage() {
   // for "Todos" we fetch both and merge client-side, same pattern as market.search.tsx.
   const stockQ = useRanking({ type: "stock", sort, order, limit: 50 });
   const fiiQ = useRanking({ type: "fii", sort, order, limit: 50 });
-  // asArray keeps table rows working whether the API returns a bare array or { data }.
-  const stockItems = asArray<Asset>(stockQ.data);
-  const fiiItems = asArray<Asset>(fiiQ.data);
+  // asAssets normaliza pe/dy/changePct e aceita { data } ou array.
+  const stockItems = asAssets(stockQ.data);
+  const fiiItems = asAssets(fiiQ.data);
   const items =
     type === "all" ? [...stockItems, ...fiiItems] : type === "stock" ? stockItems : fiiItems;
   const meta = rankingMeta(stockQ.data) ?? rankingMeta(fiiQ.data);
@@ -167,10 +167,23 @@ function RankingPage() {
                   </td>
                   <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
                   <td className="px-3 h-8 text-right">
-                    <DeltaPill value={a.changePct} alreadyPct />
+                    <DeltaPill
+                      value={
+                        a.changePct ??
+                        (a as { changePercent?: number }).changePercent
+                      }
+                      alreadyPct
+                    />
                   </td>
-                  <td className="px-3 h-8 text-right tabular">{fmtPct(a.dy, true)}</td>
-                  <td className="px-3 h-8 text-right tabular">{fmtNum(a.pe)}</td>
+                  <td className="px-3 h-8 text-right tabular">
+                    {fmtPct(
+                      a.dy ?? (a as { dividendYield?: number }).dividendYield,
+                      true,
+                    )}
+                  </td>
+                  <td className="px-3 h-8 text-right tabular">
+                    {fmtNum(a.pe ?? (a as { peRatio?: number }).peRatio)}
+                  </td>
                   <td className="px-3 h-8 text-right tabular">{fmtNum(a.pvp)}</td>
                   <td className="px-3 h-8 text-right tabular">{fmtPct(a.roe, true)}</td>
                   <td className="px-3 h-8 text-right">

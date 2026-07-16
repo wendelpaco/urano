@@ -521,16 +521,28 @@ export async function getRankingController(
   }
 
   if (type === 'stock') {
-    // Busca todas as empresas com fundamentals mais recentes
+    // Busca todas as empresas com fundamentals mais recentes.
+    // Aliases camelCase alinhados ao screener — necessários para P/L, P/VP, ROE
+    // (calcAllIndicators usa sharesOutstanding, ebit, totalAssets, etc.).
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (c.ticker)
         c.ticker,
         c.name,
         c.sector,
-        cf.net_income_parent,
-        cf.equity,
-        cf.revenue,
-        cf.reference_date
+        cf.reference_date AS "referenceDate",
+        cf.net_income_parent AS "netIncomeParent",
+        cf.net_income AS "netIncome",
+        cf.revenue AS "revenue",
+        cf.cogs AS "cogs",
+        cf.ebit AS "ebit",
+        cf.total_assets AS "totalAssets",
+        cf.total_liabilities AS "totalLiabilities",
+        cf.cash AS "cash",
+        cf.operating_cash_flow AS "operatingCashFlow",
+        cf.equity AS "equity",
+        cf.shares_outstanding AS "sharesOutstanding",
+        cf.dividends_paid AS "dividendsPaid",
+        cf.jcp_paid AS "jcpPaid"
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
       WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))  -- Exclui FIIs, mas mantém Units
@@ -575,8 +587,11 @@ export async function getRankingController(
           sector: (r.sector as string) || null,
           price,
           changePct,
+          changePercent: changePct,
           dy: indicators.dividendYield ?? null,
+          dividendYield: indicators.dividendYield ?? null,
           pe: indicators.peRatio ?? null,
+          peRatio: indicators.peRatio ?? null,
           pvp: indicators.pbRatio ?? null,
           roe: indicators.roe ?? null,
         };
@@ -687,12 +702,15 @@ export async function getRankingController(
             : score.overall_rating === 'regular' ? 'moderado' : 'arriscado',
           subclass,
           // Surface the FII subclass in the "Setor" column (FIIs have no sector).
-          sector: subclass,
+          sector: (r.sector as string) || subclass,
           price,
-          changePct: null,
+          changePct: 0,
+          changePercent: 0,
           dy: dy || null,
+          dividendYield: dy || null,
           pvp,
           pe: null,
+          peRatio: null,
           roe: null,
         };
       },
@@ -842,32 +860,38 @@ export async function compareController(
         };
       }
 
-      // Stock
+      // Stock — row completa (shares/ebit/cogs/…) + proventos 12m para DY
+      // (antes o select era parcial → pe/pvp/dy sempre null no compare)
       const cacheKeyStock = `analysis:stock:${ticker}`;
       try {
         const cached = await redis.get(cacheKeyStock);
         if (cached) {
           const d = JSON.parse(cached) as Record<string, unknown>;
           const ind = d.indicators as Record<string, unknown> | undefined;
-          return {
-            ticker: d.ticker as string,
-            name: d.companyName as string,
-            price: d.price as number | null,
-            score: d.score as number | null,
-            peRatio: ind?.peRatio as number | null,
-            pvp: ind?.pbRatio as number | null,
-            roe: ind?.roe as number | null,
-            dy: ind?.dividendYield as number | null,
-            netMargin: ind?.netMargin as number | null,
-            debtToEquity: ind?.debtToEquity as number | null,
-            diagnosis: d.diagnosis as string,
-            highlights: d.reasons as string[],
-            warnings: d.alerts as string[],
-          };
+          const pe = (ind?.peRatio as number | null | undefined) ?? null;
+          const pvpCached = (ind?.pbRatio as number | null | undefined) ?? null;
+          const dyCached = (ind?.dividendYield as number | null | undefined) ?? null;
+          // Só reutiliza cache se valuation/DY estiverem presentes
+          if (pe != null || pvpCached != null || dyCached != null) {
+            return {
+              ticker: d.ticker as string,
+              name: (d.companyName as string) || ticker,
+              price: d.price as number | null,
+              score: d.score as number | null,
+              peRatio: pe,
+              pvp: pvpCached,
+              roe: ind?.roe as number | null,
+              dy: dyCached,
+              netMargin: ind?.netMargin as number | null,
+              debtToEquity: ind?.debtToEquity as number | null,
+              diagnosis: d.diagnosis as string,
+              highlights: d.reasons as string[],
+              warnings: d.alerts as string[],
+            };
+          }
         }
-      } catch { /* ok */ }
+      } catch { /* ok — recalcula abaixo */ }
 
-      // Fallback: busca simplificada
       const rows = await db
         .select({
           ticker: companies.ticker,
@@ -876,9 +900,18 @@ export async function compareController(
           cnpj: companyFundamentals.companyCnpj,
           referenceDate: companyFundamentals.referenceDate,
           netIncomeParent: companyFundamentals.netIncomeParent,
+          netIncome: companyFundamentals.netIncome,
           equity: companyFundamentals.equity,
           revenue: companyFundamentals.revenue,
+          cogs: companyFundamentals.cogs,
+          ebit: companyFundamentals.ebit,
+          totalAssets: companyFundamentals.totalAssets,
           totalLiabilities: companyFundamentals.totalLiabilities,
+          cash: companyFundamentals.cash,
+          operatingCashFlow: companyFundamentals.operatingCashFlow,
+          sharesOutstanding: companyFundamentals.sharesOutstanding,
+          dividendsPaid: companyFundamentals.dividendsPaid,
+          jcpPaid: companyFundamentals.jcpPaid,
         })
         .from(companyFundamentals)
         .innerJoin(companies, eq(companyFundamentals.companyCnpj, companies.cnpj))
@@ -886,15 +919,38 @@ export async function compareController(
         .orderBy(desc(companyFundamentals.referenceDate))
         .limit(1);
 
-      if (rows.length === 0) return { ticker, name: ticker, price: null, score: null, error: 'Sem fundamentos' };
+      if (rows.length === 0) {
+        return { ticker, name: ticker, price: null, score: null, error: 'Sem fundamentos' };
+      }
 
       const f = rows[0]!;
       let price = 0;
-      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { /* ok */ }
+      try {
+        const q = await stockQuoteService.getQuote(ticker);
+        price = q.price;
+      } catch { /* ok */ }
 
       const indicators = calcAllIndicators(f as unknown as Record<string, unknown>, price);
+
+      // DY 12m real (StatusInvest) — mesmo path do ranking/screener
+      try {
+        const proventos = await dividendsProvider.fetchDividends(ticker);
+        if (proventos && price > 0) {
+          const cutoff = new Date();
+          cutoff.setMonth(cutoff.getMonth() - 12);
+          const sum12m = proventos
+            .filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
+            .reduce((s, e) => s + e.value, 0);
+          if (sum12m > 0) {
+            indicators.dividendYield = +((sum12m / price) * 100).toFixed(2);
+          }
+        }
+      } catch { /* sem proventos */ }
+
       const scoreResult = StockScoreCalculator.calculate(
-        indicators, f.sector, String(f.name),
+        indicators,
+        f.sector,
+        String(f.name),
       );
 
       return {
