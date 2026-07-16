@@ -30,6 +30,21 @@ import { RISK_CONFIGS, type RiskProfile } from '../data/risk-profiles.ts';
 import { getFIIClassification } from '../data/fii-classification.data.ts';
 import { SCORE_VALIDATION } from '../data/score-validation.data.ts';
 
+// REL-2: executa até `limit` promises em paralelo para limitar pressão no upstream.
+async function withConcurrency<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  limit: number = 5,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 export type AnalyzedAsset = {
   ticker: string;
   name: string;
@@ -38,6 +53,8 @@ export type AnalyzedAsset = {
   reasons: string[];
   alerts: string[];
   sector: string | null;
+  /** Dividend yield 12m em % (null = indisponível). IMP-6. */
+  dividendYield?: number | null;
   fiiType?: 'papel' | 'tijolo' | 'hibrido';
   dataCoverage?: {
     percent: number;
@@ -95,6 +112,8 @@ export interface AllocatedAsset {
   allocationPercent: number;
   allocationAmount: number;
   quantity: number;
+  /** Dividend yield 12m em % (null = indisponível). Usado em IMP-6. */
+  dividendYield: number | null;
   /** Motivos para incluir este ativo */
   reasons: string[];
   /** Riscos a considerar */
@@ -117,7 +136,8 @@ export interface AllocationResult {
     estimatedAnnualDividend: number | null;
     estimatedMonthlyDividend: number | null;
     estimatedDividendYield: number | null;
-    dividendEstimateStatus: 'unavailable';
+    /** IMP-6: full = todos com DY, partial = alguns com DY, unavailable = nenhum. */
+    dividendEstimateStatus: 'full' | 'partial' | 'unavailable';
   };
 }
 
@@ -477,6 +497,7 @@ export function allocateWholeUnits<
     price: number;
     reasons: string[];
     alerts: string[];
+    dividendYield?: number | null;
   },
 >(
   assets: T[],
@@ -510,6 +531,7 @@ export function allocateWholeUnits<
       allocationPercent: Math.round((actualCost / totalAmount) * 1_000) / 10,
       allocationAmount: actualCost,
       quantity,
+      dividendYield: asset.dividendYield ?? null,
       reasons: asset.reasons,
       alerts: asset.alerts,
     }];
@@ -532,6 +554,28 @@ export function summarizeAllocation(
     ? Math.round(allAssets.reduce((sum, asset) => sum + asset.score, 0) / allAssets.length)
     : 0;
 
+  // IMP-6: estimativa de renda real usando DY 12m por ativo.
+  let totalAnnualDividend = 0;
+  let assetsWithDy = 0;
+  for (const asset of allAssets) {
+    if (asset.dividendYield !== null && asset.dividendYield > 0) {
+      totalAnnualDividend += asset.allocationAmount * (asset.dividendYield / 100);
+      assetsWithDy++;
+    }
+  }
+  const estimatedAnnualDividend = assetsWithDy > 0 ? roundMoney(totalAnnualDividend) : null;
+  const estimatedMonthlyDividend = estimatedAnnualDividend !== null
+    ? roundMoney(estimatedAnnualDividend / 12)
+    : null;
+  const estimatedDividendYield = totalInvested > 0 && estimatedAnnualDividend !== null
+    ? +((estimatedAnnualDividend / totalInvested) * 100).toFixed(2)
+    : null;
+  const dividendEstimateStatus: 'full' | 'partial' | 'unavailable' =
+    allAssets.length === 0 ? 'unavailable'
+    : assetsWithDy === allAssets.length ? 'full'
+    : assetsWithDy > 0 ? 'partial'
+    : 'unavailable';
+
   return {
     totalAssets: allAssets.length,
     stocks: allocatedStocks.length,
@@ -539,10 +583,10 @@ export function summarizeAllocation(
     totalInvested,
     remainingCash: Math.max(0, roundMoney(totalAmount - totalInvested)),
     averageScore,
-    estimatedAnnualDividend: null,
-    estimatedMonthlyDividend: null,
-    estimatedDividendYield: null,
-    dividendEstimateStatus: 'unavailable',
+    estimatedAnnualDividend,
+    estimatedMonthlyDividend,
+    estimatedDividendYield,
+    dividendEstimateStatus,
   };
 }
 
@@ -668,6 +712,8 @@ export class AllocationEngine {
   // ─── Análise ──────────────────────────────────────────────────────────
 
   async analyzeAllStocks(): Promise<AnalyzedUniverse> {
+    // ENG-3r: removido LIMIT 100 para analisar universo completo.
+    // REL-2: execução concorrente (5 simultâneos) para reduzir latência.
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (c.ticker)
         c.ticker, c.name, c.sector,
@@ -680,16 +726,14 @@ export class AllocationEngine {
       WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))
         AND LENGTH(c.ticker) >= 5
       ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
-      LIMIT 100
     `);
 
     const candidates = rows as unknown as Record<string, unknown>[];
-    const results: AnalyzedAsset[] = [];
 
-    for (const r of candidates) {
+    const results = await withConcurrency(candidates, async (r) => {
       const ticker = String(r.ticker);
       let price = 0;
-      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { continue; }
+      try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { return null; }
 
       const indicators = calcAllIndicators(r, price);
 
@@ -714,21 +758,25 @@ export class AllocationEngine {
         String(r.name),
       );
 
-      results.push({
+      return {
         ticker, name: String(r.name), score: scoreResult.score, price,
         reasons: scoreResult.reasons, alerts: scoreResult.alerts,
         sector: (r.sector as string) || null,
-      });
-    }
+        dividendYield: indicators.dividendYield,
+        dataCoverage: scoreResult.dataCoverage,
+      } satisfies AnalyzedAsset;
+    }, 5);
 
-    return { assets: results, expected: candidates.length };
+    const filtered = results.filter((a): a is NonNullable<typeof a> => a !== null);
+    return { assets: filtered, expected: candidates.length };
   }
 
   async analyzeAllFiis(): Promise<AnalyzedUniverse> {
+    // ENG-3r: removido LIMIT 100 para analisar universo completo de FIIs.
     const rows = await db.execute(sql`
       SELECT ticker, name, sector FROM companies
       WHERE ticker LIKE '%11' AND LENGTH(ticker) = 6 AND ticker NOT IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11')
-      ORDER BY ticker LIMIT 100
+      ORDER BY ticker
     `);
 
     const { cvmFiiService } = await import('../../infra/services/cvm-fii-service.ts');
@@ -746,9 +794,9 @@ export class AllocationEngine {
       },
       { papel: 0, fisico: 0 },
     );
-    const results: AnalyzedAsset[] = [];
 
-    for (const r of candidates) {
+    // REL-2: execução concorrente (5 simultâneos) para reduzir latência.
+    const results = await withConcurrency(candidates, async (r) => {
       const ticker = String(r.ticker);
       let price = 0;
       let liquidity: number | null = null;
@@ -756,8 +804,8 @@ export class AllocationEngine {
         const q = await stockQuoteService.getQuote(ticker);
         price = q.price;
         liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
-        if (price <= 0) continue;
-      } catch { continue; }
+        if (price <= 0) return null;
+      } catch { return null; }
 
       // Proventos + DY
       let dy = 0;
@@ -799,22 +847,24 @@ export class AllocationEngine {
       };
       const scoreResult = FIIScoreCalculatorV4.calculate(input);
 
-      results.push({
+      return {
         ticker, name: String(r.name), score: scoreResult.overall_score, price,
         reasons: [scoreResult.explanation_short],
         alerts: scoreResult.risk.primary_risk ? [scoreResult.risk.primary_risk] : [],
         sector: scoreResult.subclasse_tijolo || scoreResult.subclasse_papel || null,
         fiiType: scoreResult.type,
+        dividendYield: dy > 0 ? dy : null,
         dataCoverage: {
           percent: scoreResult.metadata.data_coverage.percent,
           criticalComplete: scoreResult.metadata.data_coverage.critical_complete,
           missingFields: scoreResult.metadata.data_coverage.missing_fields,
         },
-      });
-    }
+      } satisfies AnalyzedAsset;
+    }, 5);
 
+    const filtered = results.filter((a): a is NonNullable<typeof a> => a !== null);
     return {
-      assets: results,
+      assets: filtered,
       expected: candidates.length,
       expectedGroups,
     };

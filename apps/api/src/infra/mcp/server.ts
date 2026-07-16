@@ -36,6 +36,26 @@ import { z } from 'zod';
 
 const API_BASE = process.env.URANO_API_URL || 'http://localhost:3000/v1';
 
+// SEC-12b: recusar URL não-HTTPS quando host ≠ localhost para evitar envio
+// da API key em cleartext em rede aberta.
+{
+  let url: URL;
+  try {
+    url = new URL(API_BASE);
+  } catch {
+    console.error('❌ URANO_API_URL inválida:', API_BASE);
+    process.exit(1);
+  }
+  const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+  if (url.protocol === 'http:' && !isLocal) {
+    console.error(
+      '❌ URANO_API_URL usa http:// com host remoto. A API key seria enviada em cleartext na rede.\n' +
+      '   Use https:// ou aponte para localhost.',
+    );
+    process.exit(1);
+  }
+}
+
 if (!process.env.URANO_API_KEY) {
   console.error('❌ URANO_API_KEY não definida. Configure a variável de ambiente antes de iniciar o MCP server.');
   process.exit(1);

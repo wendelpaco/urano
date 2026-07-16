@@ -87,6 +87,13 @@ const envSchema = z.object({
     .transform(Number)
     .pipe(z.number().int().positive().max(100_000)),
 
+  /** Scraper-touching routes per authenticated key/window (SSRF-2r). */
+  SCRAPER_RATE_LIMIT_PER_MINUTE: z
+    .string()
+    .default('10')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(1_000)),
+
   /** Public health probe requests per IP/window. */
   HEALTHCHECK_RATE_LIMIT_PER_MINUTE: z
     .string()
@@ -100,6 +107,13 @@ const envSchema = z.object({
     .default('262144')
     .transform(Number)
     .pipe(z.number().int().positive().max(5_000_000)),
+
+  /** Postgres pool max connections (default 10). REL-3: aumente se houver contenção. */
+  DATABASE_POOL_MAX: z
+    .string()
+    .default('10')
+    .transform(Number)
+    .pipe(z.number().int().min(2).max(100)),
 
   /** Request timeout ms (default 30s). */
   REQUEST_TIMEOUT_MS: z
@@ -123,7 +137,9 @@ function parseEnv(): Env {
     RATE_LIMIT_FAIL_CLOSED: process.env.RATE_LIMIT_FAIL_CLOSED,
     RATE_LIMIT_IP_PER_MINUTE: process.env.RATE_LIMIT_IP_PER_MINUTE,
     RATE_LIMIT_KEY_PER_MINUTE: process.env.RATE_LIMIT_KEY_PER_MINUTE,
+    SCRAPER_RATE_LIMIT_PER_MINUTE: process.env.SCRAPER_RATE_LIMIT_PER_MINUTE,
     HEALTHCHECK_RATE_LIMIT_PER_MINUTE: process.env.HEALTHCHECK_RATE_LIMIT_PER_MINUTE,
+    DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX,
     BODY_LIMIT_BYTES: process.env.BODY_LIMIT_BYTES,
     REQUEST_TIMEOUT_MS: process.env.REQUEST_TIMEOUT_MS,
   };

@@ -319,6 +319,7 @@ export async function getCorporateEventsController(
 
       const response = await fetch(url, {
         headers: { 'User-Agent': 'Urano-FinBot/0.1', Accept: 'application/json' },
+        redirect: 'error',
       });
 
       if (!response.ok) {

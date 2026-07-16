@@ -206,6 +206,7 @@ export class CvmFiiService {
         async () => {
           const res = await fetch(url, {
             headers: { 'User-Agent': this.userAgent, Accept: '*/*' },
+            redirect: 'error',
           });
           if (!res.ok) throw new Error(`CVM FII HTTP ${res.status} ${url}`);
           return res;

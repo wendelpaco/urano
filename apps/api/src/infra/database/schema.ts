@@ -329,7 +329,7 @@ export const apiKeys = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     name: varchar('name', { length: 100 }).notNull(),
-    key: varchar('key', { length: 128 }).notNull().unique(),
+    // Coluna 'key' removida na migration 0019 (SEC-1r) — apenas keyHash é usado.
     keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
     active: boolean('active').notNull().default(true),
     /** Parent key that created this one (self for bootstrap/CLI). */
@@ -352,7 +352,6 @@ export const apiKeys = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_api_keys_key').on(table.key),
     index('idx_api_keys_owner_id').on(table.ownerId),
   ],
 );

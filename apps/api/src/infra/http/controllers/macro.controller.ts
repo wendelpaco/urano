@@ -59,7 +59,7 @@ async function fetchBcbSeries(code: string, limit = 12): Promise<MacroSeriesPoin
 
   try {
     const data = await withRetry(async () => {
-      const response = await fetch(url);
+      const response = await fetch(url, { redirect: 'error' });
       if (!response.ok) throw new Error(`BCB HTTP ${response.status}`);
       return (await response.json()) as Array<{ data: string; valor: string }>;
     }, { maxRetries: 1, initialDelay: 500, maxDelay: 2000, timeout: 10_000 });

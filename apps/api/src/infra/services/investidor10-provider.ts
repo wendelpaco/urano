@@ -123,7 +123,7 @@ export class Investidor10Provider {
 
     const url = `${BASE}/api/cotacoes/acao/chart/${encodeURIComponent(upper)}/`;
     try {
-      const res = await fetch(url, { headers: headers(upper) });
+      const res = await fetch(url, { headers: headers(upper), redirect: 'error' });
       if (res.status === 429) {
         const sec = parseInt(res.headers.get('Retry-After') ?? '15', 10) || 15;
         investidor10Limiter.penalize(sec * 1000);
@@ -184,7 +184,7 @@ export class Investidor10Provider {
 
     const url = `${BASE}/api/cotacoes/batch?tickers=${encodeURIComponent(tickers.join(','))}`;
     try {
-      const res = await fetch(url, { headers: headers(tickers[0]) });
+      const res = await fetch(url, { headers: headers(tickers[0]), redirect: 'error' });
       if (res.status === 429) {
         const sec = parseInt(res.headers.get('Retry-After') ?? '15', 10) || 15;
         investidor10Limiter.penalize(sec * 1000);

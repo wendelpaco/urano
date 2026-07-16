@@ -188,8 +188,15 @@ export function parseStatusInvestHtml(html: string, ticker: string): ScrapedIndi
 
   result.avgDailyLiquidity = extractNumber(indicators['Liquidez Média Diária']);
 
-  const sectorEl = $('a[href*="/setores/"]').first();
-  result.sector = sectorEl.text().trim() || '';
+  // PIPE-1/UX-2: StatusInvest usa /setor/ (singular) desde ~2025.
+  // Mantém fallback para o plural antigo.
+  let sectorEl = $('a[href*="/setor/"]').first();
+  if (sectorEl.length === 0) sectorEl = $('a[href*="/setores/"]').first();
+  // Limpa sujeira (ícones Material Icons como "arrow_forward", quebras de linha)
+  result.sector = sectorEl.text()
+    .replace(/arrow_forward|keyboard_arrow_down|chevron_right/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim() || '';
   result.ibovParticipation = extractNullablePercent(indicators['PART. IBOV']);
 
   const dy12El = $('[title="Dividend Yield com base nos últimos 12 meses"]');

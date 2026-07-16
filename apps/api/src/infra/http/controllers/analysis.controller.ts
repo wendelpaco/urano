@@ -215,6 +215,9 @@ export async function getStockAnalysisController(
     breakdown: result.breakdown,
     reasons: result.reasons,
     alerts: result.alerts,
+    sector: result.sector,
+    diagnosis: result.diagnosis,
+    dataCoverage: result.dataCoverage,
     indicators,
     price: price || null,
     anomalies,
@@ -578,30 +581,31 @@ export async function getRankingController(
       rows as unknown as Record<string, unknown>[],
       async (r) => {
         const ticker = String(r.ticker);
-        let price = 0;
-        let changePct: number | null = null;
-        try {
-          const q = await stockQuoteService.getQuote(ticker);
-          price = q.price;
-          changePct = typeof q.changePercent === 'number' ? q.changePercent : null;
-        } catch { return null; }
+
+        // Quote e proventos não dependem um do outro — busca em paralelo
+        // (antes era sequencial, dobrando a latência por ticker no ranking).
+        const [quote, proventos] = await Promise.all([
+          stockQuoteService.getQuote(ticker).catch(() => null),
+          dividendsProvider.fetchDividends(ticker).catch(() => null),
+        ]);
+
+        if (!quote) return null;
+        const price = quote.price;
+        const changePct = typeof quote.changePercent === 'number' ? quote.changePercent : null;
         if (price <= 0) return null;
 
         const indicators = calcAllIndicators(r, price);
 
-        try {
-          const proventos = await dividendsProvider.fetchDividends(ticker);
-          if (proventos && price > 0) {
-            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-            const sum12m = sumIncomeDistributions(
-              incomeDistributionsSince(
-                proventos,
-                cutoff.toISOString().slice(0, 10),
-              ),
-            );
-            if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
-          }
-        } catch { /* ok */ }
+        if (proventos && price > 0) {
+          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+          const sum12m = sumIncomeDistributions(
+            incomeDistributionsSince(
+              proventos,
+              cutoff.toISOString().slice(0, 10),
+            ),
+          );
+          if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
+        }
 
         const result = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
         if (minScore !== undefined && result.score < minScore) return null;
@@ -674,26 +678,27 @@ export async function getRankingController(
       fiiTickers as unknown as Record<string, unknown>[],
       async (r) => {
         const ticker = String(r.ticker);
-        let price = 0; let liquidity: number | null = null;
-        try {
-          const q = await stockQuoteService.getQuote(ticker);
-          price = q.price;
-          liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
-        } catch { return null; }
+
+        // Quote e proventos não dependem um do outro — busca em paralelo.
+        const [q, proventos] = await Promise.all([
+          stockQuoteService.getQuote(ticker).catch(() => null),
+          dividendsProvider.fetchDividends(ticker).catch(() => null),
+        ]);
+
+        if (!q) return null;
+        const price = q.price;
+        const liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
         if (price <= 0) return null;
 
         let dy = 0;
         let dividendEvents: Array<{ date: string; value: number; type: string }> = [];
-        try {
-          const proventos = await dividendsProvider.fetchDividends(ticker);
-          if (proventos && price > 0) {
-            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-            const c = cutoff.toISOString().slice(0, 10);
-            dividendEvents = incomeDistributionsSince(proventos, c);
-            const s = sumIncomeDistributions(dividendEvents);
-            if (s > 0) dy = +(s / price * 100).toFixed(2);
-          }
-        } catch { /* ok */ }
+        if (proventos && price > 0) {
+          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+          const c = cutoff.toISOString().slice(0, 10);
+          dividendEvents = incomeDistributionsSince(proventos, c);
+          const s = sumIncomeDistributions(dividendEvents);
+          if (s > 0) dy = +(s / price * 100).toFixed(2);
+        }
 
         // P/VP: CVM (oficial) → Redis cache de scrape prévio → null (sem scrape no ranking)
         let pvp: number | null = null;

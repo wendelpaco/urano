@@ -52,7 +52,7 @@ async function getPriceAtDate(ticker: string, date: string): Promise<number | nu
     end.setDate(end.getDate() + 5);
     const symbol = ticker.endsWith('.SA') ? ticker : `${ticker}.SA`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${Math.floor(start.getTime() / 1000)}&period2=${Math.floor(end.getTime() / 1000)}`;
-    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'error' });
     if (!r.ok) return null;
     const data = await r.json() as { chart: { result?: Array<{ indicators: { quote: Array<{ close: number[] }> } }> } };
     const closes = data.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
@@ -120,11 +120,19 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
     const current = tickerRows.find((r) => Number(r.fiscal_year) === year);
     if (!current) continue;
 
+    // ENG-5r: demonstrações são publicadas ~4 meses após a data de referência.
+    // Entramos na data de filing real (reference_date + 4 meses) para evitar
+    // look-ahead bias — o mercado só conhece os fundamentos após divulgação.
     const refDate = String(current.reference_date || `${year}-12-31`);
-    const startPrice = await getPriceAtDate(ticker, refDate);
+    const entryDate = new Date(refDate);
+    entryDate.setMonth(entryDate.getMonth() + 4);
+    const entryDateStr = entryDate.toISOString().slice(0, 10);
+
+    const startPrice = await getPriceAtDate(ticker, entryDateStr);
     if (!startPrice || startPrice <= 0) continue;
 
-    const endDate = new Date(refDate);
+    // Retorno 12 meses a partir da data de entrada (não da data do balanço)
+    const endDate = new Date(entryDateStr);
     endDate.setFullYear(endDate.getFullYear() + 1);
     const endPrice = await getPriceAtDate(ticker, endDate.toISOString().slice(0, 10));
 
@@ -138,10 +146,11 @@ async function backtestYear(year: number): Promise<BacktestResult[]> {
       }
     }
 
-    // Momentum real look-ahead-free: retornos 3M/6M até a data de referência
+    // Momentum real look-ahead-free: retornos 3M/6M até a data de ENTRADA
+    // (não até a data do balanço — ENG-5r)
     let momentum: import('../services/market-data-service.ts').MarketMomentum | undefined;
     try {
-      const d0 = new Date(refDate);
+      const d0 = new Date(entryDateStr);
       const d3 = new Date(d0); d3.setMonth(d3.getMonth() - 3);
       const d6 = new Date(d0); d6.setMonth(d6.getMonth() - 6);
       const p3 = await getPriceAtDate(ticker, d3.toISOString().slice(0, 10));

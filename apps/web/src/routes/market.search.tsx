@@ -25,7 +25,14 @@ function SearchPage() {
     () => asArray<LazyAsset>(lazyQ.data?.results ?? lazyQ.data),
     [lazyQ.data],
   );
-  const isScraping = lazyQ.data?.source === "live_scrape" || lazyQ.isLoading;
+  // UX-6: estado de scraping respeita loading/error. Não fica travado:
+  // - mostra spinner durante fetch de live-scrape
+  // - esconde no erro (lazyQ.isError) mesmo que data antiga tenha source='live_scrape'
+  // - esconde quando data é cache/warmed (source != 'live_scrape')
+  const lazyData = lazyQ.data as { source?: string } | undefined;
+  const isScraping = lazyQ.isLoading && !lazyQ.isError && (
+    lazyData?.source === "live_scrape" || !lazyData
+  );
 
   const all = useMemo(
     () => [

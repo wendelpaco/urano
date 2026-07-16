@@ -204,6 +204,7 @@ export class FiiOperationalService {
       const r = await fetch(url, {
         headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
         signal: AbortSignal.timeout(15_000),
+        redirect: 'error',
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
@@ -474,6 +475,7 @@ export class FiiOperationalService {
       const r = await fetch(url, {
         headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
         signal: AbortSignal.timeout(15_000),
+        redirect: 'error',
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();

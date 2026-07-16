@@ -14,6 +14,7 @@ function healthyCompany(): FinancialIndicators {
     netMargin: 20.1,
     roe: 28.5,
     roa: 15.3,
+    roic: 18.5,
     peRatio: 12.0,
     pbRatio: 2.5,
     psRatio: 2.0,
@@ -40,6 +41,7 @@ function indebtedCompany(): FinancialIndicators {
     netMargin: 3.5,
     roe: 5.0,
     roa: 1.5,
+    roic: 4.2,
     peRatio: 18.0,
     pbRatio: 0.9,
     psRatio: 0.6,
@@ -66,6 +68,7 @@ function lossCompany(): FinancialIndicators {
     netMargin: -12.0,
     roe: -20.0,
     roa: -8.0,
+    roic: -5.0,
     peRatio: null,
     pbRatio: 0.5,
     psRatio: 0.3,
@@ -92,6 +95,9 @@ describe('StockScoreCalculator', () => {
       healthyCompany(),
       'saneamento',
       'WEG S.A.',
+      // IMP-3r: fornece histórico mínimo para evitar penalidade de cobertura
+      { years: [{ fiscalYear: 2023, revenue: 5000, netIncome: 1000, roe: 25, netMargin: 18, debtToEquity: 0.3, grossMargin: 42 }, { fiscalYear: 2024, revenue: 5800, netIncome: 1200, roe: 28, netMargin: 20, debtToEquity: 0.3, grossMargin: 45 }] },
+      { ticker: 'WEGE3', price: 42, return3m: -2, return6m: 5, drawdownFrom52WeekHigh: 8, annualizedVolatility: 22, avgVolume: 5000000 },
     );
 
     expect(result.score).toBeGreaterThan(55);

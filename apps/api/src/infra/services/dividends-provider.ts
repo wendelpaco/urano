@@ -149,6 +149,7 @@ export class DividendsProvider {
         Accept: 'application/json',
         Referer: `${this.baseUrl}/${isFii ? 'fundos-imobiliarios' : 'acoes'}/${upper}`,
       },
+      redirect: 'error',
     });
 
     if (response.status === 429) {

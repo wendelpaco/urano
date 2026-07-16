@@ -448,6 +448,7 @@ export class StockQuoteService {
             'User-Agent': 'Urano-FinBot/0.1',
             Accept: 'application/json',
           },
+          redirect: 'error',
         });
 
         if (res.status === 429) {
@@ -547,6 +548,7 @@ export class StockQuoteService {
             'User-Agent': 'Urano-FinBot/0.1',
             Accept: 'application/json',
           },
+          redirect: 'error',
         });
 
         if (res.status === 429) {

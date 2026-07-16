@@ -37,11 +37,14 @@ export function calcAllIndicators(
   const totalAssets = num('totalAssets', 'total_assets');
   const equity = num('equity');
   const ocf = num('operatingCashFlow', 'operating_cash_flow');
+  const totalLiabilities = num('totalLiabilities', 'total_liabilities');
+  const cash = num('cash');
   const shares = num('sharesOutstanding', 'shares_outstanding');
 
-  const eps = shares > 0 ? netIncome / shares : 0;
-  const bvps = shares > 0 ? equity / shares : 0;
-  const marketCap = shares > 0 ? shares * price : 0;
+  // ENG-8: shares ausente → eps/bvps null, não zero (empresa no prejuízo escapava de penalidade)
+  const eps = shares > 0 ? netIncome / shares : null;
+  const bvps = shares > 0 ? equity / shares : null;
+  const marketCap = shares > 0 ? shares * price : null;
   const grossProfit = revenue - cogs;
   // Passivo total inclui fornecedores, impostos, provisões e outras obrigações;
   // não é dívida financeira. Até o ETL mapear empréstimos/debêntures por conta,
@@ -67,22 +70,30 @@ export function calcAllIndicators(
     roe: equity > 0 ? +(netIncome / equity * 100).toFixed(2) : null,
     roa: totalAssets > 0 ? +(netIncome / totalAssets * 100).toFixed(2) : null,
     // Valuation
-    peRatio: eps > 0 && price > 0 ? +(price / eps).toFixed(2) : null,
-    pbRatio: bvps > 0 && price > 0 ? +(price / bvps).toFixed(2) : null,
-    psRatio: revenue > 0 && shares > 0 ? +(marketCap / revenue).toFixed(2) : null,
-    pebit: ebit > 0 && shares > 0 ? +(marketCap / ebit).toFixed(2) : null,
+    peRatio: eps !== null && eps > 0 && price > 0 ? +(price / eps).toFixed(2) : null,
+    pbRatio: bvps !== null && bvps > 0 && price > 0 ? +(price / bvps).toFixed(2) : null,
+    psRatio: revenue > 0 && shares > 0 && marketCap !== null ? +(marketCap / revenue).toFixed(2) : null,
+    pebit: ebit > 0 && shares > 0 && marketCap !== null ? +(marketCap / ebit).toFixed(2) : null,
     evEbit: null,
     // Endividamento
     debtToEquity: null,
     netDebtToEquity: null,
     // Per-share
-    eps: +eps.toFixed(2),
-    bvps: +bvps.toFixed(2),
+    eps: eps !== null ? +eps.toFixed(2) : null,
+    bvps: bvps !== null ? +bvps.toFixed(2) : null,
+    // ROIC: NOPAT / Capital Investido. NOPAT = EBIT * (1 - 0.34) (taxa BR aproximada).
+    // Capital investido = Equity + Total Liabilities - Cash (aproximação conservadora).
+    // UX-4: retorna null se não houver EBIT ou capital investido.
+    // IMP-2: refinar quando o ETL mapear dívida financeira real.
+    roic: ebit > 0 && totalLiabilities > 0 && equity + totalLiabilities - cash > 0
+      ? +((ebit * 0.66) / (equity + totalLiabilities - cash) * 100).toFixed(2)
+      : null,
     // Eficiência
     assetTurnover: totalAssets > 0 ? +(revenue / totalAssets).toFixed(2) : null,
-    fcoToNetIncome: netIncome !== 0 ? +(ocf / Math.abs(netIncome)).toFixed(2) : null,
+    // ENG-8: empresa no prejuízo → FCO/NetIncome é indefinido (não creditar qualidade com |netIncome|)
+    fcoToNetIncome: netIncome > 0 && ocf > 0 ? +(ocf / netIncome).toFixed(2) : null,
     // Mercado
-    marketCap,
+    marketCap: marketCap ?? 0,
     dividendYield,
   };
 }

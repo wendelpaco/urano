@@ -50,9 +50,9 @@ export class TimeWindow {
   isOpen(): boolean {
     const now = this.getLocalTime();
 
-    // Verifica dia da semana
+    // Verifica dia da semana (REL-1: usa getLocalDay consistente com timezone)
     if (this.allowedDays !== null) {
-      if (!this.allowedDays.has(now.getDay())) {
+      if (!this.allowedDays.has(this.getLocalDay(now))) {
         return false;
       }
     }
@@ -71,7 +71,7 @@ export class TimeWindow {
   minutesUntilOpen(): number {
     const now = this.getLocalTime();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const currentDay = now.getDay();
+    const currentDay = this.getLocalDay(now); // REL-1: dia da semana do timezone
 
     // Se está aberta AGORA, retorna 0
     if (this.isOpen()) return 0;
@@ -127,10 +127,17 @@ export class TimeWindow {
   }
 
   private getLocalTime(): Date {
-    // Usa Intl para obter hora local no timezone configurado
+    // Usa Intl para obter hora local E dia da semana no timezone configurado.
+    // REL-1: antes o código usava getDay() sobre um Date construído com
+    // ano/mês/dia do timezone do *servidor*, o que errava o dia da semana
+    // perto da virada de dia (ex.: servidor UTC às 22h, SP já é dia seguinte).
+    // Agora derivamos o dia da semana diretamente das parts do Intl.
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: this.timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -140,21 +147,59 @@ export class TimeWindow {
 
     const parts = formatter.formatToParts(now);
 
+    let year = 0;
+    let month = 0;
+    let day = 0;
     let hour = 0;
     let minute = 0;
+    let weekday = '';
 
     for (const part of parts) {
-      if (part.type === 'hour') {
+      if (part.type === 'year') {
+        year = parseInt(part.value, 10);
+      } else if (part.type === 'month') {
+        month = parseInt(part.value, 10);
+      } else if (part.type === 'day') {
+        day = parseInt(part.value, 10);
+      } else if (part.type === 'hour') {
         hour = parseInt(part.value, 10);
       } else if (part.type === 'minute') {
         minute = parseInt(part.value, 10);
+      } else if (part.type === 'weekday') {
+        weekday = part.value;
       }
     }
 
-    const date = new Date(now);
-    date.setHours(hour, minute, 0, 0);
-    // Sobrescreve o dia da semana para o cálculo correto
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0);
+    // Usa ano/mês/dia do timezone correto (não do servidor) e preserva o
+    // dia da semana obtido do Intl para isOpen()/minutesUntilOpen().
+    const date = new Date(year, month - 1, day, hour, minute, 0);
+    // Propriedade auxiliar para transportar o weekday correto.
+    (date as unknown as Record<string, unknown>).__tzWeekday = weekday;
+    return date;
+  }
+
+  /** Retorna o dia da semana (0=Dom..6=Sáb) consistente com o timezone. */
+  private getLocalDay(date: Date): number {
+    const weekdayMap: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    const stored = (date as unknown as Record<string, unknown>).__tzWeekday as string | undefined;
+    if (stored) {
+      const day: number | undefined = weekdayMap[stored];
+      if (day !== undefined) return day;
+    }
+    // Fallback: Intl rápido para consistência (evita getDay() do servidor).
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: this.timezone,
+      weekday: 'short',
+    }).formatToParts(new Date());
+    for (const part of parts) {
+      if (part.type === 'weekday') {
+        const day: number | undefined = weekdayMap[part.value];
+        if (day !== undefined) return day;
+      }
+    }
+    return new Date().getDay(); // fallback último recurso
   }
 
   private isDayAllowed(day: number): boolean {

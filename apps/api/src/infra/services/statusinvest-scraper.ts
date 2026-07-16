@@ -165,12 +165,17 @@ export class StatusInvestScraper {
   }> {
     try {
       const url = `${this.baseUrl}/fii/companytickerprovents?ticker=${ticker}`;
+      // SSRF-3r: StatusInvest JSON API não deve redirecionar
       const r = await fetch(url, {
         headers: this.getHeaders(this.baseUrl + '/'),
+        redirect: 'error',
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
 
-      const data = await r.json() as {
+      // SSRF-1: limita leitura a 512 KiB para JSON de dividendos
+      const text = await r.text();
+      if (text.length > 512 * 1024) throw new Error('Resposta de dividendos muito grande');
+      const data = JSON.parse(text) as {
         earningsThisYear?: string;
         earningsLastYear?: string;
         provisionedThisYear?: string;
@@ -200,10 +205,13 @@ export class StatusInvestScraper {
       const url = `${this.baseUrl}/fii/companytickerprovents?ticker=${ticker}`;
       const r = await fetch(url, {
         headers: this.getHeaders(this.baseUrl + '/'),
+        redirect: 'error',
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
 
-      const data = await r.json() as {
+      const rawText = await r.text();
+      if (rawText.length > 512 * 1024) throw new Error('Resposta de dividendos FII muito grande');
+      const data = JSON.parse(rawText) as {
         earningsThisYear?: string;
         earningsLastYear?: string;
         provisionedThisYear?: string;
@@ -252,6 +260,7 @@ export class StatusInvestScraper {
     try {
       const resp = await fetch(url, {
         headers: this.getHeaders(this.baseUrl + '/'),
+        redirect: 'error',
       });
 
       if (!resp.ok) return [];
@@ -273,7 +282,9 @@ export class StatusInvestScraper {
           .filter((i) => i.date && i.value > 0);
       }
 
-      // Formato novo: gera sintético dos anuais
+      // PIPE-3: formato novo — gera sintético dos anuais com marcação explícita.
+      // Eventos fabricados não têm cadência mensal real; o score deve tratar
+      // cobertura via IMP-3r em vez de fingir 12/12 meses.
       const nf = data as { earningsThisYear?: string; earningsLastYear?: string };
       if (nf.earningsThisYear || nf.earningsLastYear) {
         const thisY = parseFloat((nf.earningsThisYear || '0').replace(',', '.'));
@@ -288,7 +299,7 @@ export class StatusInvestScraper {
           events.push({
             date: d.toISOString().slice(0, 10),
             value: Math.round(monthly * 100) / 100,
-            type: assetType === 'fii' ? 'Rendimento' : 'DIVIDEND',
+            type: 'SINTETICO_ANUAL',
           });
         }
         return events;
@@ -320,7 +331,8 @@ export class StatusInvestScraper {
       // maxRetries baixo: retentar 429 em massa piora o ban. Preferir fallback Yahoo.
       const html = await withRetry(async () => {
         const headers = this.getHeaders(this.baseUrl + '/');
-        const response = await fetch(url, { headers });
+        // SSRF-3r: não segue redirects — endpoint do SI não deve redirecionar
+        const response = await fetch(url, { headers, redirect: 'error' });
 
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');

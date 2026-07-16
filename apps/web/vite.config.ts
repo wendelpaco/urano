@@ -66,7 +66,7 @@ export default defineConfig(({ command, mode }) => {
       // Dev: browser fala só com :8080. /v1 → API local. Zero CORS / PNA.
       proxy: {
         "/v1": {
-          target: process.env.URANO_API_PROXY_TARGET ?? "http://127.0.0.1:3000",
+          target: process.env.URANO_API_PROXY_TARGET ?? "http://127.0.0.1:3333",
           changeOrigin: true,
           // allocate/ranking frios podem passar de 30s se cache estiver vazio
           timeout: 120_000,

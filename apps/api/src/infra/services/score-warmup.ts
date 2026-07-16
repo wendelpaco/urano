@@ -37,6 +37,8 @@ export interface CachedScore {
   type: 'stock' | 'fii';
   score: number;
   price: number;
+  /** UX-3: variação % diária (da cotação). */
+  changePct?: number | null;
   updatedAt: string;
 }
 
@@ -93,12 +95,20 @@ export class ScoreWarmupService {
         price = result.price;
       }
 
+      // UX-3: captura changePct da cotação (cache 120s no quote service)
+      let changePct: number | null = null;
+      try {
+        const q = await stockQuoteService.getQuote(ticker);
+        changePct = q.changePercent ?? null;
+      } catch { /* ok */ }
+
       const cached: CachedScore = {
         ticker: ticker.toUpperCase(),
         name,
         type: assetType,
         score: Math.round(score),
         price: Math.round(price * 100) / 100,
+        changePct: changePct != null ? Math.round(changePct * 100) / 100 : undefined,
         updatedAt: new Date().toISOString(),
       };
 
@@ -126,6 +136,14 @@ export class ScoreWarmupService {
       rankingUpdated: false,
       elapsedMs: 0,
     };
+
+    // IMP-1: atualiza SELIC antes de calcular scores
+    try {
+      const { getSelicRate } = await import('./selic-provider.ts');
+      const { setStockScoreSelic } = await import('../../core/services/stock-score.ts');
+      const rate = await getSelicRate();
+      if (rate !== null) setStockScoreSelic(rate);
+    } catch { /* mantém cachedSelic atual */ }
 
     try {
       // Busca todos os tickers do banco

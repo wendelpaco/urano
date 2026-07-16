@@ -47,10 +47,6 @@ function generateApiKey(): string {
   return `ur_${segments.join('_')}`;
 }
 
-function keyStoredFromHash(keyHash: string): string {
-  return `ur_hashonly_${keyHash.slice(0, 24)}`;
-}
-
 export interface ChildScopeResolution {
   scopes: string[];
   denied: string[];
@@ -123,7 +119,6 @@ export async function createApiKeyController(
   const { name, scopes: requestedScopes } = parsed.data;
   const key = generateApiKey();
   const keyHash = crypto.createHash('sha256').update(key).digest('hex');
-  const keyStored = keyStoredFromHash(keyHash);
   const resolution = resolveChildScopes(requestedScopes, request.scopes);
   if (resolution.denied.length > 0) {
     reply.status(403).send({
@@ -147,7 +142,7 @@ export async function createApiKeyController(
     .insert(apiKeys)
     .values({
       name,
-      key: keyStored,
+      // keyStored removido (SEC-1r) — coluna 'key' foi dropada na migration 0019
       keyHash,
       ownerId,
       scopes,
@@ -223,11 +218,10 @@ export async function rotateApiKeyController(
 
   const newKey = generateApiKey();
   const newKeyHash = crypto.createHash('sha256').update(newKey).digest('hex');
-  const keyStored = keyStoredFromHash(newKeyHash);
 
   const [updated] = await db
     .update(apiKeys)
-    .set({ key: keyStored, keyHash: newKeyHash })
+    .set({ keyHash: newKeyHash })
     .where(and(
       eq(apiKeys.id, id),
       eq(apiKeys.keyHash, target.keyHash),

@@ -236,7 +236,7 @@ export class FundamentusScraper {
     try {
       const html = await withRetry(async () => {
         const headers = userAgentPool.getFingerprint(this.baseUrl) as unknown as Record<string, string>;
-        const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+        const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000), redirect: 'error' });
 
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');

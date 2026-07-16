@@ -10,7 +10,9 @@ import * as schema from './schema.ts';
  * com Drizzle fornecendo type-safety nas queries e schema management.
  */
 const pgClient = postgres(env.DATABASE_URL, {
-  max: 10,
+  // REL-3: pool configurável via env. Workers usam conexões extras;
+  // se houver contenção API↔ETL, aumente DATABASE_POOL_MAX.
+  max: env.DATABASE_POOL_MAX,
   idle_timeout: 30,
   connect_timeout: 10,
 });

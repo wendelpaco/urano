@@ -8,6 +8,12 @@
 import type { FinancialIndicators } from '../entities/company-fundamentals.ts';
 import type { MarketMomentum } from '../../infra/services/market-data-service.ts';
 
+// IMP-1: SELIC dinâmica. Atualizado via getSelicRate() no warmup/API.
+// Fallback 14.0 se o provider ainda não retornou (inicialização).
+let cachedSelic = 14.0;
+export function setStockScoreSelic(rate: number): void { cachedSelic = rate; }
+export function getStockScoreSelic(): number { return cachedSelic; }
+
 export interface StockScorePillar { score: number; weight: number; }
 
 export interface StockScoreResult {
@@ -18,6 +24,13 @@ export interface StockScoreResult {
     quality: StockScorePillar; momentum: StockScorePillar;
   };
   reasons: string[]; alerts: string[]; sector: string | null; diagnosis: string;
+  /** IMP-3r: cobertura dos dados usados no score (0-100). */
+  dataCoverage: {
+    percent: number;
+    criticalComplete: boolean;
+    missingFields: string[];
+    penaltyApplied: number;
+  };
 }
 
 export interface HistoricalData { years: Array<{ fiscalYear: number; revenue: number; netIncome: number; roe: number; netMargin: number; debtToEquity: number; grossMargin: number; }>; }
@@ -52,6 +65,29 @@ export class StockScoreCalculator {
     const reasons: string[] = [], alerts: string[] = [];
     const si = getSectorDetail(sector);
 
+    // IMP-3r: avalia cobertura dos dados antes de calcular
+    const requiredData: Array<{ field: string; available: boolean }> = [
+      { field: 'eps', available: ind.eps !== null },
+      { field: 'shares_outstanding', available: ind.eps !== null }, // eps null = sem shares
+      { field: 'pe_ratio', available: ind.peRatio !== null },
+      { field: 'roe', available: ind.roe !== null },
+      { field: 'gross_margin', available: ind.grossMargin !== null },
+      { field: 'dividend_yield', available: ind.dividendYield !== null },
+      { field: 'fco_to_net_income', available: ind.fcoToNetIncome !== null },
+      { field: 'debt_to_equity', available: ind.debtToEquity !== null },
+      { field: 'historical_data', available: historical !== undefined && historical.years.length >= 2 },
+      { field: 'sector', available: si !== null },
+      { field: 'momentum', available: momentum !== undefined },
+    ];
+    const missingFields = requiredData
+      .filter((item) => !item.available)
+      .map((item) => item.field);
+    const coveragePercent = Math.round(
+      ((requiredData.length - missingFields.length) / requiredData.length) * 100,
+    );
+    // Penalidade progressiva: até -25 pontos por dados faltantes
+    const missingDataPenalty = Math.min(25, missingFields.length * 3);
+
     const vs = this.scoreValuation(ind, si, reasons, alerts);
     const ps = this.scoreProfitability(ind, si, reasons, alerts);
     const gs = this.scoreGrowth(ind, historical, reasons, alerts);
@@ -59,23 +95,37 @@ export class StockScoreCalculator {
     const qs = this.scoreQuality(ind, si, reasons, alerts);
     const ms = this.scoreMomentum(momentum, reasons, alerts);
 
-    const score = Math.round(vs * 0.28 + ps * 0.18 + gs * 0.15 + ds * 0.14 + qs * 0.18 + ms * 0.07);
+    let score = Math.round(vs * 0.28 + ps * 0.18 + gs * 0.15 + ds * 0.14 + qs * 0.18 + ms * 0.07);
+    score = Math.max(0, Math.min(100, score - missingDataPenalty));
+    if (missingFields.length > 0 && missingDataPenalty > 0) {
+      alerts.push(`Cobertura de dados ${coveragePercent}% — penalidade de -${missingDataPenalty} pts`);
+    }
+
     const diagnosis = this.generateDiagnosis(score, reasons, alerts, sector);
 
-    return { ticker: ind.ticker, companyName, score: Math.max(0, Math.min(100, score)),
+    return { ticker: ind.ticker, companyName, score,
       breakdown: { valuation: { score: vs, weight: 0.28 }, profitability: { score: ps, weight: 0.18 }, growth: { score: gs, weight: 0.15 }, dividends: { score: ds, weight: 0.14 }, quality: { score: qs, weight: 0.18 }, momentum: { score: ms, weight: 0.07 } },
-      reasons, alerts, sector, diagnosis };
+      reasons, alerts, sector, diagnosis,
+      dataCoverage: {
+        percent: coveragePercent,
+        criticalComplete: missingFields.length === 0,
+        missingFields,
+        penaltyApplied: missingDataPenalty,
+      },
+    };
   }
 
   // ── Valuation: Earnings Yield vs SELIC + Quality Premium ────────────────
 
   private static scoreValuation(ind: FinancialIndicators, si: ReturnType<typeof getSectorDetail>, reasons: string[], alerts: string[]): number {
+    // ENG-8: eps null = dados ausentes (shares não disponível), não é prejuízo.
+    if (ind.eps === null) { alerts.push('Dados de LPA indisponíveis (ações emitidas não encontradas)'); return 50; }
     if (ind.eps < 0) { alerts.push('Empresa com prejuízo'); return 10; }
     let total = 0, count = 0;
     const premium = this.hasQualityPremium(ind);
 
     if (ind.peRatio !== null && ind.peRatio > 0 && ind.peRatio < 200) {
-      const ey = (1 / ind.peRatio) * 100, selic = 14.0; count++;
+      const ey = (1 / ind.peRatio) * 100, selic = cachedSelic; count++;
       if (ey >= selic) { total += 90; reasons.push(`Earnings Yield ${ey.toFixed(1)}% > SELIC — bate renda fixa`); }
       else if (ey >= selic * 0.7) { total += 65; }
       else if (ey >= selic * 0.4) { if (premium) { total += 55; reasons.push('P/L elevado mas justificado por ROE alto + baixo endividamento'); } else { total += 40; alerts.push(`Earnings Yield ${ey.toFixed(1)}% abaixo da SELIC`); } }

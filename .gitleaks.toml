@@ -1,0 +1,7 @@
+# SEC-2: previne vazamento do formato de API key do Urano (ur_<hex>_<hex>_<hex>_<hex>).
+# Keys têm 192 bits de entropia (4 segmentos de 12 hex chars cada).
+[[rules]]
+id = "urano-api-key"
+description = "Urano API key format"
+regex = '''ur_[0-9a-f]{12}_[0-9a-f]{12}_[0-9a-f]{12}_[0-9a-f]{12}'''
+tags = ["api-key", "urano"]

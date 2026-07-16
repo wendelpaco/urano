@@ -71,13 +71,21 @@ export class LazyDataService {
       const cached = await redis.get(cacheKey);
       if (cached) {
         const parsed = JSON.parse(cached) as CachedScore;
+        // UX-3: busca cotação para changePct real (quote service tem cache 120s)
+        let changePct: number | null = parsed.changePct ?? null;
+        try {
+          if (changePct == null) {
+            const q = await stockQuoteService.getQuote(t);
+            changePct = q.changePercent ?? null;
+          }
+        } catch { /* ok */ }
         return {
           ticker: t,
           name: parsed.name,
           type: parsed.type,
           price: parsed.price,
           change: 0,
-          changePct: 0,
+          changePct: changePct ?? 0,
           score: parsed.score,
           sector: null,
           source: 'cache',

@@ -30,13 +30,11 @@ async function main(): Promise<void> {
   try {
     const key = generateApiKey();
     const keyHash = createHash('sha256').update(key).digest('hex');
-    const keyStored = `ur_hashonly_${keyHash.slice(0, 24)}`;
 
     const [row] = await db
       .insert(apiKeys)
       .values({
         name,
-        key: keyStored,
         keyHash,
         scopes: [...BOOTSTRAP_SCOPES],
       })

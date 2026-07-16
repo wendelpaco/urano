@@ -24,9 +24,22 @@ const ipRateLimiter = buildRateLimiter({
 });
 
 // Camada 2 (post-auth): por ID interno da chave validada pelo authMiddleware.
+// SSRF-2r: rotas que disparam live-scrape têm bucket separado mais restritivo
+// (10 req/min default) para evitar que uma key válida amplifique custo/risco.
+const scraperPathLimits: Record<string, number> = {
+  '/v1/search': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/screener': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/fiis/screener': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/analysis/ranking': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/analysis/allocate': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/analysis/contribution': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+  '/v1/analysis/compare': env.SCRAPER_RATE_LIMIT_PER_MINUTE,
+};
+
 const authenticatedKeyRateLimiter = buildRateLimiter({
   identity: 'authenticatedKey',
   limit: env.RATE_LIMIT_KEY_PER_MINUTE,
+  pathLimits: scraperPathLimits,
   failClosed: env.RATE_LIMIT_FAIL_CLOSED,
 });
 
@@ -188,6 +201,20 @@ try {
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
   const dbOk = await checkDatabaseConnection().then(() => true).catch(() => false);
   const redisOk = await checkRedisConnection();
+
+  // IMP-1: inicializa SELIC dinâmica (BCB) para o score de ações.
+  // Fallback 14.0 se o provider falhar.
+  import('./infra/services/selic-provider.ts').then(async ({ getSelicRate }) => {
+    import('./core/services/stock-score.ts').then(({ setStockScoreSelic }) => {
+      getSelicRate().then((rate) => {
+        if (rate !== null) {
+          setStockScoreSelic(rate);
+          app.log.info(`   SELIC: ${rate}% a.a. (BCB)`);
+        }
+      });
+    });
+  });
+
   app.log.info(`🚀 Urano API rodando em http://0.0.0.0:${env.PORT}`);
   app.log.info(`   DB: ${dbOk ? '✅' : '❌'}  Redis: ${redisOk ? '✅' : '❌'}  Scheduler: ${scheduler.getStatus().running ? '✅' : '❌'}`);
 } catch (err) {

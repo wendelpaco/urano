@@ -301,8 +301,12 @@ export class CvmStorageService {
 
     for (const row of rows) {
       if (normalize(row.cnpj) !== target) continue;
+      // PIPE-2: DMPL pode vir com coluna vazia (apenas uma versão) ou com
+      // rótulos como "DF Consolidado" / "Consolidado". Aceitamos consolidado
+      // quando presente, mas também aceitamos linhas sem marcador de coluna
+      // (em DMPL tipicamente só há versão consolidada no arquivo _con).
       const col = (row.statementColumn || '').toLowerCase();
-      if (!col.includes('consolidado')) continue;
+      if (col && !col.includes('consolidado')) continue;
 
       const raw = parseFloat((row.rawValue || '0').replace(',', '.'));
       if (raw === 0) continue;
@@ -336,7 +340,11 @@ export class CvmStorageService {
     if (lines.length < 2) return;
     const header = this.parseCsvLine(lines[0]!);
     const iCnpj = header.indexOf('CNPJ_CIA');
-    const iShares = header.indexOf('QT_ACAO_TOTAL_CAP_INTEGR');
+    // PIPE-1: a coluna de ações pode ter diferentes nomes em diferentes anos.
+    // Tenta os nomes conhecidos, na ordem.
+    let iShares = header.indexOf('QT_ACAO_TOTAL_CAP_INTEGR');
+    if (iShares < 0) iShares = header.indexOf('QT_ACAO_TOTAL');
+    if (iShares < 0) iShares = header.indexOf('QT_ACOES');
     if (iCnpj < 0 || iShares < 0) return;
 
     const normalize = (c: string) => c.replace(/[./-]/g, '').trim();
@@ -376,12 +384,26 @@ export class CvmStorageService {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 120_000);
         try {
+          // SSRF-3r: CVM não deve redirecionar para outro host
           const r = await fetch(url, {
             headers: { 'User-Agent': this.userAgent },
             signal: controller.signal,
+            redirect: 'error',
           });
           if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
-          return await r.arrayBuffer();
+          // SSRF-1: limita ZIP da CVM a 50 MiB
+          const cl = r.headers.get('Content-Length');
+          if (cl) {
+            const len = parseInt(cl, 10);
+            if (!Number.isNaN(len) && len > 50 * 1024 * 1024) {
+              throw new Error(`ZIP CVM muito grande: ${len} bytes (limite 50 MiB)`);
+            }
+          }
+          const buf = await r.arrayBuffer();
+          if (buf.byteLength > 50 * 1024 * 1024) {
+            throw new Error(`ZIP CVM excedeu 50 MiB durante leitura: ${buf.byteLength} bytes`);
+          }
+          return buf;
         } finally { clearTimeout(timeout); }
       }, {
         maxRetries: 3,

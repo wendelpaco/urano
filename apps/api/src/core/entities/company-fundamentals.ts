@@ -33,6 +33,7 @@ export interface FinancialIndicators {
   netMargin: number | null;
   roe: number | null;
   roa: number | null;
+  roic: number | null;
   peRatio: number | null;
   pbRatio: number | null;
   psRatio: number | null;
@@ -40,8 +41,8 @@ export interface FinancialIndicators {
   evEbit: number | null;
   debtToEquity: number | null;
   netDebtToEquity: number | null;
-  eps: number;
-  bvps: number;
+  eps: number | null;
+  bvps: number | null;
   assetTurnover: number | null;
   fcoToNetIncome: number | null;
   marketCap: number;

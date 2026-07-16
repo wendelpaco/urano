@@ -338,14 +338,19 @@ function ResearchPage() {
                   <MetricRow label="Market Cap" value={fmtBRL(data.marketCap, true)} />
                   <MetricRow label="Liquidez média" value={fmtBRL(data.liquidity, true)} />
                   <MetricRow label="Dividend Yield" value={fmtPct(data.dy, true)} />
-                  <MetricRow label="P/L" value={fmtNum(data.pe)} />
+                  {/* UX-5: FII não tem P/L, ROE, margens — esconder linhas N/A */}
+                  {t === "stock" ? (
+                    <>
+                      <MetricRow label="P/L" value={fmtNum(data.pe)} />
+                      <MetricRow label="ROE" value={fmtPct(data.roe, true)} />
+                      <MetricRow label="ROIC" value={fmtPct(data.roic, true)} />
+                      <MetricRow label="Margem Líquida" value={fmtPct(data.netMargin, true)} />
+                      <MetricRow label="Dívida/PL" value={fmtNum(data.debtEquity)} />
+                      <MetricRow label="LPA" value={fmtBRL(data.eps)} />
+                      <MetricRow label="VPA" value={fmtBRL(data.bvps)} />
+                    </>
+                  ) : null}
                   <MetricRow label="P/VP" value={fmtNum(data.pvp)} />
-                  <MetricRow label="ROE" value={fmtPct(data.roe, true)} />
-                  <MetricRow label="ROIC" value={fmtPct(data.roic, true)} />
-                  <MetricRow label="Margem Líquida" value={fmtPct(data.netMargin, true)} />
-                  <MetricRow label="Dívida/PL" value={fmtNum(data.debtEquity)} />
-                  <MetricRow label="LPA" value={fmtBRL(data.eps)} />
-                  <MetricRow label="VPA" value={fmtBRL(data.bvps)} />
                 </div>
               </Panel>
 
@@ -362,50 +367,13 @@ function ResearchPage() {
  * F4 — checklist "O que falta neste ativo" a partir de dataCoverage do score FII.
  * Ações: sem cobertura estruturada no endpoint — painel informativo breve.
  */
-function DataCoveragePanel({
-  coverage,
-  assetType,
-}: {
-  coverage: AssetDataCoverage | undefined;
-  assetType: "stock" | "fii";
-}) {
-  if (assetType === "stock") {
-    return (
-      <Panel>
-        <PanelHeader title="O que falta neste ativo" />
-        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
-          Cobertura crítica estruturada (vacância, P/VP CVM, etc.) aplica-se ao score de{" "}
-          <span className="text-foreground/80">FII</span>. Para ações, use métricas e pilares ao
-          lado — dívida financeira e shares ainda podem estar incompletos no motor.
-        </div>
-      </Panel>
-    );
-  }
-
-  if (!coverage) {
-    return (
-      <Panel>
-        <PanelHeader title="O que falta neste ativo" />
-        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
-          Endpoint não retornou <span className="font-mono">dataCoverage</span>. Se o score FII
-          estiver desatualizado no cache, reabra a página ou confira o contrato em{" "}
-          <span className="font-mono">GET /analysis/fiis/:ticker</span>.
-        </div>
-      </Panel>
-    );
-  }
-
+/** Helper: renderiza checklist de cobertura para ações e FIIs (IMP-3r / UX-5). */
+function renderCoverageChecklist(
+  coverage: AssetDataCoverage,
+  knownCritical: string[],
+) {
   const missing = coverage.missingFields;
   const complete = coverage.criticalComplete;
-  const knownCritical = [
-    "classification",
-    "pvp",
-    "liquidity",
-    "dividends_history",
-    "vacancy",
-    "delinquency",
-  ];
-  // Campos conhecidos: ok se não estão em missing; extras só listados se missing.
   const checklist = [
     ...knownCritical.map((field) => ({
       field,
@@ -470,6 +438,63 @@ function DataCoveragePanel({
       </div>
     </Panel>
   );
+}
+
+function DataCoveragePanel({
+  coverage,
+  assetType,
+}: {
+  coverage: AssetDataCoverage | undefined;
+  assetType: "stock" | "fii";
+}) {
+  if (assetType === "stock") {
+    // IMP-3r: agora ações também têm cobertura estruturada.
+    if (!coverage || coverage.missingFields.length === 0) {
+      return (
+        <Panel>
+          <PanelHeader title="O que falta neste ativo" />
+          <div className="p-3 text-xs text-muted-foreground leading-relaxed">
+            {coverage ? (
+              <span>
+                Cobertura de dados <span className="text-positive font-mono">{Math.round(coverage.percent)}%</span>{" "}
+                — todos os campos críticos presentes.
+              </span>
+            ) : (
+              <span>
+                Cobertura de dados não reportada pelo endpoint. Verifique o cache ou o
+                contrato em <span className="font-mono">GET /analysis/stocks/:ticker</span>.
+              </span>
+            )}
+          </div>
+        </Panel>
+      );
+    }
+    // Stock com campos faltantes: mostra checklist como FII
+    const stockCriticalFields = [
+      "eps", "shares_outstanding", "pe_ratio", "roe", "gross_margin",
+      "dividend_yield", "fco_to_net_income", "debt_to_equity",
+      "historical_data", "sector", "momentum",
+    ];
+    return renderCoverageChecklist(coverage, stockCriticalFields);
+  }
+
+  if (!coverage) {
+    return (
+      <Panel>
+        <PanelHeader title="O que falta neste ativo" />
+        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
+          Endpoint não retornou <span className="font-mono">dataCoverage</span>. Se o score FII
+          estiver desatualizado no cache, reabra a página ou confira o contrato em{" "}
+          <span className="font-mono">GET /analysis/fiis/:ticker</span>.
+        </div>
+      </Panel>
+    );
+  }
+
+  const fiiCriticalFields = [
+    "classification", "pvp", "liquidity", "dividends_history", "vacancy", "delinquency",
+  ];
+  return renderCoverageChecklist(coverage, fiiCriticalFields);
 }
 
 function ExplainScoreBanner({
