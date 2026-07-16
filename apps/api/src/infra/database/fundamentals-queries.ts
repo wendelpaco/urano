@@ -1,4 +1,4 @@
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { db } from '../database/connection.ts';
 import { companies, companyFundamentals } from '../database/schema.ts';
 import type { CompanyFundamentals } from '../../core/entities/company-fundamentals.ts';

@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { wallets, walletAssets, companies } from '../../database/schema.ts';
@@ -29,7 +30,7 @@ const updateWalletSchema = z.object({
 });
 
 const addAssetSchema = z.object({
-  ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
   targetAllocationPercent: z.number().min(0).max(100),
 });
 

@@ -62,12 +62,12 @@ export const TIJOLO_SUBCLASS_MAP: Record<string, TijoloSubclassification> = {
 
   BRCO11: {
     ticker: 'BRCO11',
-    subclass: 'shopping_prime_ciclico',
-    risco_macro: 'medio',
-    risco_ciclo: 'alto',
-    score_adjustment: 0,
-    adjustment_reason: 'Qualidade média, exposição cíclica presente',
-    justificativa: 'Shopping centers regionais com exposição moderada a ciclos econômicos.',
+    subclass: 'logistica_defensiva',
+    risco_macro: 'baixo',
+    risco_ciclo: 'baixo',
+    score_adjustment: +1,
+    adjustment_reason: 'Portfólio logístico com contratos de prazo longo',
+    justificativa: 'Galpões logísticos; não é fundo de shopping.',
     last_updated: '2025-12-29',
   },
 
@@ -199,23 +199,12 @@ export const TIJOLO_SUBCLASS_MAP: Record<string, TijoloSubclassification> = {
 
   HGBS11: {
     ticker: 'HGBS11',
-    subclass: 'lajes_corporativas_volatil',
-    risco_macro: 'alto',
+    subclass: 'shopping_prime_ciclico',
+    risco_macro: 'medio',
     risco_ciclo: 'alto',
-    score_adjustment: -1,
-    adjustment_reason: 'Volatilidade de demanda por espaços corporativos',
-    justificativa: 'Lajes em regiões prime, mas com incerteza sobre demanda futura.',
-    last_updated: '2025-12-29',
-  },
-
-  CPTS11: {
-    ticker: 'CPTS11',
-    subclass: 'lajes_corporativas_volatil',
-    risco_macro: 'alto',
-    risco_ciclo: 'alto',
-    score_adjustment: -1,
-    adjustment_reason: 'Risco de desocupação em ciclos econômicos negativos',
-    justificativa: 'Portfólio de lajes corporativas com exposição a ciclos econômicos.',
+    score_adjustment: 0,
+    adjustment_reason: 'Exposição ao ciclo de consumo em shopping centers',
+    justificativa: 'Portfólio de shopping centers; não é fundo de lajes.',
     last_updated: '2025-12-29',
   },
 
@@ -260,17 +249,6 @@ export const TIJOLO_SUBCLASS_MAP: Record<string, TijoloSubclassification> = {
     score_adjustment: -1,
     adjustment_reason: 'Volatilidade do setor corporativo',
     justificativa: 'Portfólio corporativo exposto a mudanças estruturais.',
-    last_updated: '2025-12-29',
-  },
-
-  RBRR11: {
-    ticker: 'RBRR11',
-    subclass: 'lajes_corporativas_volatil',
-    risco_macro: 'alto',
-    risco_ciclo: 'alto',
-    score_adjustment: -1,
-    adjustment_reason: 'Risco de demanda corporativa',
-    justificativa: 'Lajes corporativas com incerteza sobre ocupação futura.',
     last_updated: '2025-12-29',
   },
 

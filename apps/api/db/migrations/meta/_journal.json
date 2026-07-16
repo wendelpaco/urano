@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1784163876532,
+      "tag": "0000_red_dazzler",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784163876533,
+      "tag": "0001_mute_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784163876534,
+      "tag": "0002_hesitant_gargoyle",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784163876535,
+      "tag": "0003_cool_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784163876536,
+      "tag": "0004_ambitious_edwin_jarvis",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784163876537,
+      "tag": "0005_shocking_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784163876538,
+      "tag": "0006_panoramic_dragon_lord",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784163876539,
+      "tag": "0007_lying_betty_brant",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784163876540,
+      "tag": "0008_gray_whizzer",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784163876541,
+      "tag": "0009_wakeful_pyro",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784163876542,
+      "tag": "0010_glamorous_pete_wisdom",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784163876543,
+      "tag": "0011_daily_the_initiative",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784163876544,
+      "tag": "0012_neat_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784163876545,
+      "tag": "0013_silent_audit_trail",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784163876546,
+      "tag": "0014_api_key_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784163876547,
+      "tag": "0015_dividend_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784163876548,
+      "tag": "0016_backtest_strategy_and_fii_cvm",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784163876549,
+      "tag": "0017_fii_backtest",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784163876550,
+      "tag": "0018_stable_job_runtime",
+      "breakpoints": true
+    }
+  ]
+}

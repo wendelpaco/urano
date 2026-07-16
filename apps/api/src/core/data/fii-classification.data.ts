@@ -52,9 +52,9 @@ export const FII_CLASSIFICATION_MAP: Record<string, FIIClassification> = {
 
   BCFF11: {
     ticker: "BCFF11",
-    type: "papel",
-    subtype: "cri",
-    source: "official_docs",
+    type: "hibrido",
+    subtype: "fundo_de_fundos",
+    source: "status_invest",
     confidence: "high",
     last_updated: "2025-12-29",
   },
@@ -147,7 +147,7 @@ export const FII_CLASSIFICATION_MAP: Record<string, FIIClassification> = {
   BRCO11: {
     ticker: "BRCO11",
     type: "tijolo",
-    subtype: "shopping",
+    subtype: "logistica",
     source: "official_docs",
     confidence: "high",
     last_updated: "2025-12-29",
@@ -175,7 +175,7 @@ export const FII_CLASSIFICATION_MAP: Record<string, FIIClassification> = {
   HGBS11: {
     ticker: "HGBS11",
     type: "tijolo",
-    subtype: "lajes_corporativas",
+    subtype: "shopping",
     source: "official_docs",
     confidence: "high",
     last_updated: "2025-12-29",
@@ -183,9 +183,9 @@ export const FII_CLASSIFICATION_MAP: Record<string, FIIClassification> = {
 
   CPTS11: {
     ticker: "CPTS11",
-    type: "tijolo",
-    subtype: "lajes_corporativas",
-    source: "official_docs",
+    type: "papel",
+    subtype: "titulos_e_valores_mobiliarios",
+    source: "status_invest",
     confidence: "high",
     last_updated: "2025-12-29",
   },
@@ -274,9 +274,9 @@ export const FII_CLASSIFICATION_MAP: Record<string, FIIClassification> = {
 
   RBRR11: {
     ticker: "RBRR11",
-    type: "tijolo",
-    subtype: "lajes_corporativas",
-    source: "official_docs",
+    type: "papel",
+    subtype: "titulos_e_valores_mobiliarios",
+    source: "status_invest",
     confidence: "high",
     last_updated: "2025-12-29",
   },

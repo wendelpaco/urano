@@ -206,7 +206,7 @@ export class StockScoreCalculator {
 
   // ── Diagnóstico ──────────────────────────────────────────────────────
 
-  private static generateDiagnosis(score: number, reasons: string[], alerts: string[], sector: string | null): string {
+  private static generateDiagnosis(score: number, reasons: string[], alerts: string[], _sector: string | null): string {
     if (score >= 75) return `${reasons.slice(0, 2).join('. ')}. Ação de alta qualidade.`;
     if (score >= 55) return `${reasons.slice(0, 1).join('')}. ${alerts.slice(0, 1).join('')}. Oportunidade com riscos.`;
     if (score >= 35) return `${alerts.slice(0, 2).join('. ')}. Exija desconto.`;

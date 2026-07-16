@@ -5,6 +5,8 @@
  * Opera sobre Array<{ date, value, type }> e retorna métricas de qualidade.
  */
 
+import { aggregateMonthlyIncome } from './dividend-income.ts';
+
 export interface DividendEvent {
   date: string;   // "YYYY-MM-DD"
   value: number;  // valor por cota
@@ -52,8 +54,13 @@ export class DividendsAnalyzer {
   ): DividendAnalysis | null {
     if (!events || events.length === 0) return null;
 
+    // Renda exclui devolucao de principal e consolida todos os eventos da
+    // mesma competencia antes de medir estabilidade e tendencia.
+    const monthlyIncome = aggregateMonthlyIncome(events);
+    if (monthlyIncome.length === 0) return null;
+
     // Ordena cronologicamente
-    const sorted = [...events].sort(
+    const sorted = [...monthlyIncome].sort(
       (a, b) => a.date.localeCompare(b.date),
     );
 

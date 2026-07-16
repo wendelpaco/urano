@@ -7,20 +7,24 @@
  *
  * Estratégia:
  *  - Cache individual:  score:stock:PETR4 → 1h TTL
- *  - Cache do ranking:  analysis:ranking:stock:50:none → 30 min TTL
  *
  * O warmup calcula scores individuais após cada scraping e
- * periodicamente recompõe o ranking completo.
+ * não publica rankings canônicos: o cálculo individual não possui todos os
+ * inputs usados pelo endpoint de ranking.
  */
 
 import { sql } from 'drizzle-orm';
 import { db } from '../database/connection.ts';
-import { companies } from '../database/schema.ts';
 import { stockQuoteService } from './stock-quote-service.ts';
 import { dividendsProvider } from './dividends-provider.ts';
 import { calcAllIndicators } from '../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../core/services/stock-score.ts';
 import { FIIScoreCalculatorV4 } from '../../core/services/fii-score.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../core/services/dividend-income.ts';
+import { refreshCanonicalDecisionUniverseIfNeeded } from '../../core/services/allocation-engine.ts';
 import { batchWithConcurrency } from '../../shared/retry.ts';
 import { isFii } from '../../shared/ticker-utils.ts';
 import { redis } from './redis.ts';
@@ -46,7 +50,6 @@ export interface WarmupResult {
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
 const SCORE_TTL = 3600; // 1 hora para scores individuais
-const RANKING_TTL = 1800; // 30 min para ranking completo (igual ao endpoint)
 // Concorrência 1: StatusInvest só aguenta ~0.5 req/s; paralelismo vira 429 em cascata
 const CONCURRENCY = 1;
 
@@ -56,7 +59,7 @@ export class ScoreWarmupService {
   /**
    * Calcula e armazena o score de UM ticker (chamado pelo worker após scraping).
    */
-  async warmupSingle(ticker: string, assetType: 'stock' | 'fii'): Promise<void> {
+  async warmupSingle(ticker: string, assetType: 'stock' | 'fii'): Promise<boolean> {
     const cacheKey = `score:${assetType}:${ticker.toUpperCase()}`;
 
     try {
@@ -66,7 +69,7 @@ export class ScoreWarmupService {
         const parsed = JSON.parse(existing) as CachedScore;
         const age = Date.now() - new Date(parsed.updatedAt).getTime();
         if (age < SCORE_TTL * 0.8 * 1000) {
-          return; // Cache ainda quente, não precisa recalcular
+          return true; // Cache ainda quente, não precisa recalcular
         }
       }
     } catch { /* segue */ }
@@ -78,13 +81,13 @@ export class ScoreWarmupService {
 
       if (assetType === 'stock') {
         const result = await this.computeStockScore(ticker);
-        if (!result) return;
+        if (!result) return false;
         score = result.score;
         name = result.name;
         price = result.price;
       } else {
         const result = await this.computeFIIScore(ticker);
-        if (!result) return;
+        if (!result) return false;
         score = result.score;
         name = result.name;
         price = result.price;
@@ -100,8 +103,13 @@ export class ScoreWarmupService {
       };
 
       await redis.setex(cacheKey, SCORE_TTL, JSON.stringify(cached));
-    } catch {
-      // Falha no warmup individual não é crítica
+      return true;
+    } catch (error) {
+      console.warn(
+        `[warmup] Falha ao aquecer ${assetType}:${ticker.toUpperCase()}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return false;
     }
   }
 
@@ -148,8 +156,9 @@ export class ScoreWarmupService {
           stocks,
           async (row) => {
             try {
-              await this.warmupSingle(row.ticker, 'stock');
-              result.stocks.cached++;
+              const cached = await this.warmupSingle(row.ticker, 'stock');
+              if (cached) result.stocks.cached++;
+              else result.stocks.failed++;
             } catch {
               result.stocks.failed++;
             }
@@ -164,8 +173,9 @@ export class ScoreWarmupService {
           fiis,
           async (row) => {
             try {
-              await this.warmupSingle(row.ticker, 'fii');
-              result.fiis.cached++;
+              const cached = await this.warmupSingle(row.ticker, 'fii');
+              if (cached) result.fiis.cached++;
+              else result.fiis.failed++;
             } catch {
               result.fiis.failed++;
             }
@@ -174,12 +184,10 @@ export class ScoreWarmupService {
         );
       }
 
-      // Após calcular scores individuais, atualiza o ranking completo
-      if (result.stocks.cached > 0 || result.fiis.cached > 0) {
-        await this.warmupRanking('stock');
-        await this.warmupRanking('fii');
-        result.rankingUpdated = true;
-      }
+      // Snapshot completo para endpoints de decisao. A atualizacao roda no
+      // worker, nunca no request HTTP, e preserva o cache anterior se falhar.
+      await refreshCanonicalDecisionUniverseIfNeeded();
+      result.rankingUpdated = true;
 
       result.elapsedMs = Date.now() - start;
       console.log(
@@ -189,68 +197,12 @@ export class ScoreWarmupService {
     } catch (err) {
       console.error('[warmup] ❌ Erro:', (err as Error).message);
       result.elapsedMs = Date.now() - start;
+      // Falha sistêmica (por exemplo, banco indisponível) precisa chegar ao
+      // worker; retornar contadores zerados faria o job parecer bem-sucedido.
+      throw err;
     }
 
     return result;
-  }
-
-  /**
-   * Reconstrói o cache do ranking completo (usando os mesmos cache keys do endpoint).
-   * Pré-aquece múltiplos limites para cobrir todos os usos do frontend:
-   *   - limit=50  → market.index (ranking principal)
-   *   - limit=100 → home page (top assets)
-   *   - limit=500 → market.search (busca completa)
-   */
-  private async warmupRanking(type: 'stock' | 'fii'): Promise<void> {
-    try {
-      // Busca scores individuais cacheados
-      const pattern = `score:${type}:*`;
-      const keys = await redis.keys(pattern);
-
-      if (keys.length === 0) return;
-
-      const scores: CachedScore[] = [];
-      for (const key of keys) {
-        try {
-          const raw = await redis.get(key);
-          if (raw) {
-            const parsed = JSON.parse(raw) as CachedScore;
-            if (parsed.score > 0) {
-              scores.push(parsed);
-            }
-          }
-        } catch { /* skip corrupt entries */ }
-      }
-
-      if (scores.length === 0) return;
-
-      // Ordena por score (desc)
-      scores.sort((a, b) => b.score - a.score);
-
-      // Pré-aquece múltiplos limites
-      const limits = [50, 100, 500];
-      for (const limit of limits) {
-        const sliced = scores.slice(0, limit).map((s) => ({
-          ticker: s.ticker,
-          name: s.name,
-          score: s.score,
-        }));
-
-        const cacheKey = `analysis:ranking:${type}:${limit}:none`;
-        const ranking = {
-          type,
-          total: sliced.length,
-          filters: { minScore: null, limit },
-          data: sliced,
-        };
-
-        await redis.setex(cacheKey, RANKING_TTL, JSON.stringify(ranking));
-      }
-
-      console.log(`[warmup] 📊 Ranking ${type} atualizado: ${scores.length} scores → cache 50/100/500`);
-    } catch (err) {
-      console.warn(`[warmup] ⚠️ Falha ao atualizar ranking ${type}:`, (err as Error).message);
-    }
   }
 
   // ─── Cálculo de Scores Individuais ─────────────────────────────────────
@@ -300,9 +252,9 @@ export class ScoreWarmupService {
           const cutoff = new Date();
           cutoff.setMonth(cutoff.getMonth() - 12);
           const c = cutoff.toISOString().slice(0, 10);
-          const sum12m = proventos
-            .filter((e) => e.date >= c)
-            .reduce((s, e) => s + e.value, 0);
+          const sum12m = sumIncomeDistributions(
+            incomeDistributionsSince(proventos, c),
+          );
           if (sum12m > 0) {
             indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
           }
@@ -330,9 +282,9 @@ export class ScoreWarmupService {
         const cutoff = new Date();
         cutoff.setMonth(cutoff.getMonth() - 12);
         const c = cutoff.toISOString().slice(0, 10);
-        const sum12m = proventos
-          .filter((e) => e.date >= c)
-          .reduce((s, e) => s + e.value, 0);
+        const sum12m = sumIncomeDistributions(
+          incomeDistributionsSince(proventos, c),
+        );
         if (sum12m > 0) dy = +(sum12m / price * 100).toFixed(2);
       }
     } catch { /* ok */ }
@@ -358,7 +310,7 @@ export class ScoreWarmupService {
     try {
       const q = await stockQuoteService.getQuote(ticker);
       price = q.price;
-      liquidity = q.volume;
+      liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
     } catch { return null; }
     if (price <= 0) return null;
 
@@ -370,11 +322,11 @@ export class ScoreWarmupService {
         const cutoff = new Date();
         cutoff.setMonth(cutoff.getMonth() - 12);
         const c = cutoff.toISOString().slice(0, 10);
-        const recent = proventos.filter((e) => e.date >= c);
+        const recent = incomeDistributionsSince(proventos, c);
         for (const e of recent) {
           dividendEvents.push({ date: e.date, value: e.value, type: e.type || 'Rendimento' });
         }
-        const sum12m = recent.reduce((s, e) => s + e.value, 0);
+        const sum12m = sumIncomeDistributions(recent);
         if (sum12m > 0) dy = +(sum12m / price * 100).toFixed(2);
       }
     } catch { /* ok */ }

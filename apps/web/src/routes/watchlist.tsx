@@ -135,7 +135,7 @@ function WatchlistPage() {
     <div className="p-3 md:p-4 space-y-3">
       <SectionHeader
         title="Watchlist"
-        subtitle="Acompanhe tickers salvos neste navegador. Score é filtro de qualidade, não preditor de retorno."
+        subtitle="Acompanhe tickers salvos neste navegador. Score experimental, com validação ponto-no-tempo pendente."
         actions={
           items.length > 0 ? (
             <Button variant="outline" size="sm" onClick={() => clear()}>

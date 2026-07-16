@@ -3,6 +3,23 @@ import { z } from 'zod';
 const isProd = process.env.NODE_ENV === 'production';
 
 /**
+ * Fastify/proxy-addr accepts an explicit IP/CIDR allow-list. `true` trusts any
+ * X-Forwarded-* sender and therefore lets a directly exposed client spoof its
+ * IP (including the identity used by rate limiting).
+ */
+export function parseTrustProxy(value: string): false | string[] {
+  const normalized = value.trim();
+  if (!normalized || normalized.toLowerCase() === 'false') return false;
+  if (normalized.toLowerCase() === 'true') {
+    throw new Error('TRUST_PROXY=true é inseguro; informe IPs/CIDRs explícitos');
+  }
+
+  const proxies = normalized.split(',').map((item) => item.trim()).filter(Boolean);
+  if (proxies.length === 0) return false;
+  return proxies;
+}
+
+/**
  * Em produção não aceitamos defaults com credenciais de dev — o processo
  * deve falhar cedo se DATABASE_URL / REDIS_URL não estiverem definidas.
  */
@@ -25,6 +42,22 @@ const envSchema = z.object({
 
   CORS_ORIGIN: z.string().default('http://localhost:8080'),
 
+  // false (default) or comma-separated trusted proxy IPs/CIDRs.
+  TRUST_PROXY: z
+    .string()
+    .default('false')
+    .transform((value, ctx) => {
+      try {
+        return parseTrustProxy(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: error instanceof Error ? error.message : 'TRUST_PROXY inválido',
+        });
+        return z.NEVER;
+      }
+    }),
+
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   // Env strings are "true"/"false"; default keeps scheduler on in all envs.
@@ -39,6 +72,27 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default(isProd ? 'true' : 'false')
     .transform((v) => v === 'true'),
+
+  /** Pre-auth requests per IP/window. */
+  RATE_LIMIT_IP_PER_MINUTE: z
+    .string()
+    .default('200')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(100_000)),
+
+  /** Authenticated requests per validated API key/window. */
+  RATE_LIMIT_KEY_PER_MINUTE: z
+    .string()
+    .default('200')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(100_000)),
+
+  /** Public health probe requests per IP/window. */
+  HEALTHCHECK_RATE_LIMIT_PER_MINUTE: z
+    .string()
+    .default('30')
+    .transform(Number)
+    .pipe(z.number().int().positive().max(1_000)),
 
   /** Max JSON body size in bytes (default 256 KiB). */
   BODY_LIMIT_BYTES: z
@@ -63,9 +117,13 @@ function parseEnv(): Env {
     DATABASE_URL: process.env.DATABASE_URL,
     REDIS_URL: process.env.REDIS_URL,
     CORS_ORIGIN: process.env.CORS_ORIGIN,
+    TRUST_PROXY: process.env.TRUST_PROXY,
     NODE_ENV: process.env.NODE_ENV,
     SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED,
     RATE_LIMIT_FAIL_CLOSED: process.env.RATE_LIMIT_FAIL_CLOSED,
+    RATE_LIMIT_IP_PER_MINUTE: process.env.RATE_LIMIT_IP_PER_MINUTE,
+    RATE_LIMIT_KEY_PER_MINUTE: process.env.RATE_LIMIT_KEY_PER_MINUTE,
+    HEALTHCHECK_RATE_LIMIT_PER_MINUTE: process.env.HEALTHCHECK_RATE_LIMIT_PER_MINUTE,
     BODY_LIMIT_BYTES: process.env.BODY_LIMIT_BYTES,
     REQUEST_TIMEOUT_MS: process.env.REQUEST_TIMEOUT_MS,
   };

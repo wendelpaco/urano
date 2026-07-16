@@ -325,7 +325,7 @@ const spec = {
         tags: ['Análise'],
         summary: 'Score de qualidade fundamentalista da ação (0-100)',
         description:
-          'Score é um filtro de qualidade fundamentalista (screen de fundamentos), não um preditor de retornos em excesso.',
+          'Heurística experimental de indicadores fundamentalistas; a validação ponto-no-tempo está pendente e não há alegação de retorno em excesso.',
         parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'PETR4' }],
         responses: { '200': { description: 'Score com breakdown, reasons, alerts e indicadores' }, '404': { description: 'Não encontrado' } },
       },
@@ -335,9 +335,9 @@ const spec = {
         tags: ['Análise'],
         summary: 'Score de qualidade fundamentalista do FII (0-100)',
         description:
-          'Score é um filtro de qualidade fundamentalista (screen de fundamentos), não um preditor de retornos em excesso.',
+          'Heurística experimental de indicadores de FII, com cobertura explícita e validação ponto-no-tempo pendente.',
         parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' }, example: 'HGLG11' }],
-        responses: { '200': { description: 'Score FII com classificação e recomendação' }, '404': { description: 'Não encontrado' } },
+        responses: { '200': { description: 'Score FII experimental com cobertura e campos ausentes; não é recomendação de investimento' }, '404': { description: 'Não encontrado' } },
       },
     },
     '/analysis/ranking': {
@@ -345,7 +345,7 @@ const spec = {
         tags: ['Análise'],
         summary: 'Ranking por score de qualidade',
         description:
-          'Ordena ativos pelo score de qualidade fundamentalista (filtro de qualidade, não preditor de excess returns).',
+          'Ordena ativos por uma heurística fundamentalista experimental; não representa validação nem expectativa de retorno.',
         parameters: [
           { name: 'type', in: 'query', schema: { type: 'string', enum: ['stock', 'fii'], default: 'stock' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 10, minimum: 1, maximum: 500 } },
@@ -364,7 +364,7 @@ const spec = {
         tags: ['Análise'],
         summary: 'Sugerir alocação de carteira',
         description:
-          'Monta carteira por perfil de risco entre ativos que passam no filtro de qualidade (score). Score não prediz excess returns.',
+          'Simula um mix exploratório por score experimental. Os nomes legados de perfil não representam suitability; a validação ponto-no-tempo está pendente.',
         requestBody: {
           content: {
             'application/json': {
@@ -413,7 +413,7 @@ const spec = {
         tags: ['Análise'],
         summary: 'Sugerir aporte (contribution advisor)',
         description:
-          'Sugere onde alocar um aporte dado o perfil e posições atuais, usando score como filtro de qualidade fundamentalista (não preditor de excess returns).',
+          'Simula onde usar um aporte dado o mix e posições atuais, com score experimental e sem promessa de retorno ou avaliação de suitability.',
         requestBody: {
           content: {
             'application/json': {
@@ -449,7 +449,7 @@ const spec = {
         tags: ['Análise'],
         summary: 'Metadados de validação do score',
         description:
-          'Dados de validação/limites do score como filtro de qualidade (não como preditor de retornos).',
+          'Estado e limites da validação ponto-no-tempo do score experimental.',
         responses: { '200': { description: 'Resultados de validação do score' } },
       },
     },
@@ -583,7 +583,7 @@ const spec = {
     },
     '/wallets/{walletId}/rebalance': {
       post: {
-        tags: ['Carteiras'], summary: 'Calcular rebalanceamento',
+        tags: ['Carteiras'], summary: 'Simular aporte buy-only',
         parameters: [{ name: 'walletId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         requestBody: {
           content: {
@@ -602,7 +602,7 @@ const spec = {
             },
           },
         },
-        responses: { '200': { description: 'Sugestões de compra/venda' }, '404': { description: 'Carteira não encontrada' } },
+        responses: { '200': { description: 'Cenário somente de compras; sobrepesos permanecem em HOLD' }, '404': { description: 'Carteira não encontrada' }, '422': { description: 'Metas financeiras inválidas ou cotação indisponível' } },
       },
     },
 
@@ -618,7 +618,8 @@ const spec = {
         tags: ['Auth'],
         summary: 'Criar API key filha',
         description:
-          'Escopos: read:market, write:wallet, admin:keys, admin:ops, * (full). ' +
+          'Filhas HTTP aceitam somente um subconjunto não administrativo: ' +
+          'read:market e/ou write:wallet. Escopos admin:* são exclusivos do bootstrap/CLI. ' +
           'Default de filhas: [read:market, write:wallet]. Segredo exibido uma vez.',
         requestBody: {
           content: {
@@ -631,7 +632,7 @@ const spec = {
                     type: 'array',
                     items: {
                       type: 'string',
-                      enum: ['read:market', 'write:wallet', 'admin:keys', 'admin:ops', '*'],
+                      enum: ['read:market', 'write:wallet'],
                     },
                   },
                 },
@@ -642,7 +643,7 @@ const spec = {
         responses: {
           '201': { description: 'Chave criada (segredo exibido uma única vez)' },
           '400': { description: 'Payload inválido' },
-          '403': { description: 'Sem escopo admin:keys' },
+          '403': { description: 'Sem admin:keys ou tentativa de delegar escopo administrativo' },
         },
       },
     },
@@ -656,6 +657,7 @@ const spec = {
           '200': { description: 'Nova chave' },
           '403': { description: 'Sem escopo ou ownership' },
           '404': { description: 'Não encontrada' },
+          '409': { description: 'Conflito com outra rotação/desativação concorrente' },
         },
       },
     },
@@ -669,6 +671,7 @@ const spec = {
           '200': { description: 'Desativada' },
           '403': { description: 'Sem escopo ou ownership' },
           '404': { description: 'Não encontrada' },
+          '409': { description: 'Conflito com outra rotação/desativação concorrente' },
         },
       },
     },

@@ -9,6 +9,26 @@
  * É necessário consultar a lista de Units conhecidas.
  */
 
+import { z } from 'zod';
+
+/** Formato de ticker B3: 4 letras + 1–2 dígitos (PETR4, HGLG11, BOVA11, AAPL34). */
+export const B3_TICKER_REGEX = /^[A-Z]{4}\d{1,2}$/;
+
+/**
+ * Schema Zod para um parâmetro de ticker vindo do cliente. Restringe o charset
+ * ao formato B3 — sem isso, `.min(4).max(10)` aceita algo como "../../a", que
+ * interpolado na URL de um scraper vira path traversal dentro do mesmo domínio.
+ */
+export const tickerParamSchema = z
+  .string()
+  .trim()
+  .min(4)
+  .max(10)
+  .transform((t) => t.toUpperCase())
+  .refine((t) => B3_TICKER_REGEX.test(t), {
+    message: 'Ticker inválido. Use o formato B3 (ex.: PETR4, HGLG11).',
+  });
+
 // ─── Units Conhecidas (ações que terminam em 11) ────────────────────────────
 
 /**

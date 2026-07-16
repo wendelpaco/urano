@@ -143,6 +143,17 @@ describe('DividendsAnalyzer', () => {
     expect(analysis!.sum12m).toBeLessThan(1.5);
   });
 
+  it('nao trata amortizacao como renda', () => {
+    const income = kncrLike();
+    const baseline = DividendsAnalyzer.analyze(income);
+    const withAmortization = DividendsAnalyzer.analyze([
+      ...income,
+      { date: makeDate(-1), value: 100, type: 'AMORTIZACAO' },
+    ]);
+
+    expect(withAmortization).toEqual(baseline);
+  });
+
   it('deve preencher period com datas do primeiro e último evento na janela', () => {
     const events = annualPayer();
     const analysis = DividendsAnalyzer.analyze(events);

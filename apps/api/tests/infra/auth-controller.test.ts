@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { rotateApiKeyController, deleteApiKeyController } from '../../src/infra/http/controllers/auth.controller.ts';
+import {
+  createApiKeyController,
+  rotateApiKeyController,
+  deleteApiKeyController,
+  resolveChildScopes,
+} from '../../src/infra/http/controllers/auth.controller.ts';
+import { BOOTSTRAP_SCOPES } from '../../src/infra/http/scopes.ts';
 
 interface CapturedResponse {
   status: number;
@@ -45,5 +51,50 @@ describe('key management — ownership enforcement', () => {
     await deleteApiKeyController(request as never, reply as never);
 
     expect(getCaptured()?.status).toBe(404);
+  });
+});
+
+describe('key management — delegated scopes', () => {
+  test('nem bootstrap pode entregar admin:* a uma chave filha HTTP', () => {
+    const result = resolveChildScopes(
+      ['read:market', 'admin:keys', 'admin:ops', '*'],
+      ['*'],
+    );
+
+    expect(result.scopes).toEqual(['read:market']);
+    expect(result.denied).toEqual(['admin:keys', 'admin:ops', '*']);
+  });
+
+  test('defaults também são apenas a interseção dos scopes do criador', () => {
+    const result = resolveChildScopes(undefined, ['read:market', 'admin:keys']);
+
+    expect(result.scopes).toEqual(['read:market']);
+    expect(result.denied).toEqual([]);
+  });
+
+  test('uma chave legada com admin:keys não pode redelegar admin:keys', async () => {
+    const { reply, getCaptured } = fakeReply();
+    const request = {
+      body: { name: 'grandchild', scopes: ['admin:keys'] },
+      apiKeyId: OWN_ID,
+      scopes: ['admin:keys'],
+    };
+
+    await createApiKeyController(request as never, reply as never);
+
+    expect(getCaptured()?.status).toBe(403);
+    expect(getCaptured()?.body).toHaveProperty('deniedScopes', ['admin:keys']);
+  });
+
+  test('criador autorizado segue podendo delegar subset não-admin', () => {
+    const result = resolveChildScopes(['write:wallet'], ['*']);
+
+    expect(result.scopes).toEqual(['write:wallet']);
+    expect(result.denied).toEqual([]);
+  });
+
+  test('bootstrap/CLI preserva escopos administrativos próprios', () => {
+    expect(BOOTSTRAP_SCOPES).toContain('admin:keys');
+    expect(BOOTSTRAP_SCOPES).toContain('admin:ops');
   });
 });

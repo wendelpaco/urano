@@ -28,27 +28,26 @@ const CHART_COLORS = [
   "var(--color-chart-5)",
 ];
 
-type RebalanceBuy = {
+type BuyOnlyRecommendation = {
   ticker: string;
-  quantity?: number;
-  qty?: number;
-  price?: number;
-  total?: number;
-  amount?: number;
-  reason?: string;
-  justification?: string;
+  currentQuantity: number;
+  currentPrice: number;
+  targetAllocationPercent: number;
+  suggestedAction: "BUY" | "HOLD";
+  suggestedQuantity: number;
+  estimatedCost: number;
 };
 
 type RebalanceResult = {
-  buys?: RebalanceBuy[];
-  purchases?: RebalanceBuy[];
-  orders?: RebalanceBuy[];
-  sells?: RebalanceBuy[];
-  summary?: string;
-  message?: string;
-  remainingCash?: number;
-  warnings?: string[];
-  [k: string]: unknown;
+  walletId: string;
+  mode: "BUY_ONLY";
+  availableAmount: number;
+  currentPortfolioValue: number;
+  targetPortfolioValue: number;
+  totalEstimatedCost: number;
+  remainingCash: number;
+  executedAt: string;
+  recommendations: BuyOnlyRecommendation[];
 };
 
 function WalletDetail() {
@@ -56,25 +55,36 @@ function WalletDetail() {
   const q = useWallet(id);
   const w: Wallet = q.data ?? ({ id: id ?? "" } as Wallet);
   const positions = asArray<Position>(w.positions ?? w.assets);
+  const currentPositions = positions.flatMap((position) => {
+    const quantity = position.quantity ?? position.qty;
+    return typeof quantity === "number" && Number.isFinite(quantity) && quantity >= 0
+      ? [{ ticker: position.ticker, quantity }]
+      : [];
+  });
+  const hasCompletePositionQuantities =
+    positions.length > 0 && currentPositions.length === positions.length;
   const [availableAmount, setAvailableAmount] = useState("1000");
 
   const rebalance = useMutation({
-    mutationFn: () =>
-      apiFetch<RebalanceResult>({
+    mutationFn: () => {
+      if (!hasCompletePositionQuantities) {
+        throw new Error(
+          "Informe as quantidades reais de todas as posições antes de calcular o aporte.",
+        );
+      }
+      return apiFetch<RebalanceResult>({
         path: `/wallets/${id}/rebalance`,
         method: "POST",
         body: {
           availableAmount: Number(availableAmount),
-          currentPositions: positions.map((p) => ({
-            ticker: p.ticker,
-            quantity: Number(p.quantity ?? p.qty ?? 0),
-          })),
+          currentPositions,
         },
-      }),
-    onSuccess: () => {
-      toast.success("Sugestão de rebalanceamento gerada");
+      });
     },
-    onError: (e: Error) => toast.error(e.message ?? "Falha ao rebalancear"),
+    onSuccess: () => {
+      toast.success("Cenário de aporte calculado");
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Falha ao calcular o aporte"),
   });
 
   const sectors = useMemo(() => {
@@ -87,8 +97,9 @@ function WalletDetail() {
   }, [positions]);
 
   const rb = rebalance.data;
-  const buys = asArray<RebalanceBuy>(rb?.buys ?? rb?.purchases ?? rb?.orders);
-  const sells = asArray<RebalanceBuy>(rb?.sells);
+  const buys = (rb?.recommendations ?? []).filter(
+    (item) => item.suggestedAction === "BUY" && item.suggestedQuantity > 0,
+  );
 
   return (
     <div className="p-3 md:p-4 space-y-3">
@@ -220,7 +231,7 @@ function WalletDetail() {
               </Panel>
 
               <Panel>
-                <PanelHeader title="Rebalancear" />
+                <PanelHeader title="Aporte somente-compra" />
                 <form
                   className="p-3 space-y-3"
                   onSubmit={(e) => {
@@ -240,16 +251,32 @@ function WalletDetail() {
                     />
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    Gera ordens de compra com o caixa informado, alinhadas ao alvo da carteira e ao
-                    filtro de qualidade do score.
+                    Calcula um cenário buy-only com o caixa informado. Posições acima da meta ficam
+                    em HOLD; nenhuma venda é sugerida.
                   </p>
-                  <Button type="submit" size="sm" className="w-full" disabled={rebalance.isPending}>
+                  {!hasCompletePositionQuantities ? (
+                    <p className="text-[11px] text-amber-500/90 leading-relaxed">
+                      Esta carteira guarda metas, mas ainda não possui quantidades completas de
+                      custódia. O patrimônio considerado usa somente quantidades efetivamente
+                      informadas.
+                    </p>
+                  ) : null}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    className="w-full"
+                    disabled={rebalance.isPending || !hasCompletePositionQuantities}
+                  >
                     <RefreshCw
                       className={
                         "h-3.5 w-3.5 mr-1.5 " + (rebalance.isPending ? "animate-spin" : "")
                       }
                     />
-                    {rebalance.isPending ? "Calculando…" : "Gerar sugestão"}
+                    {rebalance.isPending
+                      ? "Calculando…"
+                      : hasCompletePositionQuantities
+                        ? "Calcular cenário"
+                        : "Quantidades necessárias"}
                   </Button>
                 </form>
               </Panel>
@@ -261,7 +288,7 @@ function WalletDetail() {
               {rb ? (
                 <Panel>
                   <PanelHeader
-                    title="Sugestão de rebalanceamento"
+                    title="Cenário de aporte buy-only"
                     actions={
                       <Button
                         type="button"
@@ -279,10 +306,9 @@ function WalletDetail() {
                             title: `Rebalance carteira ${w.name ?? id} · R$ ${availableAmount}${
                               tickers ? ` · ${tickers}` : ""
                             }`,
-                            summary:
-                              rb.summary || rb.message
-                                ? String(rb.summary ?? rb.message)
-                                : `${buys.length} compra(s) sugerida(s)`,
+                            summary: `${buys.length} compra(s) calculada(s), custo ${fmtBRL(
+                              rb.totalEstimatedCost,
+                            )}`,
                             payload: {
                               walletId: id,
                               params: { availableAmount: Number(availableAmount) },
@@ -298,19 +324,32 @@ function WalletDetail() {
                     }
                   />
                   <div className="p-3 space-y-3">
-                    {rb.summary || rb.message ? (
-                      <p className="text-xs text-foreground/90 whitespace-pre-wrap">
-                        {String(rb.summary ?? rb.message)}
-                      </p>
-                    ) : null}
-                    {typeof rb.remainingCash === "number" ? (
-                      <div className="text-[11px] text-muted-foreground">
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                      <div>
+                        Compras:{" "}
+                        <span className="font-mono text-foreground">
+                          {fmtBRL(rb.totalEstimatedCost)}
+                        </span>
+                      </div>
+                      <div>
                         Caixa restante:{" "}
                         <span className="font-mono text-foreground">
                           {fmtBRL(rb.remainingCash)}
                         </span>
                       </div>
-                    ) : null}
+                      <div>
+                        Patrimônio considerado:{" "}
+                        <span className="font-mono text-foreground">
+                          {fmtBRL(rb.currentPortfolioValue)}
+                        </span>
+                      </div>
+                      <div>
+                        Patrimônio após aporte:{" "}
+                        <span className="font-mono text-foreground">
+                          {fmtBRL(rb.targetPortfolioValue)}
+                        </span>
+                      </div>
+                    </div>
                     {buys.length > 0 ? (
                       <div>
                         <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
@@ -321,6 +360,7 @@ function WalletDetail() {
                             <tr className="border-b border-border text-[10px] text-muted-foreground">
                               <th className="text-left py-1">Ticker</th>
                               <th className="text-right py-1">Qtd</th>
+                              <th className="text-right py-1">Preço</th>
                               <th className="text-right py-1">Valor</th>
                             </tr>
                           </thead>
@@ -330,11 +370,12 @@ function WalletDetail() {
                                 <td className="py-1.5">
                                   <TickerBadge ticker={b.ticker} />
                                 </td>
+                                <td className="py-1.5 text-right tabular">{b.suggestedQuantity}</td>
                                 <td className="py-1.5 text-right tabular">
-                                  {b.quantity ?? b.qty ?? "—"}
+                                  {fmtBRL(b.currentPrice)}
                                 </td>
                                 <td className="py-1.5 text-right tabular">
-                                  {fmtBRL(b.total ?? b.amount)}
+                                  {fmtBRL(b.estimatedCost)}
                                 </td>
                               </tr>
                             ))}
@@ -342,32 +383,12 @@ function WalletDetail() {
                         </table>
                       </div>
                     ) : (
-                      <EmptyState title="Sem compras sugeridas" />
+                      <EmptyState title="Nenhuma compra cabe no caixa ou nas metas atuais" />
                     )}
-                    {sells.length > 0 ? (
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                          Vender / reduzir
-                        </div>
-                        <div className="space-y-1">
-                          {sells.map((s, i) => (
-                            <div key={i} className="flex justify-between text-xs">
-                              <TickerBadge ticker={s.ticker} />
-                              <span className="tabular text-muted-foreground">
-                                {s.quantity ?? s.qty ?? "—"}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {(rb.warnings?.length ?? 0) > 0 ? (
-                      <ul className="text-[11px] text-amber-500/90 list-disc pl-4 space-y-0.5">
-                        {rb.warnings!.map((w, i) => (
-                          <li key={i}>{w}</li>
-                        ))}
-                      </ul>
-                    ) : null}
+                    <p className="text-[11px] text-amber-500/90">
+                      Cenário matemático experimental; não representa recomendação individualizada
+                      nem substitui a conferência das posições na corretora.
+                    </p>
                   </div>
                 </Panel>
               ) : null}

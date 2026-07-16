@@ -5,7 +5,7 @@
  * Ferramentas expostas:
  *   get_stock_analysis   — Score completo de uma ação
  *   get_fii_analysis     — Score completo de um FII
- *   get_allocation       — Carteira recomendada por perfil de risco
+ *   get_allocation       — Simulacao experimental de mix por score
  *   get_ranking          — Ranking de ações ou FIIs por score
  *   search_stocks        — Screener por critérios fundamentalistas
  *   compare_stocks       — Comparação lado a lado entre tickers
@@ -14,7 +14,7 @@
  *   get_corporate_events — Desdobramentos, grupamentos, bonificações
  *   screen_fiis          — Screener de FIIs por P/VP, DY, classificação
  *   get_fii_operational  — Dados operacionais: vacância, imóveis, inquilinos
- *   suggest_contribution — Consultor de aporte: o que comprar com o valor do mês
+ *   suggest_contribution — Simulacao buy-only de uso do aporte
  *   explain_score        — Explica o score em linguagem simples + validação (backtest)
  *   get_data_health      — Saúde da base: cobertura, frescor, jobs
  *
@@ -67,7 +67,7 @@ const server = new McpServer({
   version: '1.0.0',
   description:
     'Urano — análise fundamentalista de ações e FIIs B3. Scores, alocação, ranking e macro. ' +
-    'O score é um filtro de qualidade fundamentalista (quality-filter), não um preditor de retorno superior ao mercado.',
+    'O score é uma heurística experimental com validação ponto-no-tempo pendente, não um preditor de retorno superior ao mercado.',
 });
 
 // ── Ferramentas ─────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ server.tool(
 
 server.tool(
   'get_fii_analysis',
-  'Análise completa de um Fundo Imobiliário: score 0-100, P/VP, DY, rendimento mensal médio, tipo (tijolo/papel), subclassificação, recomendação.',
+  'Análise experimental de um Fundo Imobiliário: score de triagem 0-100, P/VP, DY, rendimento mensal médio, tipo e subclassificação. O modelo FII não foi validado ponto-no-tempo e não emite recomendação de investimento.',
   { ticker: z.string().describe('Ticker do FII (ex: HGLG11, XPML11, KNCR11)') },
   async ({ ticker }) => {
     const data = await api(`/analysis/fiis/${ticker.toUpperCase()}`);
@@ -98,10 +98,10 @@ server.tool(
 
 server.tool(
   'get_allocation',
-  'Sugere uma carteira-modelo diversificada (filtro de qualidade por score, não garantia de retorno) com base no valor a investir e perfil de risco. Retorna ativos, alocação e justificativas fundamentalistas.',
+  'Simula um mix de ativos por score experimental. A validação ponto-no-tempo está pendente; não é recomendação individualizada nem garantia de retorno.',
   {
     totalAmount: z.number().positive().default(10000).describe('Valor total a investir em reais'),
-    riskProfile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado').describe('Perfil de risco do investidor'),
+    riskProfile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado').describe('Mix legado de ações/FIIs; não representa avaliação de suitability'),
   },
   async ({ totalAmount, riskProfile }) => {
     const data = await apiPost('/analysis/allocate', { totalAmount, riskProfile });
@@ -285,7 +285,7 @@ server.tool(
 
 server.tool(
   'suggest_contribution',
-  'CONSULTOR DE APORTE: dado o valor disponível (ex: R$ 2.000 do mês), a carteira atual e o perfil de risco, retorna exatamente o que comprar — ticker, quantidade, custo e justificativa por ativo — além do que foi deixado de fora e por quê (concentração, score baixo, setor excluído). Use esta tool quando o usuário perguntar "onde devo investir/aportar".',
+  'SIMULADOR DE APORTE BUY-ONLY: produz um cenário matemático de quantidades e custos a partir do valor, posições informadas e filtros. Não constitui recomendação individualizada nem avaliação de suitability.',
   {
     amount: z.number().positive().describe('Valor disponível para aportar em reais'),
     profile: z.enum(['conservador', 'moderado', 'agressivo']).default('moderado').describe('Perfil de risco'),
@@ -332,7 +332,7 @@ server.tool(
 
 server.tool(
   'get_data_health',
-  'Saúde da base de dados do Urano: cobertura de fundamentals, frescor dos dados, jobs de sincronização. Consulte antes de recomendações importantes — warnings indicam scores potencialmente defasados.',
+  'Saúde da base de dados do Urano: cobertura de fundamentos, frescor dos dados e jobs de sincronização. Consulte antes de análises; warnings indicam scores potencialmente defasados.',
   {},
   async () => {
     const data = await api('/health/data');

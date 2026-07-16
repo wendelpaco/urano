@@ -42,6 +42,33 @@ describe('trailingDyAndNextTotalReturn', () => {
     // 2021: 100→120 = 20% price, 0 div
     expect(pairs[0]!.nextTotalReturnPct).toBe(20);
   });
+
+  test('exclui amortização do DY e preserva todo caixa no total return', () => {
+    const prices = [
+      { date: '2020-01-02', close: 100 },
+      { date: '2021-01-04', close: 100 },
+      { date: '2022-01-03', close: 100 },
+    ];
+    const allCash = [
+      { date: '2020-05-01', value: 8 },
+      { date: '2020-08-01', value: 20 }, // amortização
+      { date: '2021-06-01', value: 10 },
+    ];
+    const recurringIncome = [
+      { date: '2020-05-01', value: 8 },
+      { date: '2021-06-01', value: 10 },
+    ];
+
+    const [pair] = trailingDyAndNextTotalReturn(
+      prices,
+      allCash,
+      [2020],
+      recurringIncome,
+    );
+
+    expect(pair?.trailingDyPct).toBe(8);
+    expect(pair?.nextTotalReturnPct).toBe(10);
+  });
 });
 
 describe('fii-backtest-analysis', () => {

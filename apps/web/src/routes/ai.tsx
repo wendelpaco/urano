@@ -39,7 +39,7 @@ const SUGGESTIONS = [
 
 /**
  * Copilot determinístico: roteia intents para endpoints reais da API.
- * Não é LLM — respostas honestas com dados do Urano + disclaimer quality-filter.
+ * Não é LLM — respostas com dados do Urano + limites explícitos do score.
  */
 async function copilotReply(text: string): Promise<string> {
   const q = text.trim();
@@ -67,10 +67,10 @@ async function copilotReply(text: string): Promise<string> {
       v.summary,
       "",
       v.topN
-        ? `Top ${v.topN.n}: ${fmtPct(v.topN.avgPortfolio)} a.a. vs universo ${fmtPct(v.topN.avgMarket)} a.a. · vitórias ${v.topN.winYears}/${v.topN.totalYears} anos.`
+        ? `Top ${v.topN.n}: ${fmtPct(v.topN.avgPortfolio, true)} a.a. vs universo ${fmtPct(v.topN.avgMarket, true)} a.a. · vitórias ${v.topN.winYears}/${v.topN.totalYears} anos.`
         : "",
       "",
-      "Use o score como **filtro de qualidade**, não como promessa de retorno. Detalhes: /validation",
+      "O score é uma **heurística experimental**, com validação ponto-no-tempo pendente. Detalhes: /validation",
     ]
       .filter(Boolean)
       .join("\n");
@@ -103,7 +103,7 @@ async function copilotReply(text: string): Promise<string> {
     const buys = asArray<BuyRow>(res.buys ?? res.purchases);
     const lines = [
       `Sugestão de aporte de **${fmtBRL(amount)}** (perfil moderado).`,
-      "Score = filtro de qualidade fundamentalista, **não** preditor de retorno.",
+      "Score = heurística fundamentalista experimental, **não** preditor de retorno.",
       "",
     ];
     if (buys.length === 0) {
@@ -246,7 +246,7 @@ async function copilotReply(text: string): Promise<string> {
     "• **Validação** — “Qual o veredito do score?”",
     "• **Macro** — “Como está a Selic/IPCA?”",
     "",
-    "O score é **quality-filter**: filtra fraqueza fundamentalista; não prediz retorno.",
+    "O score é uma **heurística experimental**; a validação ponto-no-tempo está pendente e ele não prediz retorno.",
   ].join("\n");
 }
 
@@ -444,7 +444,7 @@ function AIPage() {
             </Button>
           </form>
           <div className="max-w-3xl mx-auto text-[10px] text-muted-foreground mt-1.5 text-center">
-            Roteador de dados · score = quality-filter ·{" "}
+            Roteador de dados · score experimental ·{" "}
             <Link to="/validation" className="underline-offset-2 hover:underline">
               validação
             </Link>

@@ -23,8 +23,15 @@ export const DEFAULT_CHILD_SCOPES: string[] = ['read:market', 'write:wallet'];
 /** Bootstrap / CLI keys get full power. */
 export const BOOTSTRAP_SCOPES: string[] = [...ALL_SCOPES];
 
+/**
+ * Normaliza os scopes vindos do banco/cache. Fail-closed: um valor ausente,
+ * não-array ou vazio concede ZERO scopes, nunca acesso total. Chaves bootstrap/CLI
+ * recebem BOOTSTRAP_SCOPES gravados explicitamente na criação (scripts/create-api-key),
+ * então nenhuma chave legítima depende de um fallback amplo — e um bug de migração,
+ * insert manual ou cache corrompido não deve virar escalonamento para admin.
+ */
 export function normalizeScopes(raw: unknown): string[] {
-  if (!Array.isArray(raw) || raw.length === 0) return [...BOOTSTRAP_SCOPES];
+  if (!Array.isArray(raw)) return [];
   return raw.map(String).filter(Boolean);
 }
 

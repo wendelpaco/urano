@@ -62,11 +62,36 @@ describe.skipIf(!shouldRun)('integration: postgres', () => {
       FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = 'api_keys'
-        AND column_name IN ('key_hash', 'scopes', 'owner_key_id')
+        AND column_name IN ('key_hash', 'scopes', 'owner_id')
     `;
     const cols = new Set(rows.map((r) => String(r.column_name)));
     expect(cols.has('key_hash')).toBe(true);
     expect(cols.has('scopes')).toBe(true);
+    expect(cols.has('owner_id')).toBe(true);
+  });
+
+  test('api_keys owner e duração de jobs têm constraints de produção', async () => {
+    const foreignKeys = await sql`
+      SELECT constraint_name
+      FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name = 'api_keys'
+        AND constraint_type = 'FOREIGN KEY'
+    `;
+    expect(
+      foreignKeys.some((row) =>
+        String(row.constraint_name).includes('api_keys_owner_id_api_keys_id_fk'),
+      ),
+    ).toBe(true);
+
+    const duration = await sql`
+      SELECT data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'job_runs'
+        AND column_name = 'duration_ms'
+    `;
+    expect(String(duration[0]?.data_type)).toBe('integer');
   });
 });
 

@@ -5,6 +5,14 @@ import { apiFetch } from "@/lib/api";
 // Best-effort typings — backend is source of truth. We keep fields optional and
 // let the UI degrade gracefully when a field is missing.
 
+/** Cobertura de dados críticos do score FII (`metadata.data_coverage` / `dataCoverage`). */
+export type AssetDataCoverage = {
+  percent: number;
+  criticalComplete: boolean;
+  missingFields: string[];
+  policy?: string;
+};
+
 export type Asset = {
   ticker: string;
   name?: string;
@@ -36,6 +44,8 @@ export type Asset = {
   scores?: unknown;
   reasons?: unknown;
   motivos?: unknown;
+  /** FII analysis: campos ausentes / % cobertura (F4). */
+  dataCoverage?: AssetDataCoverage;
   [k: string]: unknown;
 };
 
@@ -169,8 +179,10 @@ export function useScreener(params: ScreenerParams) {
       if (Array.isArray(raw)) return raw.map((a) => normalizeAsset(a));
       if (raw && typeof raw === "object") {
         const obj = raw as { items?: Asset[]; data?: Asset[] };
-        if (Array.isArray(obj.data)) return { ...obj, data: obj.data.map((a) => normalizeAsset(a)) };
-        if (Array.isArray(obj.items)) return { ...obj, items: obj.items.map((a) => normalizeAsset(a)) };
+        if (Array.isArray(obj.data))
+          return { ...obj, data: obj.data.map((a) => normalizeAsset(a)) };
+        if (Array.isArray(obj.items))
+          return { ...obj, items: obj.items.map((a) => normalizeAsset(a)) };
       }
       return raw;
     },
@@ -179,6 +191,31 @@ export function useScreener(params: ScreenerParams) {
 
 const asNum = (v: unknown): number | undefined =>
   typeof v === "number" && !Number.isNaN(v) ? v : undefined;
+
+/** Normaliza `dataCoverage` snake/camel ou `metadata.data_coverage` do FII score. */
+export function normalizeDataCoverage(raw: unknown): AssetDataCoverage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const nested =
+    r.dataCoverage ??
+    r.data_coverage ??
+    (r.metadata && typeof r.metadata === "object"
+      ? ((r.metadata as Record<string, unknown>).data_coverage ??
+        (r.metadata as Record<string, unknown>).dataCoverage)
+      : undefined);
+  const src = (nested && typeof nested === "object" ? nested : r) as Record<string, unknown>;
+  const percent = asNum(src.percent);
+  if (percent === undefined) return undefined;
+  const missingRaw = src.missingFields ?? src.missing_fields;
+  const missingFields = Array.isArray(missingRaw)
+    ? missingRaw.map((x) => String(x)).filter(Boolean)
+    : [];
+  const criticalComplete = Boolean(
+    src.criticalComplete ?? src.critical_complete ?? missingFields.length === 0,
+  );
+  const policy = typeof src.policy === "string" ? src.policy : undefined;
+  return { percent, criticalComplete, missingFields, policy };
+}
 
 /**
  * Unifica nomes de campos entre ranking/screener/allocate/detail.
@@ -189,21 +226,12 @@ export function normalizeAsset(raw: Asset | Record<string, unknown>): Asset {
   const r = raw as Record<string, unknown>;
   const ind = (r.indicators ?? {}) as Record<string, unknown>;
 
-  const dy =
-    asNum(r.dy) ??
-    asNum(r.dividendYield) ??
-    asNum(ind.dividendYield) ??
-    asNum(ind.dy);
-  const pe =
-    asNum(r.pe) ?? asNum(r.peRatio) ?? asNum(r.pl) ?? asNum(ind.peRatio);
-  const pvp =
-    asNum(r.pvp) ?? asNum(r.pbRatio) ?? asNum(ind.pbRatio) ?? asNum(ind.pvp);
+  const dy = asNum(r.dy) ?? asNum(r.dividendYield) ?? asNum(ind.dividendYield) ?? asNum(ind.dy);
+  const pe = asNum(r.pe) ?? asNum(r.peRatio) ?? asNum(r.pl) ?? asNum(ind.peRatio);
+  const pvp = asNum(r.pvp) ?? asNum(r.pbRatio) ?? asNum(ind.pbRatio) ?? asNum(ind.pvp);
   const roe = asNum(r.roe) ?? asNum(ind.roe);
   const changePct =
-    asNum(r.changePct) ??
-    asNum(r.changePercent) ??
-    asNum(r.dailyChangePct) ??
-    asNum(ind.changePct);
+    asNum(r.changePct) ?? asNum(r.changePercent) ?? asNum(r.dailyChangePct) ?? asNum(ind.changePct);
 
   const typeRaw = r.type ?? r.assetType;
   const type =
@@ -241,11 +269,14 @@ export function normalizeAsset(raw: Asset | Record<string, unknown>): Asset {
 export function flattenAssetDetail(raw: Asset, type: "stock" | "fii"): Asset {
   if (!raw || typeof raw !== "object") return raw;
   const ind = (raw.indicators ?? {}) as Record<string, unknown>;
-  let flat = normalizeAsset({
+  const flat = normalizeAsset({
     ...raw,
     pillars: raw.pillars ?? raw.breakdown ?? raw.pilares ?? raw.scores,
     type: raw.type ?? type,
   });
+  // F4: preservar cobertura de dados (top-level dataCoverage ou metadata.data_coverage).
+  const coverage = normalizeDataCoverage(raw);
+  if (coverage) flat.dataCoverage = coverage;
   if (type === "fii") {
     flat.dy = asNum(raw.dividendYield ?? raw.dy) ?? flat.dy;
     flat.pvp = asNum(raw.pvp) ?? flat.pvp;
@@ -381,6 +412,8 @@ export function normalizeAllocationAsset(raw: Record<string, unknown>) {
 
 export type ScoreValidation = {
   scoreVersion: string;
+  decisionUseAllowed: boolean;
+  decisionBlockers: string[];
   validatedAt: string | null;
   yearsTested: number[];
   verdict: "edge" | "quality-filter" | "pending";

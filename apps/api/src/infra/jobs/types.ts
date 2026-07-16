@@ -3,8 +3,20 @@
  */
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
-export type AssetType = 'stock' | 'fii';
-export type RunStatus = 'success' | 'failed';
+export type AssetType = 'stock' | 'fii' | 'system';
+export type RunStatus = 'running' | 'success' | 'partial' | 'failed';
+export type TerminalRunStatus = Exclude<RunStatus, 'running'>;
+
+export interface JobExecutionResult {
+  status: TerminalRunStatus;
+  error?: string;
+}
+
+export interface JobBatchResult {
+  success: number;
+  partial: number;
+  failed: number;
+}
 
 export interface Job {
   id: string;

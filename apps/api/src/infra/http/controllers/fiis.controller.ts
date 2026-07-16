@@ -1,10 +1,15 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { getOrSet } from '../../services/redis.ts';
 import { stockQuoteService, type StockQuote } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../../core/services/dividend-income.ts';
 import { fiisScraper } from '../../services/fiis-scraper.ts';
-import { fiiOperationalService, type FiiOperationalData } from '../../services/fii-operational.service.ts';
+import { fiiOperationalService } from '../../services/fii-operational.service.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
@@ -16,7 +21,7 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 }
 
 const paramsSchema = z.object({
-  ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
 });
 
 const fiiHistoryQuerySchema = z.object({
@@ -523,23 +528,20 @@ async function buildScreenerResult(
         } catch { /* ok */ }
       }
 
-      // Fallback DY: proventos (DB/StatusInvest com cache)
-      if (result.dy === null) {
-        try {
-          const proventos = await dividendsProvider.fetchDividends(fii.ticker);
-          if (proventos && proventos.length > 0 && result.price && result.price > 0) {
-            const cutoff = new Date();
-            cutoff.setMonth(cutoff.getMonth() - 12);
-            const cutoffStr = cutoff.toISOString().slice(0, 10);
-            const sum12m = proventos
-              .filter((e) => e.date >= cutoffStr)
-              .reduce((s, e) => s + e.value, 0);
-            if (sum12m > 0) {
-              result.dy = +((sum12m / result.price) * 100).toFixed(2);
-            }
-          }
-        } catch { /* ok */ }
-      }
+      // DY por eventos normalizados tem prioridade sobre o agregado do scraper,
+      // pois exclui amortizacao quando o historico esta disponivel.
+      try {
+        const proventos = await dividendsProvider.fetchDividends(fii.ticker);
+        if (proventos !== null && result.price && result.price > 0) {
+          const cutoff = new Date();
+          cutoff.setMonth(cutoff.getMonth() - 12);
+          const cutoffStr = cutoff.toISOString().slice(0, 10);
+          const sum12m = sumIncomeDistributions(
+            incomeDistributionsSince(proventos, cutoffStr),
+          );
+          result.dy = +((sum12m / result.price) * 100).toFixed(2);
+        }
+      } catch { /* ok */ }
 
       return result;
     },

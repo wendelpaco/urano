@@ -346,6 +346,14 @@ export const cvmCircuitBreaker = new CircuitBreaker({
   failureTypes: ['server-error', 'network-error'],
 });
 
+/** Fundamentus: abre após 3 falhas, cooldown 120s (fonte complementar, tolera fallback) */
+export const fundamentusCircuitBreaker = new CircuitBreaker({
+  service: 'fundamentus',
+  failureThreshold: 3,
+  cooldownMs: 120_000, // 2 minutos
+  failureTypes: ['rate-limit', 'server-error', 'network-error'],
+});
+
 // ─── Stats ───────────────────────────────────────────────────────────────────
 
 /**
@@ -360,6 +368,7 @@ export async function getCircuitBreakerStats(): Promise<
     statusInvestCircuitBreaker,
     yahooCircuitBreaker,
     cvmCircuitBreaker,
+    fundamentusCircuitBreaker,
   ];
 
   const stats: Record<string, CircuitStateData> = {};

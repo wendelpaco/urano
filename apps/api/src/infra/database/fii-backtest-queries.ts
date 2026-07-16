@@ -51,6 +51,24 @@ export async function getLatestFiiBacktestSummary() {
     trailingDyPct: Number(p.trailingDyPct),
     nextTotalReturnPct: Number(p.nextTotalReturnPct),
   }));
+  const incomeDefinitionValid =
+    years.length > 0 &&
+    years.every((year) => year.divSource === 'statusinvest_db_income_v2');
+  const dyPredictsNext = incomeDefinitionValid
+    ? (() => {
+        const result = dyPredictsNextReturn(dyPairs);
+        return {
+          ...result,
+          interpretation:
+            `${result.interpretation} Resultado exploratório: o universo atual introduz viés de sobrevivência/seleção.`,
+        };
+      })()
+    : {
+        n: 0,
+        correlation: 0,
+        interpretation:
+          'Run legado: a correlação DY→retorno foi ocultada porque amortizações ainda podiam compor o DY. Reexecute o backtest com a metodologia income-v2.',
+      };
 
   return {
     runId: latest.runId,
@@ -58,13 +76,19 @@ export async function getLatestFiiBacktestSummary() {
     observations: yearRows.length,
     tickers: [...new Set(yearRows.map((r) => r.ticker))].length,
     byYear: averageTotalReturnByYear(yearRows),
-    dyPredictsNext: dyPredictsNextReturn(dyPairs),
+    dyPredictsNext,
     dataQuality: {
       freeSourcesOnly: true,
       priceSource: 'yahoo',
       dividendSource: 'statusinvest_or_db',
+      dyMethodology: incomeDefinitionValid ? 'income-v2' : 'legacy-invalid',
+      incomeDefinitionValid,
+      pointInTimeUniverse: false,
+      validationStatus: 'exploratory_survivorship_bias',
       scoreNote:
-        'Score gravado é o atual (não histórico). Correlação DY→TR seguinte é look-ahead free.',
+        incomeDefinitionValid
+          ? 'Score gravado é o atual (não histórico). DY separa renda de amortização, mas a lista atual exclui fundos encerrados e não constitui universo ponto-no-tempo.'
+          : 'Score gravado é o atual (não histórico). A estatística DY do run legado foi invalidada e exige reexecução.',
     },
   };
 }

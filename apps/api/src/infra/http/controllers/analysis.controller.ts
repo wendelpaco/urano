@@ -16,7 +16,7 @@ import { statusInvestScraper } from '../../services/statusinvest-scraper.ts';
 import { fiisScraper } from '../../services/fiis-scraper.ts';
 import { fiiOperationalService } from '../../services/fii-operational.service.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
-import { isFii } from '../../../shared/ticker-utils.ts';
+import { isFii, tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { lazyDataService } from '../../services/lazy-data-service.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
@@ -24,8 +24,16 @@ import {
   FIIScoreCalculatorV4,
   type FIIScoreInput,
 } from '../../../core/services/fii-score.ts';
-import { AllocationEngine } from '../../../core/services/allocation-engine.ts';
+import {
+  AllocationEngine,
+  AllocationDataUnavailableError,
+  AllocationValidationError,
+} from '../../../core/services/allocation-engine.ts';
 import { flagAbsurdMetrics } from '../../../core/services/metric-sanity.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../../core/services/dividend-income.ts';
 import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
 import { SCORE_VALIDATION } from '../../../core/data/score-validation.data.ts';
@@ -48,11 +56,7 @@ function sendZodError(
 }
 
 const tickerParam = z.object({
-  ticker: z
-    .string()
-    .min(4)
-    .max(10)
-    .transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
 });
 
 // ─── GET /v1/analysis/stocks/:ticker ─────────────────────────────────────────
@@ -153,7 +157,9 @@ export async function getStockAnalysisController(
           if (proventos && proventos.length > 0 && price > 0) {
             const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
             const c = cutoff.toISOString().slice(0, 10);
-            const s = proventos.filter((e) => e.date >= c).reduce((a, e) => a + e.value, 0);
+            const s = sumIncomeDistributions(
+              incomeDistributionsSince(proventos, c),
+            );
             if (s > 0) { dy = +(s / price * 100).toFixed(2); ok = true; }
           }
         } catch { /* fallback offline */ }
@@ -240,7 +246,7 @@ export async function getFiiAnalysisController(
     return sendZodError(reply, parsed.error, 'Ticker inválido.');
   const { ticker } = parsed.data;
 
-  const cacheKey = `analysis:fii:${ticker}`;
+  const cacheKey = `analysis:fii:v3:${ticker}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -285,24 +291,28 @@ export async function getFiiAnalysisController(
   let liquidity: number | null = null;
   try {
     const quote = await stockQuoteService.getQuote(ticker);
-    liquidity = quote.volume;
+    liquidity = quote.volume > 0 && quote.price > 0
+      ? quote.volume * quote.price
+      : null;
   } catch {
     /* sem liquidez */
   }
 
   // Proventos
   let dividendsOk = false;
+  let incomeHistoryObserved = false;
   let dividendEvents: Array<{ date: string; value: number; type: string }> = [];
   let sum12m = 0;
   try {
     const proventos = await dividendsProvider.fetchDividends(ticker);
-    if (proventos && proventos.length > 0) {
+    if (proventos !== null) {
       dividendsOk = true;
+      incomeHistoryObserved = true;
       const cutoff = new Date();
       cutoff.setMonth(cutoff.getMonth() - 12);
       const cutoffStr = cutoff.toISOString().slice(0, 10);
-      dividendEvents = proventos.filter((e) => e.date >= cutoffStr);
-      sum12m = dividendEvents.reduce((s, e) => s + e.value, 0);
+      dividendEvents = incomeDistributionsSince(proventos, cutoffStr);
+      sum12m = sumIncomeDistributions(dividendEvents);
     }
   } catch {
     /* provider indisponível */
@@ -342,7 +352,9 @@ export async function getFiiAnalysisController(
         pvpOk = true;
         pvpSource = 'statusinvest';
       }
-      if (fiiData.dy12m > 0) dyFromScraper = fiiData.dy12m;
+      if (!incomeHistoryObserved && fiiData.dy12m > 0) {
+        dyFromScraper = fiiData.dy12m;
+      }
     }
   } catch { /* Redis offline */ }
 
@@ -355,7 +367,13 @@ export async function getFiiAnalysisController(
         pvpOk = true;
         pvpSource = 'statusinvest';
       }
-      if (fiiData.dy12m > 0 && dyFromScraper === null) dyFromScraper = fiiData.dy12m;
+      if (
+        !incomeHistoryObserved
+        && fiiData.dy12m > 0
+        && dyFromScraper === null
+      ) {
+        dyFromScraper = fiiData.dy12m;
+      }
       if (fiiData.dividendsHistory.length > 0) {
         await redis.setex(`dividends:${ticker}`, 86400, JSON.stringify(fiiData.dividendsHistory)).catch(()=>{});
       }
@@ -363,8 +381,13 @@ export async function getFiiAnalysisController(
     } catch { /* scraper offline */ }
   }
 
-  // DY: usa scraper se disponível, senão calcula dos proventos
-  const dy = dyFromScraper ?? (sum12m > 0 && price > 0 ? +(sum12m / price * 100).toFixed(2) : 0);
+  // Proventos normalizados têm prioridade porque permitem separar renda de
+  // amortizacao. O DY agregado do scraper fica apenas como fallback.
+  const incomeDy = incomeHistoryObserved && price > 0
+    ? +(sum12m / price * 100).toFixed(2)
+    : null;
+  const observedDy = incomeDy ?? dyFromScraper;
+  const dyForScore = observedDy ?? 0;
 
   // Dados operacionais (vacância, inadimplência)
   let vacancy: number | undefined;
@@ -381,7 +404,7 @@ export async function getFiiAnalysisController(
   const input: FIIScoreInput = {
     ticker,
     price,
-    dy,
+    dy: dyForScore,
     pvp,
     liquidity,
     dividendsHistory: dividendEvents,
@@ -393,7 +416,7 @@ export async function getFiiAnalysisController(
 
   const anomalies = flagAbsurdMetrics({
     price: price || null,
-    dy,
+    dy: observedDy,
     pvp,
   });
 
@@ -421,12 +444,11 @@ export async function getFiiAnalysisController(
         details: score.risk.primary_risk,
       },
     },
-    recommendation:
-      score.overall_rating === 'excelente' || score.overall_rating === 'bom'
-        ? 'conservador'
-        : score.overall_rating === 'regular'
-          ? 'moderado'
-          : 'arriscado',
+    recommendation: 'experimental',
+    qualityRating: score.overall_rating,
+    validationStatus: score.metadata.validation_status,
+    dataCoverage: score.metadata.data_coverage,
+    missingDataPenalty: score.missing_data_penalty,
     explanation: score.explanation_short,
     dataQuality: {
       quotes: quotesOk,
@@ -440,7 +462,7 @@ export async function getFiiAnalysisController(
       freeSourcesOnly: true,
     },
     price: price || null,
-    dividendYield: dy || null,
+    dividendYield: observedDy,
     pvp,
     liquidity,
     anomalies,
@@ -508,7 +530,7 @@ export async function getRankingController(
     return sendZodError(reply, parsed.error, 'Query inválida.');
   const { type, limit, minScore, sort, order } = parsed.data;
 
-  const cacheKey = `analysis:ranking:${type}:${limit}:${minScore ?? 'none'}:${sort ?? 'score'}:${order}`;
+  const cacheKey = `analysis:ranking:v3:${type}:${limit}:${minScore ?? 'none'}:${sort ?? 'score'}:${order}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -571,8 +593,12 @@ export async function getRankingController(
           const proventos = await dividendsProvider.fetchDividends(ticker);
           if (proventos && price > 0) {
             const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-            const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-              .reduce((s, e) => s + e.value, 0);
+            const sum12m = sumIncomeDistributions(
+              incomeDistributionsSince(
+                proventos,
+                cutoff.toISOString().slice(0, 10),
+              ),
+            );
             if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
           }
         } catch { /* ok */ }
@@ -649,7 +675,11 @@ export async function getRankingController(
       async (r) => {
         const ticker = String(r.ticker);
         let price = 0; let liquidity: number | null = null;
-        try { const q = await stockQuoteService.getQuote(ticker); price = q.price; liquidity = q.volume; } catch { return null; }
+        try {
+          const q = await stockQuoteService.getQuote(ticker);
+          price = q.price;
+          liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
+        } catch { return null; }
         if (price <= 0) return null;
 
         let dy = 0;
@@ -659,8 +689,8 @@ export async function getRankingController(
           if (proventos && price > 0) {
             const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
             const c = cutoff.toISOString().slice(0, 10);
-            dividendEvents = proventos.filter((e) => e.date >= c);
-            const s = dividendEvents.reduce((a, e) => a + e.value, 0);
+            dividendEvents = incomeDistributionsSince(proventos, c);
+            const s = sumIncomeDistributions(dividendEvents);
             if (s > 0) dy = +(s / price * 100).toFixed(2);
           }
         } catch { /* ok */ }
@@ -698,8 +728,11 @@ export async function getRankingController(
           score: score.overall_score,
           // Asset class drives routing to /research/fii/:ticker — must be 'fii', not the subclass.
           type: 'fii' as const,
-          recommendation: score.overall_rating === 'excelente' || score.overall_rating === 'bom' ? 'conservador'
-            : score.overall_rating === 'regular' ? 'moderado' : 'arriscado',
+          recommendation: 'experimental',
+          qualityRating: score.overall_rating,
+          validationStatus: score.metadata.validation_status,
+          dataCoverage: score.metadata.data_coverage.percent,
+          missingFields: score.metadata.data_coverage.missing_fields,
           subclass,
           // Surface the FII subclass in the "Setor" column (FIIs have no sector).
           sector: (r.sector as string) || subclass,
@@ -749,7 +782,7 @@ export async function getRankingController(
 // ─── Compare ─────────────────────────────────────────────────────────────────
 
 const compareSchema = z.object({
-  tickers: z.array(z.string().min(4).max(10).transform((t) => t.toUpperCase())).min(2).max(10),
+  tickers: z.array(tickerParamSchema).min(2).max(10),
   type: z.enum(['stock', 'fii']).default('stock'),
 });
 
@@ -796,7 +829,7 @@ export async function compareController(
   const results: CompareResultItem[] = await batchWithConcurrency(tickers, async (ticker) => {
     try {
       if (type === 'fii') {
-        const cacheKeyFii = `analysis:fii:${ticker}`;
+        const cacheKeyFii = `analysis:fii:v3:${ticker}`;
         let data: Record<string, unknown> | null = null;
         try {
           const cached = await redis.get(cacheKeyFii);
@@ -822,8 +855,8 @@ export async function compareController(
             if (proventos && price > 0) {
               const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
               const c = cutoff.toISOString().slice(0, 10);
-              dividends = proventos.filter((e) => e.date >= c);
-              const sum12m = dividends.reduce((s, e) => s + e.value, 0);
+              dividends = incomeDistributionsSince(proventos, c);
+              const sum12m = sumIncomeDistributions(dividends);
               if (sum12m > 0) dy = +(sum12m / price * 100).toFixed(2);
             }
           } catch { /* ok */ }
@@ -938,9 +971,12 @@ export async function compareController(
         if (proventos && price > 0) {
           const cutoff = new Date();
           cutoff.setMonth(cutoff.getMonth() - 12);
-          const sum12m = proventos
-            .filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-            .reduce((s, e) => s + e.value, 0);
+          const sum12m = sumIncomeDistributions(
+            incomeDistributionsSince(
+              proventos,
+              cutoff.toISOString().slice(0, 10),
+            ),
+          );
           if (sum12m > 0) {
             indicators.dividendYield = +((sum12m / price) * 100).toFixed(2);
           }
@@ -998,6 +1034,18 @@ const allocateSchema = z.object({
   fiiPercent: z.number().min(0).max(100).optional(),
   minScore: z.number().min(0).max(100).optional(),
   maxAssets: z.number().int().min(1).max(20).optional(),
+}).superRefine((data, ctx) => {
+  if (
+    data.stockPercent !== undefined &&
+    data.fiiPercent !== undefined &&
+    Math.abs(data.stockPercent + data.fiiPercent - 100) > 0.01
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'stockPercent e fiiPercent devem somar 100%.',
+      path: ['stockPercent'],
+    });
+  }
 });
 
 export async function getAllocationController(
@@ -1013,6 +1061,20 @@ export async function getAllocationController(
     const result = await engine.buildAllocation(parsed.data);
     reply.send(result);
   } catch (err) {
+    if (err instanceof AllocationValidationError) {
+      reply.status(400).send({
+        error: 'FinancialInvariantError',
+        message: err.message,
+      });
+      return;
+    }
+    if (err instanceof AllocationDataUnavailableError) {
+      reply.status(503).send({
+        error: 'CanonicalDataUnavailable',
+        message: err.message,
+      });
+      return;
+    }
     request.log.error({ err }, 'allocation failed');
     reply.status(503).send({
       error: 'ServiceUnavailable',
@@ -1028,6 +1090,8 @@ export async function getValidationController(
   _request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
+  const validationReady = SCORE_VALIDATION.verdict !== 'pending';
+
   // 1) Série top-N vs universo vs IBOV persistida no último backtest (dados reais)
   let strategy: {
     runId: string;
@@ -1038,25 +1102,29 @@ export async function getValidationController(
     >;
   } | null = null;
 
-  try {
-    const {
-      getLatestStrategyYears,
-      summarizeStrategyYears,
-    } = await import('../../database/backtest-queries.ts');
-    const latest = await getLatestStrategyYears(10);
-    if (latest) {
-      strategy = {
-        runId: latest.runId,
-        scoreVersion: latest.scoreVersion,
-        n: 10,
-        summary: summarizeStrategyYears(latest.years),
-      };
+  // Runs anteriores ao saneamento ponto-no-tempo não podem voltar a aparecer
+  // como evidência válida só porque continuam persistidos no banco.
+  if (validationReady) {
+    try {
+      const {
+        getLatestStrategyYears,
+        summarizeStrategyYears,
+      } = await import('../../database/backtest-queries.ts');
+      const latest = await getLatestStrategyYears(10);
+      if (latest) {
+        strategy = {
+          runId: latest.runId,
+          scoreVersion: latest.scoreVersion,
+          n: 10,
+          summary: summarizeStrategyYears(latest.years),
+        };
+      }
+    } catch (err) {
+      console.warn(
+        '[validation] strategy years DB:',
+        err instanceof Error ? err.message : err,
+      );
     }
-  } catch (err) {
-    console.warn(
-      '[validation] strategy years DB:',
-      err instanceof Error ? err.message : err,
-    );
   }
 
   // 2) IBOV live (Yahoo) — preenche anos mesmo sem backtest re-rodado
@@ -1073,57 +1141,59 @@ export async function getValidationController(
     };
   } | null = null;
 
-  try {
-    const { fetchIbovCalendarReturns } = await import(
-      '../../services/ibov-benchmark.ts'
-    );
-    const years =
-      strategy?.summary.byYear.map((y) => y.year) ?? SCORE_VALIDATION.yearsTested;
-    const bench = await fetchIbovCalendarReturns(years);
+  if (validationReady) {
+    try {
+      const { fetchIbovCalendarReturns } = await import(
+        '../../services/ibov-benchmark.ts'
+      );
+      const years =
+        strategy?.summary.byYear.map((y) => y.year) ?? SCORE_VALIDATION.yearsTested;
+      const bench = await fetchIbovCalendarReturns(years);
 
-    const avgPortfolio =
-      strategy?.summary.avgPortfolio ?? SCORE_VALIDATION.topN?.avgPortfolio ?? null;
-    const avgIbov =
-      strategy?.summary.avgIbov ??
-      (() => {
-        const vals = years
-          .map((y) => bench.byYear[y])
-          .filter((v): v is number => typeof v === 'number');
-        return vals.length
-          ? +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2)
-          : null;
-      })();
+      const avgPortfolio =
+        strategy?.summary.avgPortfolio ?? SCORE_VALIDATION.topN?.avgPortfolio ?? null;
+      const avgIbov =
+        strategy?.summary.avgIbov ??
+        (() => {
+          const vals = years
+            .map((y) => bench.byYear[y])
+            .filter((v): v is number => typeof v === 'number');
+          return vals.length
+            ? +(vals.reduce((sum, value) => sum + value, 0) / vals.length).toFixed(2)
+            : null;
+        })();
 
-    ibov = {
-      ...bench,
-      // Prefer byYear from persisted strategy (portfolio vs ibov same years)
-      byYear: strategy
-        ? Object.fromEntries(
-            strategy.summary.byYear.map((y) => [
-              y.year,
-              y.ibovReturn ?? bench.byYear[y.year] ?? null,
-            ]),
-          )
-        : bench.byYear,
-      vsTopN: {
-        n: strategy?.n ?? SCORE_VALIDATION.topN?.n ?? 10,
-        avgPortfolio: avgPortfolio ?? 0,
-        avgIbov,
-        ibovYears:
-          strategy?.summary.ibovYears ??
-          years.filter((y) => bench.byYear[y] != null).length,
-        deltaAvgPp:
-          avgPortfolio != null && avgIbov != null
-            ? +(avgPortfolio - avgIbov).toFixed(2)
-            : null,
-        source: strategy ? 'persisted_backtest' : 'verdict_static',
-      },
-    };
-  } catch (err) {
-    console.warn(
-      '[validation] IBOV Yahoo indisponível:',
-      err instanceof Error ? err.message : err,
-    );
+      ibov = {
+        ...bench,
+        // Prefer byYear from persisted strategy (portfolio vs ibov same years)
+        byYear: strategy
+          ? Object.fromEntries(
+              strategy.summary.byYear.map((year) => [
+                year.year,
+                year.ibovReturn ?? bench.byYear[year.year] ?? null,
+              ]),
+            )
+          : bench.byYear,
+        vsTopN: {
+          n: strategy?.n ?? SCORE_VALIDATION.topN?.n ?? 10,
+          avgPortfolio: avgPortfolio ?? 0,
+          avgIbov,
+          ibovYears:
+            strategy?.summary.ibovYears ??
+            years.filter((year) => bench.byYear[year] != null).length,
+          deltaAvgPp:
+            avgPortfolio != null && avgIbov != null
+              ? +(avgPortfolio - avgIbov).toFixed(2)
+              : null,
+          source: strategy ? 'persisted_backtest' : 'verdict_static',
+        },
+      };
+    } catch (err) {
+      console.warn(
+        '[validation] IBOV Yahoo indisponível:',
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   // 3) Backtest FII total return (se já rodou worker)

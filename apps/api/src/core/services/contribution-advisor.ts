@@ -50,6 +50,8 @@ export interface ContributionSuggestion {
 
 const DIVERSIFY_SLOT_RATIO = 0.6;
 const MAX_SKIPPED_ENTRIES = 15;
+/** Hard safety boundary for HTTP/MCP callers and arithmetic. */
+export const MAX_CONTRIBUTION_AMOUNT = 100_000_000;
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 
@@ -59,6 +61,24 @@ export function suggestContribution(
   config: AdvisorConfig,
   warnings: string[] = [],
 ): ContributionSuggestion {
+  if (
+    !Number.isFinite(config.amount)
+    || config.amount <= 0
+    || config.amount > MAX_CONTRIBUTION_AMOUNT
+  ) {
+    throw new RangeError(
+      `amount deve estar entre 0 e ${MAX_CONTRIBUTION_AMOUNT}`,
+    );
+  }
+  if (
+    config.maxAssetPercent !== undefined
+    && (!Number.isFinite(config.maxAssetPercent)
+      || config.maxAssetPercent <= 0
+      || config.maxAssetPercent > 100)
+  ) {
+    throw new RangeError('maxAssetPercent deve estar entre 0 e 100');
+  }
+
   const profileCfg = RISK_CONFIGS[config.profile];
   const maxAssetPct = config.maxAssetPercent ?? 25;
   const outWarnings = [...warnings];
@@ -200,12 +220,17 @@ export function suggestContribution(
       budget -= quantity * a.price;
     }
 
-    // 2ª passada: sobra do orçamento vai para os melhores que ainda têm espaço
+    // 2ª passada: sobra do orçamento vai para os melhores que ainda têm espaço.
+    // A quantidade é calculada em O(1); o antigo loop unitário crescia com
+    // amount/preço e permitia bloquear a CPU com valores extremos.
     for (const a of selected) {
-      while (budget >= a.price && roomFor(a) >= a.price) {
-        addPurchase(a, 1);
-        budget -= a.price;
-      }
+      if (budget < a.price) continue;
+      const maxByBudget = Math.floor(budget / a.price);
+      const maxByConcentration = Math.floor(Math.max(0, roomFor(a)) / a.price);
+      const quantity = Math.min(maxByBudget, maxByConcentration);
+      if (quantity <= 0) continue;
+      addPurchase(a, quantity);
+      budget -= quantity * a.price;
     }
 
     // Ativos selecionados que nunca receberam quantidade em nenhuma das passadas

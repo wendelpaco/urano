@@ -19,6 +19,7 @@
 import * as cheerio from 'cheerio';
 import { withRetry, RateLimitError } from '../../../shared/retry.ts';
 import { fundamentusLimiter } from '../rate-limiter.ts';
+import { fundamentusCircuitBreaker } from '../circuit-breaker.ts';
 import { redis } from '../redis.ts';
 import { userAgentPool } from '../user-agent-pool.ts';
 
@@ -229,29 +230,47 @@ export class FundamentusScraper {
   // ─── HTTP ─────────────────────────────────────────────────────────────
 
   private async fetchPage(url: string): Promise<string> {
-    return withRetry(async () => {
-      const headers = userAgentPool.getFingerprint(this.baseUrl) as unknown as Record<string, string>;
-      const response = await fetch(url, { headers });
+    // Circuit breaker: rejeita cedo se Fundamentus está em cooldown (evita spam de 429)
+    await fundamentusCircuitBreaker.beforeRequest();
 
-      if (response.status === 429) {
-        const retryAfter = response.headers.get('Retry-After');
-        throw new RateLimitError(
-          `Fundamentus HTTP 429`,
-          (retryAfter ? parseInt(retryAfter, 10) : 5) * 1000,
-        );
+    try {
+      const html = await withRetry(async () => {
+        const headers = userAgentPool.getFingerprint(this.baseUrl) as unknown as Record<string, string>;
+        const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After');
+          const retrySec = retryAfter ? parseInt(retryAfter, 10) : 5;
+          const retryMs = retrySec * 1000;
+          fundamentusLimiter.penalize(retryMs);
+          throw new RateLimitError(
+            `Fundamentus HTTP 429 (Retry-After: ${retrySec}s)`,
+            retryMs,
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(`Fundamentus HTTP ${response.status}`);
+        }
+
+        return response.text();
+      }, {
+        maxRetries: 3,
+        initialDelay: 1000,
+        maxDelay: 30_000,
+        timeout: 15_000,
+      });
+
+      await fundamentusCircuitBreaker.onSuccess();
+      return html;
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        await fundamentusCircuitBreaker.onFailure('rate-limit', error.message);
+      } else if (error instanceof Error && error.message.includes('HTTP 5')) {
+        await fundamentusCircuitBreaker.onFailure('server-error', error.message);
       }
-
-      if (!response.ok) {
-        throw new Error(`Fundamentus HTTP ${response.status}`);
-      }
-
-      return response.text();
-    }, {
-      maxRetries: 3,
-      initialDelay: 1000,
-      maxDelay: 30_000,
-      timeout: 15_000,
-    });
+      throw error;
+    }
   }
 
   // ─── Helpers Numéricos ─────────────────────────────────────────────────

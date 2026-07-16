@@ -6,8 +6,9 @@
  *   total return = variação de cota + proventos / preço início
  *
  * Também testa se DY do ano Y prediz total return do ano Y+1.
- * Score atual (quando calculável) é gravado só como metadado — NÃO é look-ahead free
- * para ranking histórico; a correlação DY→TR seguinte sim é look-ahead free.
+ * Score atual (quando calculável) é gravado só como metadado. A análise inteira
+ * é exploratória: usa a lista de FIIs disponível hoje e, portanto, sofre viés
+ * de sobrevivência até existir um universo histórico ponto-no-tempo.
  *
  * Uso:
  *   bun run backtest:fii
@@ -37,6 +38,11 @@ import {
   FIIScoreCalculatorV4,
   type FIIScoreInput,
 } from '../../core/services/fii-score.ts';
+import {
+  incomeDistributionsSince,
+  isIncomeDistribution,
+  sumIncomeDistributions,
+} from '../../core/services/dividend-income.ts';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -75,8 +81,8 @@ async function currentScore(ticker: string, price: number): Promise<{
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - 12);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
-    const recent = proventos.filter((e) => e.date >= cutoffStr);
-    const sum12m = recent.reduce((s, e) => s + e.value, 0);
+    const recent = incomeDistributionsSince(proventos, cutoffStr);
+    const sum12m = sumIncomeDistributions(recent);
     const dy = price > 0 && sum12m > 0 ? +((sum12m / price) * 100).toFixed(2) : 0;
 
     let pvp: number | null = null;
@@ -128,6 +134,9 @@ async function main() {
       const prices = history.points.map((p) => ({ date: p.date, close: p.close }));
       const divs = (await dividendsProvider.fetchDividends(ticker)) ?? [];
       const cash = divs.map((d) => ({ date: d.date, value: d.value }));
+      const income = divs
+        .filter(isIncomeDistribution)
+        .map((d) => ({ date: d.date, value: d.value }));
 
       const annual = calendarYearTotalReturns(prices, cash, years);
       const lastPrice =
@@ -146,7 +155,7 @@ async function main() {
           totalReturnPct: tr.totalReturnPct,
           priceReturnPct: tr.priceReturnPct,
           dividendReturnPct: tr.dividendReturnPct,
-          // score omitido de ranking look-ahead free
+          // score atual omitido do ranking histórico
           score: null,
         });
         insertYears.push({
@@ -164,11 +173,12 @@ async function main() {
           score: score ?? null,
           pvp: pvp != null ? String(pvp) : null,
           priceSource: history.source,
-          divSource: 'statusinvest_or_db',
+          // Marca runs produzidos após separar renda recorrente de amortização.
+          divSource: 'statusinvest_db_income_v2',
         });
       }
 
-      const pairs = trailingDyAndNextTotalReturn(prices, cash, years);
+      const pairs = trailingDyAndNextTotalReturn(prices, cash, years, income);
       for (const p of pairs) {
         dyPairsAll.push({
           ticker,
@@ -221,8 +231,8 @@ async function main() {
   console.log(`  n=${pred.n} correlação=${pred.correlation}`);
   console.log(`  ${pred.interpretation}`);
 
-  // Top-N look-ahead free: ranquear por DY trailing do ANO (não score de hoje)
-  console.log('\n═══ TOP 5 por DY do ano (look-ahead free) vs universo TR ═══');
+  // Análise descritiva no universo atual; não corrige survivorship bias.
+  console.log('\n═══ TOP 5 por DY do ano (exploratório; universo atual) vs universo TR ═══');
   {
     const byYear = new Map<number, typeof yearRows>();
     for (const r of yearRows) {

@@ -11,7 +11,8 @@
     "test": "bun --filter urano-api test",
     "test:api": "bun --filter urano-api test",
     "typecheck": "bun --filter '*' typecheck",
-    "lint": "bun --filter '*' lint --fix",
+    "lint": "bun --filter '*' lint",
+    "lint:fix": "bun --filter '*' lint --fix",
     "pipeline:data": "bash apps/api/scripts/data-pipeline.sh --quick",
     "pipeline:data:full": "bash apps/api/scripts/data-pipeline.sh --full",
     "backup": "bun --filter urano-api backup"

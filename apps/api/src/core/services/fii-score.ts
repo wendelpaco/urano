@@ -1,5 +1,5 @@
 /**
- * FII Scoring System V4.1 — CORREÇÃO CONCEITUAL + ENRIQUECIMENTO DE SUBCLASSES
+ * FII Scoring System V4.2 — CONTENCAO DE DADOS AUSENTES
  *
  * Portado de easy-invest. Lógica intocada, apenas imports ajustados ao layout do Urano:
  * core/services/ → lógica pura, core/data/ → datasets estáticos.
@@ -26,11 +26,18 @@
  *    - KNCR11: "Fundo CRI high-grade e líquido, porém altamente sensível à queda do CDI."
  *    - XPML11: "Shopping prime bem localizado, porém exposto a ciclos de consumo."
  *    - RZTR11: "Logística defensiva com contratos longos, risco controlado."
+ *
+ * V4.2: dados criticos ausentes recebem pior caso + penalidade de cobertura;
+ * o modelo nao imputa P/VP, liquidez, vacancia ou inadimplencia favoraveis.
  */
 
 // ─── Imports (ajustados para layout Urano) ───────────────────────────────────
 
 import { getFIIClassification } from '../data/fii-classification.data.ts';
+import {
+  aggregateMonthlyIncome,
+  monthlyIncomeSeries,
+} from './dividend-income.ts';
 import {
   getPapelSubclass,
   normalizeDYBySubclass,
@@ -56,7 +63,7 @@ export interface IncomeQualityScoreV4 {
 export interface AssetQualityScoreV4 {
   score: number;
   valuation_score: number;
-  p_vp: number;
+  p_vp: number | null;
   liquidity_score: number;
   rating: 'excelente' | 'bom' | 'regular' | 'ruim';
 }
@@ -103,10 +110,15 @@ export interface FIIScoreV4 {
   score_limiter: 'income' | 'asset' | 'risk';
   limiter_value: number;
   penalty_applied: number;
+  missing_data_penalty: number;
 
+  /**
+   * Campo mantido por compatibilidade de contrato. O score FII ainda nao foi
+   * validado ponto-no-tempo e, portanto, nao emite acao de investimento.
+   */
   recommendation: {
-    action: 'comprar' | 'acumular' | 'manter' | 'reduzir' | 'vender';
-    conviction: 'alta' | 'media' | 'baixa';
+    action: 'analise_experimental';
+    conviction: 'baixa';
     principal_motivo: string;
     principal_risco: string;
   };
@@ -116,6 +128,14 @@ export interface FIIScoreV4 {
   metadata: {
     version: string;
     calculated_at: string;
+    validation_status: 'experimental_not_validated';
+    intended_use: 'experimental_screening_only';
+    data_coverage: {
+      percent: number;
+      critical_complete: boolean;
+      missing_fields: string[];
+      policy: 'worst_case_plus_penalty';
+    };
   };
 }
 
@@ -132,6 +152,8 @@ export interface FIIScoreInput {
   dividendsHistory: Array<{ date: string; value: number; type: string }>;
   vacancy?: number;
   delinquency?: number;
+  /** Data de corte da decisão; impede deslocar a janela para o último pagamento. */
+  asOf?: string;
 }
 
 // ─── Scoring Logic (portado intocado) ────────────────────────────────────────
@@ -145,18 +167,57 @@ export class FIIScoreCalculatorV4 {
       pvp: rawPvp,
       liquidity: rawLiquidity,
       dividendsHistory,
-      vacancy = 0,
-      delinquency = 0,
+      vacancy: rawVacancy,
+      delinquency: rawDelinquency,
+      asOf: rawAsOf,
     } = data;
+    const asOf = rawAsOf && /^\d{4}-\d{2}-\d{2}/.test(rawAsOf)
+      ? rawAsOf.slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
 
-    // P/VP e liquidez podem ser null → usa neutro
-    const pvp = rawPvp ?? 1.0;
-    const liquidity = rawLiquidity ?? 500_000;
+    // Ausencia ou valor invalido permanece desconhecido. Nunca imputar um
+    // numero favoravel (P/VP=1, vacancia=0 etc.) para compor a nota.
+    const pvp = rawPvp !== null && Number.isFinite(rawPvp) && rawPvp > 0
+      ? rawPvp
+      : null;
+    const liquidity = rawLiquidity !== null && Number.isFinite(rawLiquidity) && rawLiquidity > 0
+      ? rawLiquidity
+      : null;
+    const vacancy = rawVacancy !== undefined && Number.isFinite(rawVacancy) && rawVacancy >= 0 && rawVacancy <= 100
+      ? rawVacancy
+      : null;
+    const delinquency = rawDelinquency !== undefined && Number.isFinite(rawDelinquency) && rawDelinquency >= 0 && rawDelinquency <= 100
+      ? rawDelinquency
+      : null;
 
     // 1. Obter classificação
     const classification = getFIIClassification(ticker);
     const type = classification?.type || 'tijolo';
     const typeSource = classification?.source || 'inferred';
+
+    const monthlyIncomeHistory = aggregateMonthlyIncome(dividendsHistory);
+    const observedIncomeMonths = monthlyIncomeSeries(dividendsHistory, 12, asOf)
+      .filter((event) => event.value > 0).length;
+
+    const requiredData: Array<{ field: string; available: boolean }> = [
+      { field: 'classification', available: typeSource !== 'inferred' },
+      { field: 'pvp', available: pvp !== null },
+      { field: 'liquidity', available: liquidity !== null },
+      { field: 'dividends_history', available: observedIncomeMonths >= 6 },
+    ];
+    if (type !== 'papel') {
+      requiredData.push(
+        { field: 'vacancy', available: vacancy !== null },
+        { field: 'delinquency', available: delinquency !== null },
+      );
+    }
+    const missingFields = requiredData
+      .filter((item) => !item.available)
+      .map((item) => item.field);
+    const coveragePercent = Math.round(
+      ((requiredData.length - missingFields.length) / requiredData.length) * 100,
+    );
+    const missingDataPenalty = Math.min(25, missingFields.length * 5);
 
     // 1.1. V4.1: Obter subclasse de tijolo (se aplicável)
     const tijoloSubclassInfo = type === 'tijolo' ? getTijoloSubclass(ticker) : null;
@@ -166,9 +227,10 @@ export class FIIScoreCalculatorV4 {
 
     // 3. Calcular scores dimensionais
     const incomeQuality = this.calculateIncomeQuality(
-      dividendsHistory,
+      monthlyIncomeHistory,
       price,
       dyNormalization.dy_normalizado,
+      asOf,
     );
 
     const assetQuality = this.calculateAssetQuality(pvp, liquidity);
@@ -186,20 +248,20 @@ export class FIIScoreCalculatorV4 {
     let overallScore = overallCalc.score;
     const scoreLimiter = overallCalc.limiter;
     const limiterValue = overallCalc.limiterValue;
-    const penaltyApplied = overallCalc.penalty;
+    let penaltyApplied = overallCalc.penalty;
 
     // 5.1. V4.1: Aplicar ajuste fino para tijolos (+/-2 pts máximo)
     if (tijoloSubclassInfo && tijoloSubclassInfo.score_adjustment !== 0) {
       overallScore = Math.max(0, Math.min(100, overallScore + tijoloSubclassInfo.score_adjustment));
     }
 
-    // 6. Rating e recomendação
+    overallScore = Math.max(0, overallScore - missingDataPenalty);
+    penaltyApplied += missingDataPenalty;
+
+    // 6. Rating de qualidade. Sem acao de investimento ate validacao historica.
     const overallRating = this.getOverallRating(overallScore);
-    const recommendation = this.getConservativeRecommendation(
-      overallScore,
-      risk.score,
+    const recommendation = this.getExperimentalAssessment(
       risk.primary_risk,
-      incomeQuality.score,
     );
 
     // 7. Explicação humana (CORREÇÃO V4 #4 + V4.1)
@@ -232,13 +294,22 @@ export class FIIScoreCalculatorV4 {
       score_limiter: scoreLimiter,
       limiter_value: limiterValue,
       penalty_applied: penaltyApplied,
+      missing_data_penalty: missingDataPenalty,
 
       recommendation,
       explanation_short: explanationShort,
 
       metadata: {
-        version: 'v4.1',
+        version: 'v4.2',
         calculated_at: new Date().toISOString(),
+        validation_status: 'experimental_not_validated',
+        intended_use: 'experimental_screening_only',
+        data_coverage: {
+          percent: coveragePercent,
+          critical_complete: missingFields.length === 0,
+          missing_fields: missingFields,
+          policy: 'worst_case_plus_penalty',
+        },
       },
     };
   }
@@ -275,19 +346,22 @@ export class FIIScoreCalculatorV4 {
     history: Array<{ date: string; value: number; type: string }>,
     _currentPrice: number,
     dyNormalizado: number,
+    asOf: string,
   ): IncomeQualityScoreV4 {
-    if (history.length < 6) {
+    const monthly = aggregateMonthlyIncome(history);
+    const last12Months = monthlyIncomeSeries(monthly, 12, asOf);
+    const paidMonths = last12Months.filter((event) => event.value > 0).length;
+    if (paidMonths < 6) {
       return {
-        score: 40,
-        stability: 40,
-        consistency: 40,
-        growth: 40,
-        sustainability: 40,
+        score: 0,
+        stability: 0,
+        consistency: 0,
+        growth: 0,
+        sustainability: 0,
         rating: 'ruim',
       };
     }
 
-    const last12Months = history.slice(0, 12);
     const values = last12Months.map((h) => h.value);
 
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
@@ -299,7 +373,7 @@ export class FIIScoreCalculatorV4 {
     let stability = 100 - cv * 2;
     stability = Math.max(0, Math.min(100, stability));
 
-    const monthsWithoutPayment = Math.max(0, 12 - last12Months.length);
+    const monthsWithoutPayment = 12 - paidMonths;
     let consistency = 100 - monthsWithoutPayment * 10;
     consistency = Math.max(0, Math.min(100, consistency));
 
@@ -344,11 +418,13 @@ export class FIIScoreCalculatorV4 {
   }
 
   private static calculateAssetQuality(
-    pvp: number,
-    liquidity: number,
+    pvp: number | null,
+    liquidity: number | null,
   ): AssetQualityScoreV4 {
-    let valuationScore = 50;
-    if (pvp < 0.85) {
+    let valuationScore = 0;
+    if (pvp === null) {
+      valuationScore = 0;
+    } else if (pvp < 0.85) {
       valuationScore = 95;
     } else if (pvp < 0.95) {
       valuationScore = 85;
@@ -360,8 +436,10 @@ export class FIIScoreCalculatorV4 {
       valuationScore = 40;
     }
 
-    let liquidityScore = 50;
-    if (liquidity >= 2_000_000) {
+    let liquidityScore = 0;
+    if (liquidity === null) {
+      liquidityScore = 0;
+    } else if (liquidity >= 2_000_000) {
       liquidityScore = 90;
     } else if (liquidity >= 1_000_000) {
       liquidityScore = 75;
@@ -387,9 +465,9 @@ export class FIIScoreCalculatorV4 {
   private static calculateRiskScoreV4(
     type: 'papel' | 'tijolo' | 'hibrido',
     dyNormalization: DYNormalizationV4,
-    vacancy: number,
-    delinquency: number,
-    liquidity: number,
+    vacancy: number | null,
+    delinquency: number | null,
+    liquidity: number | null,
     ticker: string,
   ): RiskScoreV4 {
     const breakdown: RiskBreakdownV4 = {
@@ -441,8 +519,9 @@ export class FIIScoreCalculatorV4 {
 
       breakdown.juros = jurosRisk;
 
-      let liquidezRisk = 50;
-      if (liquidity >= 2_000_000) liquidezRisk = 75;
+      let liquidezRisk = 0;
+      if (liquidity === null) liquidezRisk = 0;
+      else if (liquidity >= 2_000_000) liquidezRisk = 75;
       else if (liquidity >= 1_000_000) liquidezRisk = 65;
       else if (liquidity >= 500_000) liquidezRisk = 55;
       else if (liquidity >= 200_000) liquidezRisk = 45;
@@ -464,8 +543,9 @@ export class FIIScoreCalculatorV4 {
         totalWeight = 1.0;
       }
     } else {
-      let vacanciaRisk = 50;
-      if (vacancy < 3) vacanciaRisk = 95;
+      let vacanciaRisk = 0;
+      if (vacancy === null) vacanciaRisk = 0;
+      else if (vacancy < 3) vacanciaRisk = 95;
       else if (vacancy < 5) vacanciaRisk = 85;
       else if (vacancy < 8) vacanciaRisk = 70;
       else if (vacancy < 12) vacanciaRisk = 55;
@@ -473,16 +553,29 @@ export class FIIScoreCalculatorV4 {
       else vacanciaRisk = 25;
 
       // Penalização por inadimplência (delinquency)
-      if (delinquency > 10) vacanciaRisk = Math.max(10, vacanciaRisk - 25);
-      else if (delinquency > 5) vacanciaRisk = Math.max(15, vacanciaRisk - 15);
-      else if (delinquency > 2) vacanciaRisk = Math.max(25, vacanciaRisk - 5);
+      if (vacancy !== null && delinquency === null) {
+        // Pior penalizacao possivel do modelo: desconhecido nunca pontua acima
+        // do mesmo fundo com inadimplencia observada.
+        vacanciaRisk = Math.max(10, vacanciaRisk - 25);
+      } else if (delinquency !== null && delinquency > 10) {
+        vacanciaRisk = Math.max(10, vacanciaRisk - 25);
+      } else if (delinquency !== null && delinquency > 5) {
+        vacanciaRisk = Math.max(15, vacanciaRisk - 15);
+      } else if (delinquency !== null && delinquency > 2) {
+        vacanciaRisk = Math.max(25, vacanciaRisk - 5);
+      }
 
       breakdown.vacancia = vacanciaRisk;
       breakdown.juros = 70;
-      breakdown.estrutura = delinquency > 0 ? 100 - delinquency * 5 : null;
+      breakdown.estrutura = delinquency === null
+        ? 0
+        : delinquency > 0
+          ? Math.max(0, 100 - delinquency * 5)
+          : 100;
 
-      let liquidezRisk = 50;
-      if (liquidity >= 5_000_000) liquidezRisk = 80;
+      let liquidezRisk = 0;
+      if (liquidity === null) liquidezRisk = 0;
+      else if (liquidity >= 5_000_000) liquidezRisk = 80;
       else if (liquidity >= 2_000_000) liquidezRisk = 70;
       else if (liquidity >= 1_000_000) liquidezRisk = 60;
       else if (liquidity >= 500_000) liquidezRisk = 50;
@@ -613,53 +706,19 @@ export class FIIScoreCalculatorV4 {
     return `${pontoForte}, porém com ${riscoDominante}.`;
   }
 
-  private static getConservativeRecommendation(
-    overallScore: number,
-    riskScore: number,
+  private static getExperimentalAssessment(
     primaryRisk: string,
-    incomeScore: number,
   ): {
-    action: 'comprar' | 'acumular' | 'manter' | 'reduzir' | 'vender';
-    conviction: 'alta' | 'media' | 'baixa';
+    action: 'analise_experimental';
+    conviction: 'baixa';
     principal_motivo: string;
     principal_risco: string;
   } {
-    let action: 'comprar' | 'acumular' | 'manter' | 'reduzir' | 'vender' = 'manter';
-    let conviction: 'alta' | 'media' | 'baixa' = 'media';
-    let principalMotivo = '';
-
-    if (overallScore >= 85 && riskScore >= 65 && incomeScore >= 85) {
-      action = 'comprar';
-      conviction = 'alta';
-      principalMotivo = 'Fundamentos sólidos com risco controlado';
-    } else if (overallScore >= 75 && riskScore >= 60) {
-      action = 'acumular';
-      conviction = 'media';
-      principalMotivo = 'Bons fundamentos, acumular gradualmente';
-    } else if (overallScore >= 65 && riskScore >= 50) {
-      action = 'manter';
-      conviction = 'media';
-      principalMotivo = 'Fundamentos adequados, monitorar evolução';
-    } else if (overallScore >= 50) {
-      action = 'manter';
-      conviction = 'baixa';
-      principalMotivo = 'Fundamentos fracos, manter posição reduzida';
-    } else {
-      action = 'reduzir';
-      conviction = 'baixa';
-      principalMotivo = 'Fundamentos deteriorados, reduzir exposição';
-    }
-
-    if (riskScore < 40) {
-      action = 'reduzir';
-      conviction = 'baixa';
-      principalMotivo = 'Risco crítico detectado';
-    }
-
     return {
-      action,
-      conviction,
-      principal_motivo: principalMotivo,
+      action: 'analise_experimental',
+      conviction: 'baixa',
+      principal_motivo:
+        'Score experimental para triagem de qualidade; nao constitui recomendacao de investimento.',
       principal_risco: primaryRisk,
     };
   }

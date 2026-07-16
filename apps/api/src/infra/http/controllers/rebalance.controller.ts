@@ -1,19 +1,31 @@
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { wallets } from '../../database/schema.ts';
-import { ExecuteRebalanceUseCase } from '../../../core/use-cases/execute-rebalance.ts';
+import {
+  ExecuteRebalanceUseCase,
+  MAX_REBALANCE_AMOUNT,
+  MAX_REBALANCE_POSITION_QUANTITY,
+  MAX_REBALANCE_POSITIONS,
+  RebalanceValidationError,
+} from '../../../core/use-cases/execute-rebalance.ts';
 
 const bodySchema = z.object({
-  availableAmount: z.number().positive(),
+  availableAmount: z.number().finite().positive().max(MAX_REBALANCE_AMOUNT),
   currentPositions: z
     .array(
       z.object({
-        ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
-        quantity: z.number().nonnegative(),
+        ticker: tickerParamSchema,
+        quantity: z
+          .number()
+          .finite()
+          .nonnegative()
+          .max(MAX_REBALANCE_POSITION_QUANTITY),
       }),
     )
+    .max(MAX_REBALANCE_POSITIONS)
     .optional(),
 });
 
@@ -24,7 +36,8 @@ const paramsSchema = z.object({
 /**
  * POST /v1/wallets/:walletId/rebalance
  *
- * Executa o rebalanceamento da carteira com base no valor disponível para aporte.
+ * Simula um aporte buy-only com base no valor disponivel.
+ * Ativos acima da meta ficam em HOLD; este endpoint nao sugere vendas.
  * O walletId vem da rota; availableAmount do body.
  */
 export async function rebalanceController(
@@ -45,7 +58,7 @@ export async function rebalanceController(
   if (!bodyResult.success) {
     reply.status(400).send({
       error: 'ValidationError',
-      message: 'Payload inválido. availableAmount deve ser um número positivo.',
+      message: 'Payload inválido para simulação de aporte.',
       details: bodyResult.error.format(),
     });
     return;
@@ -71,6 +84,14 @@ export async function rebalanceController(
     reply.status(200).send(result);
   } catch (error) {
     request.log.error(error, 'Erro ao executar rebalanceamento');
+
+    if (error instanceof RebalanceValidationError) {
+      reply.status(422).send({
+        error: 'FinancialInvariantError',
+        message: error.message,
+      });
+      return;
+    }
 
     reply.status(500).send({
       error: 'InternalServerError',

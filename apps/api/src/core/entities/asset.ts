@@ -3,7 +3,8 @@ export interface AssetRebalanceRecommendation {
   currentQuantity: number;
   currentPrice: number;
   targetAllocationPercent: number;
-  suggestedAction: 'BUY' | 'SELL' | 'HOLD';
+  /** Sprint 1 containment: rebalanceamento opera somente com compras. */
+  suggestedAction: 'BUY' | 'HOLD';
   suggestedQuantity: number;
   estimatedCost: number;
 }

@@ -65,26 +65,22 @@ describe('calcAllIndicators', () => {
     // Market cap
     expect(result.marketCap).toBe(455_000_000_000); // 13B × 35
 
-    // EV/EBIT = (marketCap 455B + netDebt 550B) / EBIT 150B = 6.7
-    // (sensível ao preço; NÃO é Ativo/EBIT = 1T/150B = 6.67)
-    expect(result.evEbit).toBe(6.7);
+    // Passivo total não é dívida financeira; EV fica indisponível até o ETL
+    // separar empréstimos/debêntures de passivos operacionais.
+    expect(result.evEbit).toBeNull();
 
     // DY ainda null (calculado externamente)
     expect(result.dividendYield).toBeNull();
   });
 
-  // ─── EV/EBIT sensível ao preço ─────────────────────────────────────────
+  // ─── EV/EBIT exige dívida financeira ───────────────────────────────────
 
-  it('deve calcular EV/EBIT sensível ao preço (não Ativo/EBIT)', () => {
+  it('nao fabrica EV/EBIT a partir do passivo total', () => {
     const row = makeRow();
     const low = calcAllIndicators(row, 35).evEbit;
     const high = calcAllIndicators(row, 70).evEbit;
-    // Preço maior → EV maior → EV/EBIT maior. O bug antigo (Ativo/EBIT) era invariante.
-    expect(low).not.toBeNull();
-    expect(high).not.toBeNull();
-    expect(high as number).toBeGreaterThan(low as number);
-    // Ativo/EBIT daria 6.67 e não mudaria com preço — garante que não regredimos.
-    expect(low).not.toBe(6.67);
+    expect(low).toBeNull();
+    expect(high).toBeNull();
   });
 
   // ─── Empresa sem receita ───────────────────────────────────────────────
@@ -114,7 +110,7 @@ describe('calcAllIndicators', () => {
 
   // ─── Empresa endividada ────────────────────────────────────────────────
 
-  it('deve reportar endividamento elevado', () => {
+  it('nao chama passivo total de divida financeira', () => {
     const row = makeRow({
       totalLiabilities: 1_200_000_000_000,
       equity: 300_000_000_000,
@@ -122,9 +118,8 @@ describe('calcAllIndicators', () => {
     });
     const result = calcAllIndicators(row, 10);
 
-    // D/E = 1.2T / 300B = 4.0
-    expect(result.debtToEquity).toBe(4);
-    expect(result.netDebtToEquity).toBe(4); // netDebt = 1.2T - 0 = 1.2T
+    expect(result.debtToEquity).toBeNull();
+    expect(result.netDebtToEquity).toBeNull();
   });
 
   // ─── Sem cotação (price = 0) ───────────────────────────────────────────

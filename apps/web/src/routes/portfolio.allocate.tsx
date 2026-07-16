@@ -18,7 +18,7 @@ import { ErrorState, EmptyState } from "@/components/app/states";
 import { ScoreBadge, TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { addJournalEntry } from "@/lib/journal";
-import { BookMarked, PieChart } from "lucide-react";
+import { AlertTriangle, BookMarked, PieChart } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/portfolio/allocate")({
@@ -43,6 +43,7 @@ type AllocatedAsset = {
 };
 
 type AllocationResult = {
+  warnings?: string[];
   config?: {
     totalAmount?: number;
     riskProfile?: string;
@@ -91,7 +92,7 @@ function AllocatePage() {
     <div className="p-3 md:p-4 space-y-3">
       <SectionHeader
         title="Alocação modelo"
-        subtitle="Carteira do zero filtrada por score de qualidade e perfil. Não é garantia de retorno — ver Validação do score."
+        subtitle="Cenário experimental. Classes sem dados comparáveis ficam em caixa; o score não está validado para decisão."
         actions={
           <Button variant="outline" size="sm" asChild>
             <Link to="/validation">Ver validação do score</Link>
@@ -166,6 +167,18 @@ function AllocatePage() {
 
           {result ? (
             <>
+              {(result.warnings?.length ?? 0) > 0 ? (
+                <Panel>
+                  <div className="p-3 flex gap-2 text-xs leading-relaxed text-amber-400">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <ul className="list-disc pl-4 space-y-1">
+                      {result.warnings?.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </Panel>
+              ) : null}
               <div className="flex justify-end">
                 <Button
                   type="button"
@@ -204,7 +217,7 @@ function AllocatePage() {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <MetricCard
-                  label="DY estimado (a.a.)"
+                  label="DY TTM 12m estimado (a.a.)"
                   value={fmtPct(summary?.estimatedDividendYield)}
                 />
                 <MetricCard
@@ -248,10 +261,7 @@ function AllocatePage() {
                             <Link
                               to="/research/$type/$ticker"
                               params={{
-                                type:
-                                  a.type === "fii" || a.assetType === "fii"
-                                    ? "fii"
-                                    : "stock",
+                                type: a.type === "fii" || a.assetType === "fii" ? "fii" : "stock",
                                 ticker: a.ticker,
                               }}
                             >

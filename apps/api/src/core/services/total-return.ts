@@ -134,22 +134,33 @@ export function calendarYearTotalReturns(
 }
 
 /**
- * DY do ano Y (proventos em Y / preço início Y) → total return do ano Y+1.
+ * Renda recorrente do ano Y / preço no início de Y → total return de Y+1.
+ *
+ * `cashDistributions` inclui todo caixa recebido (inclusive amortizações), pois
+ * devolução de principal compõe o retorno total. `incomeDistributions` deve
+ * conter apenas rendimentos/dividendos recorrentes, pois amortização não é DY.
+ * O quarto argumento mantém compatibilidade com séries já normalizadas.
  */
 export function trailingDyAndNextTotalReturn(
   prices: PricePoint[],
-  dividends: CashEvent[],
+  cashDistributions: CashEvent[],
   years: number[],
+  incomeDistributions: CashEvent[] = cashDistributions,
 ): Array<{
   year: number;
   nextYear: number;
   trailingDyPct: number;
   nextTotalReturnPct: number;
 }> {
-  const annual = calendarYearTotalReturns(prices, dividends, [
+  const annualCash = calendarYearTotalReturns(prices, cashDistributions, [
     ...years,
     ...years.map((y) => y + 1),
   ]);
+  const annualIncome = calendarYearTotalReturns(
+    prices,
+    incomeDistributions,
+    years,
+  );
   const pairs: Array<{
     year: number;
     nextYear: number;
@@ -158,13 +169,16 @@ export function trailingDyAndNextTotalReturn(
   }> = [];
 
   for (const y of years) {
-    const trY = annual[y];
-    const trNext = annual[y + 1];
-    if (!trY || !trNext || trY.startPrice <= 0) continue;
+    const incomeY = annualIncome[y];
+    const trNext = annualCash[y + 1];
+    if (!incomeY || !trNext || incomeY.startPrice <= 0) continue;
     pairs.push({
       year: y,
       nextYear: y + 1,
-      trailingDyPct: +((trY.dividendsSum / trY.startPrice) * 100).toFixed(2),
+      trailingDyPct: +(
+        (incomeY.dividendsSum / incomeY.startPrice) *
+        100
+      ).toFixed(2),
       nextTotalReturnPct: trNext.totalReturnPct,
     });
   }

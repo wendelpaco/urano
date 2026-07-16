@@ -16,6 +16,10 @@ import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../../core/services/stock-score.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../../core/services/dividend-income.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
 import { redis } from '../../services/redis.ts';
 
@@ -149,8 +153,12 @@ export async function screenerController(
       const proventos = await dividendsProvider.fetchDividends(ticker);
       if (proventos && price > 0) {
         const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-        const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-          .reduce((s, e) => s + e.value, 0);
+        const sum12m = sumIncomeDistributions(
+          incomeDistributionsSince(
+            proventos,
+            cutoff.toISOString().slice(0, 10),
+          ),
+        );
         if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
       }
     } catch { /* ok */ }

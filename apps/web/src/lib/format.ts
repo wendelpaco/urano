@@ -31,7 +31,12 @@ export function fmtNum(v: number | null | undefined, compact = false) {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   return compact ? NUM_COMPACT.format(v) : NUM.format(v);
 }
-/** Accepts either fractions (0.12) or already-percent (12). Heuristic: |v|<=1 treated as fraction. */
+/**
+ * Formats a percent. Pass `alreadyPct=true` when `v` is in percent units
+ * (e.g. 12 → "12,00%"); leave default when `v` is a fraction (0.12 → "12,00%").
+ * The |v|<=1 fallback only guesses when the unit is not declared and is ambiguous
+ * for values in [-1, 1] — always pass `alreadyPct` explicitly for percent inputs.
+ */
 export function fmtPct(v: number | null | undefined, alreadyPct = false) {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const pct = alreadyPct || Math.abs(v) > 1 ? v / 100 : v;

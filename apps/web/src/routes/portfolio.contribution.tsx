@@ -18,7 +18,7 @@ import { TickerBadge } from "@/components/app/badges";
 import { fmtBRL, fmtPct } from "@/lib/format";
 import { asArray } from "@/lib/queries";
 import { addJournalEntry } from "@/lib/journal";
-import { BookMarked, Sparkles } from "lucide-react";
+import { AlertTriangle, BookMarked, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/portfolio/contribution")({
@@ -65,6 +65,7 @@ type ContributionResult = {
   rejected?: ContributionDiscard[];
   skipped?: ContributionDiscard[];
   totals?: { invested?: number; remaining?: number };
+  warnings?: string[];
 };
 
 function ContributionPage() {
@@ -85,18 +86,28 @@ function ContributionPage() {
           .map((s) => s.trim())
           .filter(Boolean),
         // Formato: "PETR4:100, VALE3:50" — quantity deve ser > 0 (schema da API).
+        // Entrada inválida vira erro visível em vez de virar 1 silenciosamente,
+        // que distorceria o teto de concentração sem o usuário perceber.
         positions: positions
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean)
           .map((part) => {
             const [t, q] = part.split(":").map((x) => x.trim());
-            return {
-              ticker: (t ?? "").toUpperCase(),
-              quantity: Number(q) > 0 ? Number(q) : 1,
-            };
-          })
-          .filter((p) => p.ticker.length >= 4),
+            const ticker = (t ?? "").toUpperCase();
+            const quantity = Number(q);
+            if (ticker.length < 4) {
+              throw new Error(
+                `Ticker inválido em "${part}". Use o formato TICKER:quantidade (ex.: PETR4:100).`,
+              );
+            }
+            if (!Number.isFinite(quantity) || quantity <= 0) {
+              throw new Error(
+                `Quantidade inválida para ${ticker} em "${part}". Informe um número inteiro maior que zero (ex.: ${ticker}:100).`,
+              );
+            }
+            return { ticker, quantity };
+          }),
       };
       return apiFetch<ContributionResult>({ path: "/analysis/contribution", method: "POST", body });
     },
@@ -111,14 +122,10 @@ function ContributionPage() {
   const buys = buysRaw.map((b) => {
     const unit = b.price ?? b.unitPrice;
     const total = b.total ?? b.value ?? b.cost;
-    const whyText = Array.isArray(b.why)
-      ? b.why.join(" · ")
-      : (b.reason ?? b.justification);
+    const whyText = Array.isArray(b.why) ? b.why.join(" · ") : (b.reason ?? b.justification);
     const weight =
       b.weight ??
-      (typeof total === "number" && amountNum > 0
-        ? (total / amountNum) * 100
-        : undefined);
+      (typeof total === "number" && amountNum > 0 ? (total / amountNum) * 100 : undefined);
     return {
       ...b,
       price: unit,
@@ -219,6 +226,18 @@ function ContributionPage() {
           ) : null}
           {run.data ? (
             <>
+              {(result.warnings?.length ?? 0) > 0 ? (
+                <Panel>
+                  <div className="p-3 flex gap-2 text-xs leading-relaxed text-amber-400">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <ul className="list-disc pl-4 space-y-1">
+                      {result.warnings?.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </Panel>
+              ) : null}
               <div className="flex justify-end">
                 <Button
                   type="button"
@@ -290,16 +309,16 @@ function ContributionPage() {
                           <td className="px-3 h-9">
                             <TickerBadge ticker={b.ticker} />
                           </td>
-                          <td className="px-3 h-9 text-right tabular">{b.quantity ?? b.qty ?? "—"}</td>
+                          <td className="px-3 h-9 text-right tabular">
+                            {b.quantity ?? b.qty ?? "—"}
+                          </td>
                           <td className="px-3 h-9 text-right tabular">
                             {fmtBRL(b.price ?? b.unitPrice)}
                           </td>
                           <td className="px-3 h-9 text-right tabular">
                             {fmtBRL(b.total ?? b.value ?? b.cost)}
                           </td>
-                          <td className="px-3 h-9 text-right tabular">
-                            {fmtPct(b.weight, true)}
-                          </td>
+                          <td className="px-3 h-9 text-right tabular">{fmtPct(b.weight, true)}</td>
                           <td
                             className="px-3 h-9 text-xs text-muted-foreground truncate max-w-[280px]"
                             title={b.reason ?? b.justification ?? undefined}

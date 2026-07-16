@@ -10,7 +10,7 @@
  *               repetidas ao Yahoo Finance.
  */
 
-import { stockQuoteService, type StockHistoryPoint } from './stock-quote-service.ts';
+import { stockQuoteService } from './stock-quote-service.ts';
 import { getOrSet } from './redis.ts';
 import { withRetry } from '../../shared/retry.ts';
 

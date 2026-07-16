@@ -25,6 +25,7 @@ import type { ReactNode } from "react";
 type Ctx = { open: () => void; close: () => void; isOpen: boolean };
 const PaletteCtx = createContext<Ctx | null>(null);
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook co-locado com PaletteCtx neste arquivo
 export function useCommandPalette() {
   const c = useContext(PaletteCtx);
   if (!c) throw new Error("useCommandPalette outside provider");

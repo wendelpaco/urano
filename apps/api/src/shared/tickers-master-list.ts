@@ -40,7 +40,7 @@ export const ALL_STOCK_TICKERS = [
   // Saneamento
   'SAPR11',
   // Adicionais (tickers com alta liquidez)
-  'BBSE3', 'B3SA3', 'HYPE3', 'IGTI11', 'RENT3', 'RAIZ4', 'PSSA3', 'CSAN3',
+  'BBSE3', 'B3SA3', 'HYPE3', 'IGTI11', 'RAIZ4', 'PSSA3', 'CSAN3',
 ];
 
 /** FIIs — tickers cobertos pelo scraper */

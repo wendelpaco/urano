@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import {
+  MAX_CONTRIBUTION_AMOUNT,
   suggestContribution,
   type AdvisorAsset,
 } from '../../src/core/services/contribution-advisor.ts';
@@ -26,6 +27,34 @@ function universe(): AdvisorAsset[] {
 }
 
 describe('suggestContribution', () => {
+  it('rejeita amount não-finito ou acima do limite de segurança', () => {
+    expect(() => suggestContribution(universe(), [], {
+      amount: Number.POSITIVE_INFINITY,
+      profile: 'moderado',
+    })).toThrow(RangeError);
+    expect(() => suggestContribution(universe(), [], {
+      amount: MAX_CONTRIBUTION_AMOUNT + 1,
+      profile: 'moderado',
+    })).toThrow(RangeError);
+  });
+
+  it('distribui uma sobra extrema em cálculo único, sem loop por unidade', () => {
+    const customUniverse: AdvisorAsset[] = [
+      asset({ ticker: 'CHEAP3', score: 90, price: 0.01, sector: 'setor a' }),
+      asset({ ticker: 'PRICEY3', score: 80, price: 75_000_000, sector: 'setor b' }),
+    ];
+    const result = suggestContribution(customUniverse, [], {
+      amount: MAX_CONTRIBUTION_AMOUNT,
+      profile: 'agressivo',
+      onlyTypes: ['stock'],
+      maxAssetPercent: 100,
+    });
+
+    expect(result.totals.invested).toBe(MAX_CONTRIBUTION_AMOUNT);
+    expect(result.totals.remaining).toBe(0);
+    expect(result.purchases.find((p) => p.ticker === 'CHEAP3')?.quantity).toBe(10_000_000_000);
+  });
+
   it('carteira vazia, perfil moderado: compra ações e FIIs dentro do valor', () => {
     const result = suggestContribution(universe(), [], { amount: 2000, profile: 'moderado' });
     expect(result.purchases.length).toBeGreaterThan(0);
@@ -60,7 +89,6 @@ describe('suggestContribution', () => {
     expect(conservador.skipped.some((s) => s.ticker === 'DDDD3' && s.reason.includes('Score'))).toBe(true);
 
     const agressivo = suggestContribution(universe(), [], { amount: 5000, profile: 'agressivo' });
-    const all = [...agressivo.purchases.map((p) => p.ticker), ...agressivo.skipped.map((s) => s.ticker)];
     expect(agressivo.purchases.every((p) => p.score >= 45)).toBe(true);
   });
 

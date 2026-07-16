@@ -1,7 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { asAssets, rankingMeta, useRanking } from "@/lib/queries";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
-import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
+import {
+  DeltaPill,
+  DY_TTM_LABEL,
+  DY_TTM_TITLE,
+  SCORE_BADGE_TRUST_TITLE,
+  ScoreBadge,
+  SectorBadge,
+  TickerBadge,
+} from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { ErrorState, SkeletonRows } from "@/components/app/states";
 import { Button } from "@/components/ui/button";
@@ -31,8 +39,20 @@ function RankingPage() {
   // asAssets normaliza pe/dy/changePct e aceita { data } ou array.
   const stockItems = asAssets(stockQ.data);
   const fiiItems = asAssets(fiiQ.data);
-  const items =
-    type === "all" ? [...stockItems, ...fiiItems] : type === "stock" ? stockItems : fiiItems;
+  // "Todos" busca as duas classes separadas (backend não tem type=all) e mescla.
+  // Cada lista chega ordenada pelo backend, mas concatenar deixaria todos os FIIs
+  // depois de todas as ações — a coluna "#" sugere ranking unificado, então
+  // reordenamos client-side pela mesma chave/direção pedida (default: score desc).
+  const sortKey = (sort ?? "score") as keyof (typeof stockItems)[number];
+  const dir = order === "asc" ? 1 : -1;
+  const mergedSorted = [...stockItems, ...fiiItems].sort((a, b) => {
+    const av = a[sortKey];
+    const bv = b[sortKey];
+    const an = typeof av === "number" ? av : Number.NEGATIVE_INFINITY;
+    const bn = typeof bv === "number" ? bv : Number.NEGATIVE_INFINITY;
+    return (an - bn) * dir;
+  });
+  const items = type === "all" ? mergedSorted : type === "stock" ? stockItems : fiiItems;
   const meta = rankingMeta(stockQ.data) ?? rankingMeta(fiiQ.data);
   const q =
     type === "all"
@@ -139,11 +159,26 @@ function RankingPage() {
                 <th className="text-left px-3 h-8">Setor</th>
                 <SortH label="Preço" col="price" sort={sort} order={order} onClick={setSort} />
                 <SortH label="Var %" col="changePct" sort={sort} order={order} onClick={setSort} />
-                <SortH label="DY" col="dy" sort={sort} order={order} onClick={setSort} />
+                {/* TODO(F3): chip DY vs CDI/SELIC quando useMacro tiver série CDI no ranking */}
+                <SortH
+                  label={DY_TTM_LABEL}
+                  col="dy"
+                  sort={sort}
+                  order={order}
+                  onClick={setSort}
+                  title={DY_TTM_TITLE}
+                />
                 <SortH label="P/L" col="pe" sort={sort} order={order} onClick={setSort} />
                 <SortH label="P/VP" col="pvp" sort={sort} order={order} onClick={setSort} />
                 <SortH label="ROE" col="roe" sort={sort} order={order} onClick={setSort} />
-                <SortH label="Score" col="score" sort={sort} order={order} onClick={setSort} />
+                <SortH
+                  label="Score"
+                  col="score"
+                  sort={sort}
+                  order={order}
+                  onClick={setSort}
+                  title={SCORE_BADGE_TRUST_TITLE}
+                />
               </tr>
             </thead>
             <tbody>
@@ -168,18 +203,12 @@ function RankingPage() {
                   <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
                   <td className="px-3 h-8 text-right">
                     <DeltaPill
-                      value={
-                        a.changePct ??
-                        (a as { changePercent?: number }).changePercent
-                      }
+                      value={a.changePct ?? (a as { changePercent?: number }).changePercent}
                       alreadyPct
                     />
                   </td>
-                  <td className="px-3 h-8 text-right tabular">
-                    {fmtPct(
-                      a.dy ?? (a as { dividendYield?: number }).dividendYield,
-                      true,
-                    )}
+                  <td className="px-3 h-8 text-right tabular" title={DY_TTM_TITLE}>
+                    {fmtPct(a.dy ?? (a as { dividendYield?: number }).dividendYield, true)}
                   </td>
                   <td className="px-3 h-8 text-right tabular">
                     {fmtNum(a.pe ?? (a as { peRatio?: number }).peRatio)}
@@ -206,6 +235,7 @@ function SortH({
   order,
   onClick,
   align = "right",
+  title,
 }: {
   label: string;
   col: string;
@@ -213,10 +243,12 @@ function SortH({
   order: string;
   onClick: (c: string) => void;
   align?: "left" | "right";
+  title?: string;
 }) {
   const active = sort === col;
   return (
     <th
+      title={title}
       className={`h-8 px-3 select-none cursor-pointer hover:text-foreground ${
         align === "right" ? "text-right" : "text-left"
       } ${active ? "text-foreground" : ""}`}

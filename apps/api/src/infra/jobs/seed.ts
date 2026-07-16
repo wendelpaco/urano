@@ -133,11 +133,11 @@ async function main(): Promise<void> {
   console.log(`   ✅ ${fiiJobsCreated} jobs (refresh a cada ${FII_INTERVAL / 3600}h)`);
 
   // 5. System job: snapshot diário
-  await store.createJob({ ticker: '_daily', assetType: 'system' as 'stock', runInterval: 86_400, priority: 10 });
+  await store.createJob({ ticker: '_daily', assetType: 'system', runInterval: 86_400, priority: 10 });
   console.log('   ✅ 1 job de snapshot diário (24h)');
 
   // 6. System job: warmup de scores (a cada 25 min, antes do cache expirar em 30 min)
-  await store.createJob({ ticker: '_warmup', assetType: 'system' as 'stock', runInterval: 1_500, priority: 10 });
+  await store.createJob({ ticker: '_warmup', assetType: 'system', runInterval: 1_500, priority: 10 });
   console.log('   ✅ 1 job de warmup de scores (25 min)\n');
 
   // 6. Stats

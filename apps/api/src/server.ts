@@ -12,7 +12,23 @@ import { buildRateLimiter } from './infra/http/middleware/rate-limit.ts';
 import { createGenReqId, requestIdHook } from './infra/http/middleware/request-id.ts';
 import { securityHeadersHook } from './infra/http/middleware/security-headers.ts';
 
-const rateLimiter = buildRateLimiter({ failClosed: env.RATE_LIMIT_FAIL_CLOSED });
+// Camada 1 (pre-auth): sempre por IP. Nunca usa x-api-key não validada como
+// identidade, portanto trocar valores aleatórios no header não cria buckets.
+const ipRateLimiter = buildRateLimiter({
+  identity: 'ip',
+  limit: env.RATE_LIMIT_IP_PER_MINUTE,
+  pathLimits: {
+    '/v1/healthcheck': env.HEALTHCHECK_RATE_LIMIT_PER_MINUTE,
+  },
+  failClosed: env.RATE_LIMIT_FAIL_CLOSED,
+});
+
+// Camada 2 (post-auth): por ID interno da chave validada pelo authMiddleware.
+const authenticatedKeyRateLimiter = buildRateLimiter({
+  identity: 'authenticatedKey',
+  limit: env.RATE_LIMIT_KEY_PER_MINUTE,
+  failClosed: env.RATE_LIMIT_FAIL_CLOSED,
+});
 
 // ─── Timestamp GMT-3 (horário de Brasília) ─────────────────────────────
 function brt(d = new Date()): string {
@@ -37,8 +53,8 @@ const app = Fastify({
   bodyLimit: env.BODY_LIMIT_BYTES,
   connectionTimeout: 10_000,
   requestTimeout: env.REQUEST_TIMEOUT_MS,
-  // When behind a reverse proxy that terminates TLS
-  trustProxy: true,
+  // false by default; in production configure only known proxy IPs/CIDRs.
+  trustProxy: env.TRUST_PROXY,
   logger: {
     timestamp: () => `,"time":"${brt()}"`,
     ...(isDev ? {
@@ -73,7 +89,10 @@ app.addHook('onRequest', async (request, reply) => {
 // Request correlation id, security headers, rate limiting (does not touch CORS)
 app.addHook('onRequest', requestIdHook);
 app.addHook('onRequest', securityHeadersHook);
-app.addHook('onRequest', rateLimiter);
+app.addHook('onRequest', ipRateLimiter);
+// Executa após todos os hooks onRequest, inclusive o authMiddleware registrado
+// nas rotas /v1. Rotas públicas não têm apiKeyId e são ignoradas nesta camada.
+app.addHook('preHandler', authenticatedKeyRateLimiter);
 
 // Light access log: method, url, status, duration — reqId comes from Fastify logger bindings
 app.addHook('onResponse', async (request, reply) => {
@@ -126,9 +145,12 @@ app.setErrorHandler((error: FastifyError | Error, _request, reply) => {
   }
   app.log.error(error);
   const status = fe.statusCode ?? 500;
-  // Em produção nunca vazamos mensagem interna/stack para o cliente.
+  // Nunca vazamos mensagem interna/stack para o cliente em erro 5xx, em nenhum
+  // ambiente — o default é NODE_ENV=development, então gatear por !isDev exporia
+  // detalhes de infra (nomes de tabela, credenciais em mensagens de driver) no
+  // fluxo padrão. Detalhe fica só no log do servidor.
   const message =
-    status >= 500 && !isDev
+    status >= 500
       ? 'Erro interno.'
       : (fe.message ?? 'Erro interno.');
   reply.status(status).send({ error: 'InternalServerError', message });

@@ -3,12 +3,51 @@ import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { fmtPct } from "@/lib/format";
 
+/** F1 — carimbo de confiança em todo ScoreBadge (não é sinal de compra). */
+export const SCORE_BADGE_TRUST_TITLE =
+  "Score experimental de qualidade — não prediz retorno. Ver Validação.";
+
+/** F3 — rótulo canônico de dividend yield trailing 12 meses. */
+export const DY_TTM_LABEL = "DY TTM 12m";
+
+/** F3 — title/tooltip do DY (janela + exclusão de amortização em FII). */
+export const DY_TTM_TITLE =
+  "Dividend yield trailing 12 meses: soma de proventos de renda no período ÷ preço. Em FIIs, amortização de principal não entra no DY.";
+
+/**
+ * Cabeçalho de coluna DY com contexto TTM (F3).
+ * Usa os mesmos tokens tipográficos das tabelas de market/portfolio.
+ */
+export function DyTtmHeader({
+  className,
+  align = "right",
+}: {
+  className?: string;
+  align?: "left" | "right";
+}) {
+  return (
+    <th
+      title={DY_TTM_TITLE}
+      className={cn(
+        "h-8 px-3 text-[10px] uppercase tracking-wider text-muted-foreground",
+        align === "right" ? "text-right" : "text-left",
+        className,
+      )}
+    >
+      {DY_TTM_LABEL}
+    </th>
+  );
+}
+
 export function ScoreBadge({
   score,
   size = "md",
+  title = SCORE_BADGE_TRUST_TITLE,
 }: {
   score: number | null | undefined;
   size?: "sm" | "md" | "lg";
+  /** Override opcional; default é o carimbo de confiança F1. */
+  title?: string;
 }) {
   const s = typeof score === "number" ? score : null;
   const tone = s === null ? "muted" : s >= 70 ? "positive" : s >= 50 ? "warning" : "negative";
@@ -19,8 +58,14 @@ export function ScoreBadge({
   }[size];
   return (
     <span
+      title={title}
+      aria-label={
+        s === null
+          ? `Score indisponível. ${SCORE_BADGE_TRUST_TITLE}`
+          : `Score ${s.toFixed(0)}. ${SCORE_BADGE_TRUST_TITLE}`
+      }
       className={cn(
-        "inline-flex items-center justify-center rounded font-semibold tabular border",
+        "inline-flex items-center justify-center rounded font-semibold tabular border cursor-help",
         sizes,
         tone === "positive" && "bg-positive/15 text-positive border-positive/30",
         tone === "warning" && "bg-warning/15 text-warning border-warning/30",

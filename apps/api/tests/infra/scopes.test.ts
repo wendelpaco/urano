@@ -18,9 +18,21 @@ describe('scopes helpers', () => {
     expect(hasScope(['read:market'], 'admin:ops')).toBe(false);
   });
 
-  test('normalizeScopes: empty falls back to bootstrap', () => {
-    expect(normalizeScopes(null)).toEqual(BOOTSTRAP_SCOPES);
-    expect(normalizeScopes([])).toEqual(BOOTSTRAP_SCOPES);
+  test('normalizeScopes: fail-closed — ausente/vazio concede zero scopes', () => {
+    // Fail-closed: NULL/[]/valor inválido nunca vira acesso total. Chaves
+    // bootstrap/CLI recebem BOOTSTRAP_SCOPES gravados explicitamente na criação.
+    expect(normalizeScopes(null)).toEqual([]);
+    expect(normalizeScopes([])).toEqual([]);
+    expect(normalizeScopes(undefined)).toEqual([]);
+    expect(normalizeScopes('read:market')).toEqual([]);
+  });
+
+  test('normalizeScopes: preserva scopes explícitos', () => {
+    expect(normalizeScopes(['read:market', 'write:wallet'])).toEqual([
+      'read:market',
+      'write:wallet',
+    ]);
+    expect(normalizeScopes([...BOOTSTRAP_SCOPES])).toEqual(BOOTSTRAP_SCOPES);
   });
 
   test('DEFAULT_CHILD_SCOPES has no admin', () => {

@@ -29,7 +29,8 @@ const VERDICT_COPY = {
     label: "Pendente",
     tone: "bg-muted text-muted-foreground border-border",
     icon: Hourglass,
-    blurb: "Validação ainda não concluída.",
+    blurb:
+      "A execução anterior foi invalidada por viés temporal; nenhuma eficácia do score está comprovada até a revalidação ponto no tempo.",
   },
 } as const;
 
@@ -64,6 +65,18 @@ function ValidationPage() {
             <div className="p-4 space-y-3">
               <p className="text-sm leading-relaxed text-foreground/90">{v.summary}</p>
               <p className="text-xs text-muted-foreground leading-relaxed">{verdictMeta.blurb}</p>
+              {!v.decisionUseAllowed && v.decisionBlockers.length > 0 ? (
+                <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3">
+                  <p className="text-xs font-medium text-amber-400 mb-1">
+                    Uso em alocação bloqueado
+                  </p>
+                  <ul className="list-disc pl-4 text-[11px] text-muted-foreground space-y-1">
+                    {v.decisionBlockers.map((blocker) => (
+                      <li key={blocker}>{blocker}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <div className="flex flex-wrap gap-3 text-[11px] font-mono text-muted-foreground">
                 <span>
                   Validado em: <span className="text-foreground">{v.validatedAt ?? "—"}</span>
@@ -82,20 +95,16 @@ function ValidationPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MetricCard
                 label={`Top ${v.ibov.vsTopN.n} (média a.a.)`}
-                value={fmtPct(v.ibov.vsTopN.avgPortfolio)}
+                value={fmtPct(v.ibov.vsTopN.avgPortfolio, true)}
               />
               <MetricCard
                 label="IBOV real (média a.a.)"
-                value={
-                  v.ibov.vsTopN.avgIbov != null ? fmtPct(v.ibov.vsTopN.avgIbov) : "—"
-                }
+                value={v.ibov.vsTopN.avgIbov != null ? fmtPct(v.ibov.vsTopN.avgIbov, true) : "—"}
               />
               <MetricCard
                 label="Delta vs IBOV"
                 value={
-                  v.ibov.vsTopN.deltaAvgPp != null
-                    ? fmtPct(v.ibov.vsTopN.deltaAvgPp, true)
-                    : "—"
+                  v.ibov.vsTopN.deltaAvgPp != null ? fmtPct(v.ibov.vsTopN.deltaAvgPp, true) : "—"
                 }
                 tone={
                   (v.ibov.vsTopN.deltaAvgPp ?? 0) > 0
@@ -105,10 +114,7 @@ function ValidationPage() {
                       : "neutral"
                 }
               />
-              <MetricCard
-                label="Anos IBOV com dado"
-                value={`${v.ibov.vsTopN.ibovYears}`}
-              />
+              <MetricCard label="Anos IBOV com dado" value={`${v.ibov.vsTopN.ibovYears}`} />
             </div>
           ) : null}
 
@@ -136,7 +142,7 @@ function ValidationPage() {
                       <tr key={year} className="border-b border-border/60">
                         <td className="px-3 h-8 font-mono">{year}</td>
                         <td className="px-3 h-8 text-right tabular">
-                          {ret == null ? "—" : fmtPct(ret)}
+                          {ret == null ? "—" : fmtPct(ret, true)}
                         </td>
                       </tr>
                     ))}
@@ -161,7 +167,7 @@ function ValidationPage() {
                   label="Avg portfolio"
                   value={
                     v.strategy.summary.avgPortfolio != null
-                      ? fmtPct(v.strategy.summary.avgPortfolio)
+                      ? fmtPct(v.strategy.summary.avgPortfolio, true)
                       : "—"
                   }
                 />
@@ -169,7 +175,7 @@ function ValidationPage() {
                   label="Avg universo"
                   value={
                     v.strategy.summary.avgUniverse != null
-                      ? fmtPct(v.strategy.summary.avgUniverse)
+                      ? fmtPct(v.strategy.summary.avgUniverse, true)
                       : "—"
                   }
                 />
@@ -177,7 +183,7 @@ function ValidationPage() {
                   label="Avg IBOV"
                   value={
                     v.strategy.summary.avgIbov != null
-                      ? fmtPct(v.strategy.summary.avgIbov)
+                      ? fmtPct(v.strategy.summary.avgIbov, true)
                       : "—"
                   }
                 />
@@ -200,13 +206,13 @@ function ValidationPage() {
                     <tr key={y.year} className="border-b border-border/60">
                       <td className="px-3 h-8 font-mono">{y.year}</td>
                       <td className="px-3 h-8 text-right tabular">
-                        {fmtPct(y.portfolioReturn)}
+                        {fmtPct(y.portfolioReturn, true)}
                       </td>
                       <td className="px-3 h-8 text-right tabular">
-                        {fmtPct(y.universeReturn)}
+                        {fmtPct(y.universeReturn, true)}
                       </td>
                       <td className="px-3 h-8 text-right tabular">
-                        {y.ibovReturn == null ? "—" : fmtPct(y.ibovReturn)}
+                        {y.ibovReturn == null ? "—" : fmtPct(y.ibovReturn, true)}
                       </td>
                     </tr>
                   ))}
@@ -229,10 +235,7 @@ function ValidationPage() {
                       : "—"
                   }
                 />
-                <MetricCard
-                  label="n pares DY"
-                  value={v.fiiBacktest.dyPredictsNext.n}
-                />
+                <MetricCard label="n pares DY" value={v.fiiBacktest.dyPredictsNext.n} />
               </div>
               <p className="px-3 text-xs text-muted-foreground leading-relaxed">
                 {v.fiiBacktest.dyPredictsNext.interpretation}
@@ -251,9 +254,9 @@ function ValidationPage() {
                   {v.fiiBacktest.byYear.map((y) => (
                     <tr key={y.year} className="border-b border-border/60">
                       <td className="px-3 h-8 font-mono">{y.year}</td>
-                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgTotal)}</td>
-                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgPrice)}</td>
-                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgDiv)}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgTotal, true)}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgPrice, true)}</td>
+                      <td className="px-3 h-8 text-right tabular">{fmtPct(y.avgDiv, true)}</td>
                       <td className="px-3 h-8 text-right tabular">{y.n}</td>
                     </tr>
                   ))}
@@ -261,7 +264,8 @@ function ValidationPage() {
               </table>
               <p className="p-3 text-[11px] text-muted-foreground">
                 Fontes: Yahoo (cota) + StatusInvest/DB (proventos). Score FII não é ranking
-                histórico — use DY→TR+1 e médias de total return.
+                histórico. A lista usa fundos existentes hoje, omite encerrados e mantém viés de
+                sobrevivência; resultados são apenas exploratórios.
               </p>
             </Panel>
           ) : (
@@ -279,8 +283,7 @@ function ValidationPage() {
               <PanelHeader title="Política de dados (só fontes gratuitas)" />
               <div className="p-3 text-xs space-y-1 text-muted-foreground">
                 <div>
-                  Fundamentals:{" "}
-                  <span className="text-foreground">{v.dataPolicy.fundamentals}</span>
+                  Fundamentals: <span className="text-foreground">{v.dataPolicy.fundamentals}</span>
                 </div>
                 <div>
                   Preços: <span className="text-foreground">{v.dataPolicy.prices}</span>
@@ -289,8 +292,7 @@ function ValidationPage() {
                   Macro: <span className="text-foreground">{v.dataPolicy.macro}</span>
                 </div>
                 <div>
-                  Proventos:{" "}
-                  <span className="text-foreground">{v.dataPolicy.dividends}</span>
+                  Proventos: <span className="text-foreground">{v.dataPolicy.dividends}</span>
                 </div>
               </div>
             </Panel>
@@ -300,9 +302,12 @@ function ValidationPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MetricCard
                 label={`Top ${v.topN.n} (média a.a.)`}
-                value={fmtPct(v.topN.avgPortfolio)}
+                value={fmtPct(v.topN.avgPortfolio, true)}
               />
-              <MetricCard label="Universo coberto (média a.a.)" value={fmtPct(v.topN.avgMarket)} />
+              <MetricCard
+                label="Universo coberto (média a.a.)"
+                value={fmtPct(v.topN.avgMarket, true)}
+              />
               <MetricCard
                 label="Anos com vantagem vs universo"
                 value={`${v.topN.winYears}/${v.topN.totalYears}`}
@@ -362,11 +367,12 @@ function ValidationPage() {
             <PanelHeader title="Como usar no produto" />
             <ul className="p-4 text-sm space-y-2 text-foreground/90 list-disc pl-8">
               <li>
-                Trate score alto como “fundamentos relativamente melhores no filtro”, não como “vai
-                render mais”.
+                O score é uma heurística experimental; não trate score alto ou baixo como evidência
+                de retorno, qualidade comprovada ou timing.
               </li>
               <li>
-                Score baixo é o sinal mais útil da validação atual: filtra casos fracos na amostra.
+                A execução anterior foi invalidada; aguarde um backtest com datas de publicação e
+                universo histórico antes de comparar faixas do score.
               </li>
               <li>
                 Estratégias “compre o top N” não têm evidência robusta o suficiente para serem

@@ -1,11 +1,13 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import { eq, or, desc } from 'drizzle-orm';
+import { and, eq, or, desc } from 'drizzle-orm';
 import { db } from '../../database/connection.ts';
 import { apiKeys } from '../../database/schema.ts';
+import { invalidateCachedAuth } from '../middleware/auth.ts';
 import { logSecurityEvent } from '../audit-log.ts';
 import {
+  ALL_SCOPES,
   DEFAULT_CHILD_SCOPES,
   BOOTSTRAP_SCOPES,
   requireScope,
@@ -23,8 +25,16 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 
 const createKeySchema = z.object({
   name: z.string().min(1).max(100),
-  /** Optional subset; admin scopes stripped unless caller has admin:keys (and still only if requested). */
-  scopes: z.array(z.string().min(1).max(32)).max(10).optional(),
+  /** Optional non-admin subset of the caller's own effective scopes. */
+  scopes: z
+    .array(z.enum(ALL_SCOPES))
+    .min(1)
+    .max(ALL_SCOPES.length)
+    .refine(
+      (items) => new Set(items).size === items.length,
+      'Escopos duplicados não são permitidos',
+    )
+    .optional(),
 });
 
 const deleteParamsSchema = z.object({ id: z.string().uuid() });
@@ -41,36 +51,63 @@ function keyStoredFromHash(keyHash: string): string {
   return `ur_hashonly_${keyHash.slice(0, 24)}`;
 }
 
-/** Child keys never inherit admin:* unless caller explicitly passes and has admin:keys. */
-function resolveChildScopes(
-  requested: string[] | undefined,
-  callerScopes: string[] | undefined,
-): string[] {
-  const base = requested?.length ? requested : DEFAULT_CHILD_SCOPES;
-  const allowed = base.filter((s) => {
-    if (s === '*' || s.startsWith('admin:')) {
-      return hasScope(callerScopes, 'admin:keys') && (s === 'admin:keys' || s === 'admin:ops' || s === '*');
-    }
-    return ['read:market', 'write:wallet', 'admin:keys', 'admin:ops'].includes(s);
-  });
-  // Never grant * via HTTP create
-  const cleaned = allowed.filter((s) => s !== '*');
-  return cleaned.length > 0 ? cleaned : [...DEFAULT_CHILD_SCOPES];
+export interface ChildScopeResolution {
+  scopes: string[];
+  denied: string[];
 }
 
-/** Can manage target key: self, or child owned by caller with admin:keys. */
-async function canManageKey(
+function isAdministrativeScope(scope: string): boolean {
+  return scope === '*' || scope.startsWith('admin:');
+}
+
+/**
+ * HTTP-created child keys are limited to a non-administrative subset of the
+ * caller's effective scopes. Administrative keys are bootstrap/CLI-only so a
+ * leaked child credential cannot create another privileged generation.
+ */
+export function resolveChildScopes(
+  requested: string[] | undefined,
+  callerScopes: string[] | undefined,
+): ChildScopeResolution {
+  // Defaults are an intersection (not an inheritance): a key with only
+  // admin:keys must never implicitly grant read:market/write:wallet.
+  const candidates = requested?.length
+    ? requested
+    : DEFAULT_CHILD_SCOPES.filter((scope) => hasScope(callerScopes, scope));
+  const denied = candidates.filter(
+    (scope) => isAdministrativeScope(scope)
+      || !ALL_SCOPES.includes(scope as (typeof ALL_SCOPES)[number])
+      || !hasScope(callerScopes, scope),
+  );
+  const scopes = candidates.filter(
+    (scope) => !isAdministrativeScope(scope)
+      && ALL_SCOPES.includes(scope as (typeof ALL_SCOPES)[number])
+      && hasScope(callerScopes, scope),
+  );
+  return { scopes: [...new Set(scopes)], denied: [...new Set(denied)] };
+}
+
+interface ManageableKey {
+  id: string;
+  ownerId: string | null;
+  keyHash: string;
+}
+
+/** Returns target metadata only for self or a directly owned child. */
+async function getManageableKey(
   callerId: string,
   targetId: string,
   callerScopes: string[] | undefined,
-): Promise<boolean> {
-  if (callerId === targetId) return true;
-  if (!hasScope(callerScopes, 'admin:keys')) return false;
+): Promise<ManageableKey | null> {
+  // Avoid a DB lookup and do not reveal whether a foreign key exists.
+  if (callerId !== targetId && !hasScope(callerScopes, 'admin:keys')) return null;
   const [row] = await db
-    .select({ ownerId: apiKeys.ownerId })
+    .select({ id: apiKeys.id, ownerId: apiKeys.ownerId, keyHash: apiKeys.keyHash })
     .from(apiKeys)
-    .where(eq(apiKeys.id, targetId));
-  return row?.ownerId === callerId;
+    .where(and(eq(apiKeys.id, targetId), eq(apiKeys.active, true)));
+  if (!row) return null;
+  if (callerId === targetId || row.ownerId === callerId) return row;
+  return null;
 }
 
 /** POST /v1/keys — requires admin:keys; creates a child key owned by caller */
@@ -87,7 +124,23 @@ export async function createApiKeyController(
   const key = generateApiKey();
   const keyHash = crypto.createHash('sha256').update(key).digest('hex');
   const keyStored = keyStoredFromHash(keyHash);
-  const scopes = resolveChildScopes(requestedScopes, request.scopes);
+  const resolution = resolveChildScopes(requestedScopes, request.scopes);
+  if (resolution.denied.length > 0) {
+    reply.status(403).send({
+      error: 'Forbidden',
+      message: 'Uma chave filha HTTP só pode receber escopos não administrativos que o criador possui.',
+      deniedScopes: resolution.denied,
+    });
+    return;
+  }
+  if (resolution.scopes.length === 0) {
+    reply.status(400).send({
+      error: 'ValidationError',
+      message: 'Nenhum escopo delegável foi informado. Solicite um subconjunto dos escopos da chave atual.',
+    });
+    return;
+  }
+  const scopes = resolution.scopes;
   const ownerId = request.apiKeyId!;
 
   const [row] = await db
@@ -161,8 +214,8 @@ export async function rotateApiKeyController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
 
   const { id } = parsed.data;
-  const allowed = await canManageKey(request.apiKeyId!, id, request.scopes);
-  if (!allowed) {
+  const target = await getManageableKey(request.apiKeyId!, id, request.scopes);
+  if (!target) {
     // 404 — same shape as missing (don't confirm foreign key existence)
     reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
     return;
@@ -175,13 +228,23 @@ export async function rotateApiKeyController(
   const [updated] = await db
     .update(apiKeys)
     .set({ key: keyStored, keyHash: newKeyHash })
-    .where(eq(apiKeys.id, id))
+    .where(and(
+      eq(apiKeys.id, id),
+      eq(apiKeys.keyHash, target.keyHash),
+      eq(apiKeys.active, true),
+    ))
     .returning();
 
   if (!updated) {
-    reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
+    await invalidateCachedAuth(target.keyHash);
+    reply.status(409).send({
+      error: 'Conflict',
+      message: 'A API Key foi alterada por outra operação. Recarregue o estado antes de tentar novamente.',
+    });
     return;
   }
+
+  await invalidateCachedAuth(target.keyHash);
 
   logSecurityEvent('api_key.rotate', {
     apiKeyId: updated.id,
@@ -207,8 +270,8 @@ export async function deleteApiKeyController(
   if (!parsed.success) return sendZodError(reply, parsed.error, 'ID inválido.');
 
   const { id } = parsed.data;
-  const allowed = await canManageKey(request.apiKeyId!, id, request.scopes);
-  if (!allowed) {
+  const target = await getManageableKey(request.apiKeyId!, id, request.scopes);
+  if (!target) {
     reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
     return;
   }
@@ -216,13 +279,23 @@ export async function deleteApiKeyController(
   const [updated] = await db
     .update(apiKeys)
     .set({ active: false })
-    .where(eq(apiKeys.id, id))
+    .where(and(
+      eq(apiKeys.id, id),
+      eq(apiKeys.keyHash, target.keyHash),
+      eq(apiKeys.active, true),
+    ))
     .returning({ id: apiKeys.id });
 
   if (!updated) {
-    reply.status(404).send({ error: 'NotFound', message: 'API Key não encontrada.' });
+    await invalidateCachedAuth(target.keyHash);
+    reply.status(409).send({
+      error: 'Conflict',
+      message: 'A API Key foi alterada por outra operação. Recarregue o estado antes de tentar novamente.',
+    });
     return;
   }
+
+  await invalidateCachedAuth(target.keyHash);
 
   logSecurityEvent('api_key.delete', {
     apiKeyId: updated.id,

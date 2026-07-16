@@ -287,7 +287,6 @@ export class TechnicalIndicatorsCalculator {
   supportResistance(candles: CandlePoint[]): TechnicalIndicators['supportResistance'] {
     if (candles.length < 20) return { support: null, resistance: null };
 
-    const closes = candles.map((c) => c.close);
     const lows = candles.map((c) => c.low);
     const highs = candles.map((c) => c.high);
 

@@ -15,8 +15,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { db } from '../database/connection.ts';
-import { backtestResults, backtestStrategyYears, companies, companyFundamentals } from '../database/schema.ts';
-import { stockQuoteService } from '../services/stock-quote-service.ts';
+import { backtestResults, backtestStrategyYears } from '../database/schema.ts';
 import { calcAllIndicators } from '../../core/services/indicators.ts';
 import { StockScoreCalculator } from '../../core/services/stock-score.ts';
 import type { HistoricalData } from '../../core/services/stock-score.ts';
@@ -27,7 +26,7 @@ import {
   scoreBuckets,
   topNStrategy,
 } from '../../core/services/backtest-analysis.ts';
-import { eq, desc, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 const SCORE_VERSION = 'v1';
 

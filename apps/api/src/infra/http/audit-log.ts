@@ -34,8 +34,14 @@ export function logSecurityEvent(action: string, details: Record<string, unknown
         apiKeyId,
         details,
       }),
-    ).catch(() => {
+    ).catch((err: unknown) => {
       // Best-effort: never surface DB errors to callers.
+      console.error(
+        '[audit] Falha ao persistir evento de auditoria:',
+        `action=${action}`,
+        `apiKeyId=${apiKeyId ?? 'N/A'}`,
+        (err instanceof Error ? err.message : String(err)),
+      );
     });
   } catch {
     // Sync failure (e.g. mock without insert) — ignore.

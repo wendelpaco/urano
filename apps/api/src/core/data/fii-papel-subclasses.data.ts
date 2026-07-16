@@ -52,18 +52,6 @@ export const PAPEL_SUBCLASS_MAP: Record<string, PapelSubclassification> = {
     last_updated: '2025-12-29',
   },
 
-  BCFF11: {
-    ticker: 'BCFF11',
-    subclass: 'high_grade',
-    dy_min: 9.0,
-    dy_max: 11.0,
-    risco_credito: 'baixo',
-    risco_juros: 'alto',
-    limitador_esperado: 'risco_juros',
-    justificativa: 'Gestão BTG, CRI high-grade com baixo risco de inadimplência.',
-    last_updated: '2025-12-29',
-  },
-
   VCRI11: {
     ticker: 'VCRI11',
     subclass: 'high_grade',

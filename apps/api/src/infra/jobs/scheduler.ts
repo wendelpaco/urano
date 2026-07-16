@@ -2,8 +2,8 @@
  * Job Scheduler — Loop de verificação e disparo de jobs pendentes.
  */
 
-import { JobStore } from './job-store.ts';
-import { JobWorker } from './worker.ts';
+import type { JobStore } from './job-store.ts';
+import type { JobWorker } from './worker.ts';
 import type { SchedulerConfig } from './types.ts';
 
 const DEFAULT_CONFIG: SchedulerConfig = {
@@ -17,6 +17,8 @@ export class JobScheduler {
   private interval: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private currentJobs = 0;
+  private tickInFlight: Promise<void> | null = null;
+  private readonly activeBatches = new Set<Promise<void>>();
 
   constructor(
     private store: JobStore,
@@ -26,6 +28,12 @@ export class JobScheduler {
 
   async start(): Promise<void> {
     if (this.running) return;
+
+    if (!this.config.enabled) {
+      console.log('[scheduler] Desabilitado por configuração');
+      return;
+    }
+
     this.running = true;
 
     console.log(
@@ -33,19 +41,25 @@ export class JobScheduler {
       `concorrência ${this.config.maxConcurrentJobs}`,
     );
 
-    // Reseta jobs travados de execuções anteriores
-    const reset = await this.store.resetStuckJobs(this.config.staleTimeout);
-    if (reset > 0) console.log(`[scheduler] ${reset} job(s) travado(s) resetado(s)`);
+    try {
+      // Primeira verificação imediata
+      await this.runTick();
 
-    // Primeira verificação imediata
-    await this.tick();
+      // stop() pode ter sido solicitado enquanto o primeiro claim aguardava DB.
+      if (!this.running) return;
 
-    // Loop
-    this.interval = setInterval(() => this.tick(), this.config.checkInterval);
+      // Loop. runTick evita ticks sobrepostos quando o banco está lento.
+      this.interval = setInterval(() => {
+        void this.runTick();
+      }, this.config.checkInterval);
+    } catch (error) {
+      this.running = false;
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running && !this.tickInFlight && this.activeBatches.size === 0) return;
     this.running = false;
 
     if (this.interval) {
@@ -53,42 +67,79 @@ export class JobScheduler {
       this.interval = null;
     }
 
+    // Um tick pode estar entre o claim e o dispatch. Esperá-lo garante que ele
+    // libere o claim ou registre o batch antes de capturarmos activeBatches.
+    if (this.tickInFlight) {
+      await this.tickInFlight;
+    }
+
+    const active = [...this.activeBatches];
+    if (active.length > 0) {
+      console.log(`[scheduler] Aguardando ${active.length} lote(s) ativo(s)…`);
+      await Promise.allSettled(active);
+    }
+
     console.log('[scheduler] Parado');
+  }
+
+  private runTick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+
+    const task = this.tick()
+      .catch((error) => {
+        console.error('[scheduler] Erro no tick:', error);
+      })
+      .finally(() => {
+        if (this.tickInFlight === task) this.tickInFlight = null;
+      });
+
+    this.tickInFlight = task;
+    return task;
   }
 
   private async tick(): Promise<void> {
     if (!this.running) return;
 
-    try {
-      const available = this.config.maxConcurrentJobs - this.currentJobs;
-      if (available <= 0) return;
+    // Reaper periódico de leases expirados. Jobs vivos renovam updatedAt.
+    const reset = await this.store.resetStuckJobs(this.config.staleTimeout);
+    if (reset > 0) console.log(`[scheduler] ${reset} lease(s) expirado(s) liberado(s)`);
 
-      const dueJobs = await this.store.getJobsDue();
-      if (dueJobs.length === 0) return;
+    const available = this.config.maxConcurrentJobs - this.currentJobs;
+    if (available <= 0) return;
 
-      const toExecute = dueJobs.slice(0, available);
-      const batchSize = toExecute.length;
-      this.currentJobs += batchSize;
+    const claimed = await this.store.claimJobsDue(available);
+    if (claimed.length === 0) return;
 
-      console.log(`[scheduler] Disparando ${batchSize} job(s)`);
-
-      // Fire and forget
-      this.worker.executeJobs(toExecute, this.config.maxConcurrentJobs)
-        .then((result) => {
-          if (result.failed > 0) {
-            console.warn(`[scheduler] Lote: ${result.success} ok, ${result.failed} falha(s)`);
-          }
-        })
-        .catch((err) => {
-          console.error('[scheduler] Erro no lote:', err);
-        })
-        .finally(() => {
-          this.currentJobs = Math.max(0, this.currentJobs - batchSize);
-        });
-    } catch (error) {
-      console.error('[scheduler] Erro no tick:', error);
-      this.currentJobs = Math.max(0, this.currentJobs - 1);
+    // Shutdown iniciado enquanto o banco fazia o claim: não abandona jobs em running.
+    if (!this.running) {
+      await this.store.releaseClaims(claimed.map((job) => job.id));
+      return;
     }
+
+    const batchSize = claimed.length;
+    this.currentJobs += batchSize;
+    console.log(`[scheduler] Disparando ${batchSize} job(s)`);
+
+    const batch = this.worker.executeJobs(claimed, this.config.maxConcurrentJobs)
+      .then((result) => {
+        if (result.failed > 0 || result.partial > 0) {
+          console.warn(
+            `[scheduler] Lote: ${result.success} ok, ${result.partial} parcial(is), ` +
+            `${result.failed} falha(s)`,
+          );
+        }
+      })
+      .catch((error) => {
+        console.error('[scheduler] Erro durável no lote:', error);
+      })
+      .finally(() => {
+        this.currentJobs = Math.max(0, this.currentJobs - batchSize);
+      });
+
+    const tracked = batch.finally(() => {
+      this.activeBatches.delete(tracked);
+    });
+    this.activeBatches.add(tracked);
   }
 
   getStatus() {

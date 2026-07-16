@@ -5,9 +5,9 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Banknote, Wallet } from "lucide-react";
 import { MetricCard, Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { EmptyState, ErrorState, LoadingState } from "@/components/app/states";
-import { TickerBadge } from "@/components/app/badges";
+import { DY_TTM_TITLE, TickerBadge } from "@/components/app/badges";
 import { Button } from "@/components/ui/button";
-import { fmtBRL, fmtNum } from "@/lib/format";
+import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
 import {
   asArray,
@@ -27,6 +27,8 @@ type Holding = {
   ticker: string;
   type: string;
   quantity: number;
+  /** Valor de mercado agregado (qtd × preço ou value da posição), se conhecido. */
+  marketValue: number | null;
   walletIds: string[];
   walletNames: string[];
 };
@@ -35,9 +37,13 @@ type TickerIncome = {
   ticker: string;
   type: string;
   quantity: number;
+  marketValue: number | null;
   events: number;
   totalPerShare: number;
-  estimatedTotal: number;
+  /** Soma de todo o histórico de proventos × qtd atual — NÃO é renda anual. */
+  historicalAccumulated: number;
+  /** Proventos nos últimos 12 meses de competência × qtd atual. */
+  ttmIncome: number;
   lastDate: string | null;
   monthly: Record<string, number>;
   walletNames: string[];
@@ -45,6 +51,15 @@ type TickerIncome = {
 
 function monthKey(d: string): string {
   return d.slice(0, 7);
+}
+
+/** Valor de mercado da posição sem inventar preço. */
+function positionMarketValue(p: Position, qty: number): number | null {
+  const explicit = Number(p.value ?? p.total);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const price = Number(p.price);
+  if (Number.isFinite(price) && price > 0 && qty > 0) return price * qty;
+  return null;
 }
 
 function PortfolioIncomePage() {
@@ -64,9 +79,13 @@ function PortfolioIncomePage() {
         if (!ticker) continue;
         const qty = Number(p.quantity ?? p.qty ?? 0) || 0;
         const type = (p.type as string) || "stock";
+        const mv = positionMarketValue(p, qty);
         const prev = map.get(ticker);
         if (prev) {
           prev.quantity += qty;
+          if (mv != null) {
+            prev.marketValue = (prev.marketValue ?? 0) + mv;
+          }
           if (!prev.walletIds.includes(wId)) {
             prev.walletIds.push(wId);
             prev.walletNames.push(wName);
@@ -76,6 +95,7 @@ function PortfolioIncomePage() {
             ticker,
             type,
             quantity: qty,
+            marketValue: mv,
             walletIds: [wId],
             walletNames: [wName],
           });
@@ -98,24 +118,39 @@ function PortfolioIncomePage() {
   const loadingDivs =
     holdings.length > 0 && dividendQueries.some((q) => q.isLoading || q.isPending);
 
+  // Âncora TTM: últimos 12 meses civis a partir do mês atual (UTC).
+  const ttmMonthKeys = useMemo(() => {
+    const now = new Date();
+    const keys: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      keys.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+    }
+    return new Set(keys);
+  }, []);
+
   const rows: TickerIncome[] = holdings.map((h, i) => {
     const series = normalizeDividends(dividendQueries[i]?.data);
     const monthly: Record<string, number> = {};
     let totalPerShare = 0;
+    let ttmPerShare = 0;
     let lastDate: string | null = null;
     for (const p of series) {
       totalPerShare += p.v;
       const mk = monthKey(p.d);
       monthly[mk] = (monthly[mk] ?? 0) + p.v * h.quantity;
+      if (ttmMonthKeys.has(mk)) ttmPerShare += p.v;
       if (!lastDate || p.d > lastDate) lastDate = p.d;
     }
     return {
       ticker: h.ticker,
       type: h.type,
       quantity: h.quantity,
+      marketValue: h.marketValue,
       events: series.length,
       totalPerShare,
-      estimatedTotal: totalPerShare * h.quantity,
+      historicalAccumulated: totalPerShare * h.quantity,
+      ttmIncome: ttmPerShare * h.quantity,
       lastDate,
       monthly,
       walletNames: h.walletNames,
@@ -135,15 +170,26 @@ function PortfolioIncomePage() {
       .slice(-24);
   })();
 
-  const totalEstimated = rows.reduce((a, r) => a + r.estimatedTotal, 0);
+  const historicalAccumulated = rows.reduce((a, r) => a + r.historicalAccumulated, 0);
   const totalEvents = rows.reduce((a, r) => a + r.events, 0);
-  const last12 = monthlyHistory.slice(-12).reduce((a, m) => a + m.value, 0);
+  // F6: card primário — renda TTM 12m (não o acumulado de todo o histórico).
+  const last12 = rows.reduce((a, r) => a + r.ttmIncome, 0);
+
+  // Yield sobre patrimônio só com valor de mercado conhecido (sem inventar preço).
+  const marketValueKnown = rows.reduce(
+    (a, r) => a + (r.marketValue != null && r.marketValue > 0 ? r.marketValue : 0),
+    0,
+  );
+  const hasFullMarketValue =
+    rows.length > 0 && rows.every((r) => r.marketValue != null && r.marketValue > 0);
+  const yieldOnPortfolio =
+    hasFullMarketValue && marketValueKnown > 0 ? (last12 / marketValueKnown) * 100 : null;
 
   return (
     <div className="p-3 md:p-4 space-y-3">
       <SectionHeader
         title="Proventos / Renda"
-        subtitle="Histórico de dividendos e proventos das posições nas suas carteiras."
+        subtitle="Renda trailing 12 meses das posições — não use o acumulado histórico como se fosse rendimento anual."
         actions={
           <Button asChild size="sm" variant="outline">
             <Link to="/portfolio">Ver carteiras</Link>
@@ -179,10 +225,30 @@ function PortfolioIncomePage() {
       {walletsQ.isSuccess && holdings.length > 0 ? (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* F6 primário: TTM 12m em destaque */}
+            <div title={DY_TTM_TITLE} className="col-span-2 md:col-span-1">
+              <MetricCard
+                label="Renda TTM 12m (est.)"
+                value={fmtBRL(last12)}
+                hint="Soma dos últimos 12 meses × qtd atual"
+                className="ring-1 ring-primary/25"
+              />
+            </div>
+            <MetricCard
+              label="Yield s/ patrimônio (TTM)"
+              value={yieldOnPortfolio != null ? fmtPct(yieldOnPortfolio, true) : "—"}
+              hint={
+                yieldOnPortfolio != null
+                  ? "last12 ÷ valor de mercado das posições"
+                  : "Sem preço/valor em todas as posições"
+              }
+            />
             <MetricCard label="Ativos com posição" value={holdings.length} />
-            <MetricCard label="Eventos de provento" value={totalEvents} />
-            <MetricCard label="Histórico estimado (qtd × valor)" value={fmtBRL(totalEstimated)} />
-            <MetricCard label="Últimos 12 meses (est.)" value={fmtBRL(last12)} />
+            <MetricCard
+              label="Acumulado histórico (todo o período, não anualizado)"
+              value={fmtBRL(historicalAccumulated)}
+              hint={`${totalEvents} eventos · não é renda anual`}
+            />
           </div>
 
           <div className="grid grid-cols-12 gap-3">
@@ -273,8 +339,15 @@ function PortfolioIncomePage() {
                       <th className="text-left px-3 h-8">Ticker</th>
                       <th className="text-right px-3 h-8">Qtd</th>
                       <th className="text-right px-3 h-8">Eventos</th>
-                      <th className="text-right px-3 h-8">Por ação (Σ)</th>
-                      <th className="text-right px-3 h-8">Estimado</th>
+                      <th className="text-right px-3 h-8" title={DY_TTM_TITLE}>
+                        TTM 12m
+                      </th>
+                      <th
+                        className="text-right px-3 h-8"
+                        title="Soma de todos os proventos do histórico × qtd atual — não anualizado"
+                      >
+                        Acumulado histórico
+                      </th>
                       <th className="text-right px-3 h-8">Último</th>
                       <th className="text-left px-3 h-8">Carteiras</th>
                     </tr>
@@ -295,11 +368,17 @@ function PortfolioIncomePage() {
                         </td>
                         <td className="px-3 h-9 text-right tabular">{fmtNum(r.quantity)}</td>
                         <td className="px-3 h-9 text-right tabular">{r.events || "—"}</td>
-                        <td className="px-3 h-9 text-right tabular">
-                          {r.events ? fmtBRL(r.totalPerShare) : "—"}
+                        <td
+                          className="px-3 h-9 text-right tabular font-medium"
+                          title={DY_TTM_TITLE}
+                        >
+                          {r.events ? fmtBRL(r.ttmIncome) : "—"}
                         </td>
-                        <td className="px-3 h-9 text-right tabular font-medium">
-                          {r.events ? fmtBRL(r.estimatedTotal) : "—"}
+                        <td
+                          className="px-3 h-9 text-right tabular text-muted-foreground"
+                          title="Acumulado de todo o período × qtd atual — não é renda anual"
+                        >
+                          {r.events ? fmtBRL(r.historicalAccumulated) : "—"}
                         </td>
                         <td className="px-3 h-9 text-right tabular text-xs text-muted-foreground">
                           {r.lastDate ?? "—"}
@@ -316,9 +395,13 @@ function PortfolioIncomePage() {
           </Panel>
 
           <p className="text-[11px] text-muted-foreground leading-relaxed px-1">
-            Proventos são dados históricos retornados pela API (melhor esforço). O valor estimado
-            multiplica o provento por ação pela quantidade nas carteiras — não é rendimento futuro
-            nem recomendação de investimento.
+            <strong className="text-foreground/80">Renda TTM 12m</strong> é o cartão principal: soma
+            proventos dos últimos 12 meses de competência × quantidade atual.{" "}
+            <strong className="text-foreground/80">Acumulado histórico</strong> soma todo o
+            histórico disponível com a mesma quantidade — não anualize nem trate como renda
+            esperada. Yield s/ patrimônio = TTM ÷ valor de mercado só quando preço/valor existe em
+            todas as posições. Em FIIs, amortização não deve compor renda/DY (filtro no backend).
+            Não é recomendação de investimento.
           </p>
         </>
       ) : null}

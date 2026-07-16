@@ -740,5 +740,6 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  // eslint-disable-next-line react-refresh/only-export-components -- hook co-locado com SidebarContext neste arquivo
   useSidebar,
 };

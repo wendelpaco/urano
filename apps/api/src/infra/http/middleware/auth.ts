@@ -38,15 +38,66 @@ interface CachedAuth {
   scopes: string[];
 }
 
-function parseCachedAuth(raw: string): CachedAuth | null {
+export const AUTH_CACHE_TTL_SECONDS = 60;
+
+/** Hashes revogados localmente protegem este processo mesmo se Redis cair. */
+const locallyInvalidatedUntil = new Map<string, number>();
+
+export function authCacheKey(keyHash: string): string {
+  return `apikey:valid:${keyHash}`;
+}
+
+function isLocallyInvalidated(keyHash: string): boolean {
+  const until = locallyInvalidatedUntil.get(keyHash);
+  if (until === undefined) return false;
+  if (until <= Date.now()) {
+    locallyInvalidatedUntil.delete(keyHash);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Invalida imediatamente uma credencial rotacionada/desativada.
+ *
+ * O marcador negativo substitui um eventual cache positivo no Redis
+ * compartilhado. O fallback local cobre a instância que processou a operação
+ * caso Redis esteja indisponível naquele instante.
+ */
+export async function invalidateCachedAuth(keyHash: string): Promise<boolean> {
+  const now = Date.now();
+  // A lista só precisa sobreviver ao TTL do cache positivo. A limpeza durante
+  // mutações evita crescimento permanente sem criar um timer por chave.
+  for (const [hash, until] of locallyInvalidatedUntil) {
+    if (until <= now) locallyInvalidatedUntil.delete(hash);
+  }
+  locallyInvalidatedUntil.set(
+    keyHash,
+    now + AUTH_CACHE_TTL_SECONDS * 1000,
+  );
+  try {
+    await redis.setex(authCacheKey(keyHash), AUTH_CACHE_TTL_SECONDS, 'false');
+    return true;
+  } catch {
+    console.warn('[auth] Redis indisponível ao invalidar cache; bloqueio local aplicado');
+    return false;
+  }
+}
+
+export function parseCachedAuth(raw: string): CachedAuth | null {
   if (raw === 'false') return null;
-  // Legacy cache: plain UUID string (pre-scopes) — treat as full bootstrap until TTL expires
+  // Cache legado sem scopes deve virar cache miss e consultar o banco. Conceder
+  // scopes bootstrap durante o TTL escalaria privilégios de chaves filhas.
   if (/^[0-9a-f-]{36}$/i.test(raw)) {
-    return { id: raw, scopes: normalizeScopes(null) };
+    return null;
   }
   try {
     const parsed = JSON.parse(raw) as { id?: string; scopes?: unknown };
-    if (typeof parsed.id === 'string') {
+    if (
+      typeof parsed.id === 'string'
+      && Array.isArray(parsed.scopes)
+      && parsed.scopes.length > 0
+    ) {
       return { id: parsed.id, scopes: normalizeScopes(parsed.scopes) };
     }
   } catch {
@@ -76,8 +127,16 @@ export async function authMiddleware(
 
   const keyHash = createHash('sha256').update(key).digest('hex');
 
+  if (isLocallyInvalidated(keyHash)) {
+    reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'API key inválida ou inativa.',
+    });
+    return;
+  }
+
   try {
-    const cached = await redis.get(`apikey:valid:${keyHash}`);
+    const cached = await redis.get(authCacheKey(keyHash));
     if (cached === 'false') {
       reply.status(401).send({
         error: 'Unauthorized',
@@ -119,7 +178,7 @@ export async function authMiddleware(
 
   if (!row) {
     try {
-      await redis.setex(`apikey:valid:${keyHash}`, 60, 'false');
+      await redis.setex(authCacheKey(keyHash), AUTH_CACHE_TTL_SECONDS, 'false');
     } catch { /* ok */ }
 
     reply.status(401).send({
@@ -134,10 +193,14 @@ export async function authMiddleware(
   request.scopes = scopes;
 
   try {
-    await redis.setex(
-      `apikey:valid:${keyHash}`,
-      60,
+    // NX impede uma autenticação que começou antes de rotate/delete de
+    // sobrescrever o marcador negativo publicado pela revogação.
+    await redis.set(
+      authCacheKey(keyHash),
       JSON.stringify({ id: row.id, scopes }),
+      'EX',
+      AUTH_CACHE_TTL_SECONDS,
+      'NX',
     );
   } catch { /* ok */ }
 

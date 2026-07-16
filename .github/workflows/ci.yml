@@ -58,8 +58,7 @@ jobs:
           CI: true
           RUN_INTEGRATION: '1'
         run: bun test tests/integration/
-      - name: Web lint
-        working-directory: apps/web
+      - name: Lint API and Web
         run: bun run lint
       - name: Web build
         run: bun run --filter urano-web build

@@ -115,7 +115,7 @@ function MarketSummary() {
       />
       <MetricCard
         label="Variação média"
-        value={avgChange !== null ? fmtPct(avgChange) : "—"}
+        value={avgChange !== null ? fmtPct(avgChange, true) : "—"}
         tone={
           avgChange && avgChange > 0
             ? "positive"

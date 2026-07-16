@@ -3,7 +3,14 @@ import { z } from "zod";
 import { fallback, zodValidator } from "@tanstack/zod-adapter";
 import { Panel, PanelHeader, SectionHeader } from "@/components/app/primitives";
 import { asAssets, useScreener } from "@/lib/queries";
-import { DeltaPill, ScoreBadge, SectorBadge, TickerBadge } from "@/components/app/badges";
+import {
+  DeltaPill,
+  DY_TTM_LABEL,
+  DY_TTM_TITLE,
+  ScoreBadge,
+  SectorBadge,
+  TickerBadge,
+} from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { ErrorState, SkeletonRows, EmptyState } from "@/components/app/states";
 import { Input } from "@/components/ui/input";
@@ -53,7 +60,7 @@ const filterDefs: {
 }[] = [
   { key: "peMin", label: "P/L", kind: "range" },
   { key: "pvpMin", label: "P/VP", kind: "range" },
-  { key: "dyMin", label: "DY %", kind: "range" },
+  { key: "dyMin", label: DY_TTM_LABEL, kind: "range" },
   { key: "roeMin", label: "ROE %", kind: "range" },
   { key: "marketCapMin", label: "Market Cap", kind: "range" },
   { key: "scoreMin", label: "Score", kind: "range" },
@@ -117,9 +124,10 @@ function ScreenerPage() {
             {filterDefs.map((f) => {
               const minKey = f.key;
               const maxKey = minKey.replace(/Min$/, "Max") as keyof z.infer<typeof searchSchema>;
+              const isDy = minKey === "dyMin";
               return (
                 <FilterField key={f.key} label={f.label}>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5" title={isDy ? DY_TTM_TITLE : undefined}>
                     <Input
                       value={search[minKey] ?? ""}
                       onChange={(e) => set(minKey, e.target.value)}
@@ -178,7 +186,10 @@ function ScreenerPage() {
                     <th className="text-left px-3 h-8">Setor</th>
                     <th className="text-right px-3 h-8">Preço</th>
                     <th className="text-right px-3 h-8">Var %</th>
-                    <th className="text-right px-3 h-8">DY</th>
+                    {/* TODO(F3): chip DY vs CDI/SELIC quando useMacro estiver no screener */}
+                    <th className="text-right px-3 h-8" title={DY_TTM_TITLE}>
+                      {DY_TTM_LABEL}
+                    </th>
                     <th className="text-right px-3 h-8">P/L</th>
                     <th className="text-right px-3 h-8">P/VP</th>
                     <th className="text-right px-3 h-8">ROE</th>
@@ -206,18 +217,12 @@ function ScreenerPage() {
                       <td className="px-3 h-8 text-right tabular">{fmtBRL(a.price)}</td>
                       <td className="px-3 h-8 text-right">
                         <DeltaPill
-                          value={
-                            a.changePct ??
-                            (a as { changePercent?: number }).changePercent
-                          }
+                          value={a.changePct ?? (a as { changePercent?: number }).changePercent}
                           alreadyPct
                         />
                       </td>
-                      <td className="px-3 h-8 text-right tabular">
-                        {fmtPct(
-                          a.dy ?? (a as { dividendYield?: number }).dividendYield,
-                          true,
-                        )}
+                      <td className="px-3 h-8 text-right tabular" title={DY_TTM_TITLE}>
+                        {fmtPct(a.dy ?? (a as { dividendYield?: number }).dividendYield, true)}
                       </td>
                       <td className="px-3 h-8 text-right tabular">
                         {fmtNum(a.pe ?? (a as { peRatio?: number }).peRatio)}

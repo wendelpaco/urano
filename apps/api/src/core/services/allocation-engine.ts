@@ -1,8 +1,8 @@
 /**
  * AllocationEngine — Motor de alocação de investimentos.
  *
- * Dado um perfil de risco e valor a investir, seleciona os melhores ativos
- * e distribui o capital com base em scores reais, preços reais (Yahoo),
+ * Dado um mix legado e valor a investir, filtra ativos por qualidade
+ * e distribui o capital com base em scores, preços observados,
  * fundamentos oficiais (CVM) e diversificação setorial.
  *
  * Diferente do easy-invest PortfolioBuilder (que usava estimativas falsas
@@ -11,8 +11,10 @@
 
 import { db } from '../../infra/database/connection.ts';
 import { sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { stockQuoteService } from '../../infra/services/stock-quote-service.ts';
 import { dividendsProvider } from '../../infra/services/dividends-provider.ts';
+import { fiiOperationalService } from '../../infra/services/fii-operational.service.ts';
 import { redis } from '../../infra/services/redis.ts';
 import { calcAllIndicators } from './indicators.ts';
 import { StockScoreCalculator } from './stock-score.ts';
@@ -20,9 +22,15 @@ import {
   FIIScoreCalculatorV4,
   type FIIScoreInput,
 } from './fii-score.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from './dividend-income.ts';
 import { RISK_CONFIGS, type RiskProfile } from '../data/risk-profiles.ts';
+import { getFIIClassification } from '../data/fii-classification.data.ts';
+import { SCORE_VALIDATION } from '../data/score-validation.data.ts';
 
-type AnalyzedAsset = {
+export type AnalyzedAsset = {
   ticker: string;
   name: string;
   score: number;
@@ -30,7 +38,40 @@ type AnalyzedAsset = {
   reasons: string[];
   alerts: string[];
   sector: string | null;
+  fiiType?: 'papel' | 'tijolo' | 'hibrido';
+  dataCoverage?: {
+    percent: number;
+    criticalComplete: boolean;
+    missingFields: string[];
+  };
 };
+
+type AnalyzedUniverse = {
+  assets: AnalyzedAsset[];
+  expected: number;
+  expectedGroups?: { papel: number; fisico: number };
+};
+
+type CanonicalUniverseEnvelope = {
+  version: 'v4';
+  generation: string;
+  generatedAt: string;
+  expected: number;
+  successful: number;
+  eligible: number;
+  coveragePercent: number;
+  status: 'available' | 'unavailable';
+  reason: string | null;
+  data: AnalyzedAsset[];
+};
+
+export interface DecisionUniverseAvailability {
+  stocks: 'available' | 'unavailable';
+  fiis: 'available' | 'unavailable';
+  warnings: string[];
+}
+
+const roundMoney = (value: number): number => Math.round(value * 100) / 100;
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +104,8 @@ export interface AllocatedAsset {
 export interface AllocationResult {
   config: AllocationConfig;
   assets: AllocatedAsset[];
+  dataAvailability: DecisionUniverseAvailability;
+  warnings: string[];
   summary: {
     totalAssets: number;
     stocks: number;
@@ -70,9 +113,436 @@ export interface AllocationResult {
     totalInvested: number;
     remainingCash: number;
     averageScore: number;
-    estimatedAnnualDividend: number;
-    estimatedMonthlyDividend: number;
-    estimatedDividendYield: number;
+    /** Indisponivel ate que todos os ativos tenham DY rastreavel e comparavel. */
+    estimatedAnnualDividend: number | null;
+    estimatedMonthlyDividend: number | null;
+    estimatedDividendYield: number | null;
+    dividendEstimateStatus: 'unavailable';
+  };
+}
+
+export class AllocationValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AllocationValidationError';
+  }
+}
+
+export class AllocationDataUnavailableError extends Error {
+  constructor(message = 'Rankings canônicos indisponíveis; execute o aquecimento de dados antes da alocação.') {
+    super(message);
+    this.name = 'AllocationDataUnavailableError';
+  }
+}
+
+const DECISION_UNIVERSE_TTL_SECONDS = 3_600;
+const MIN_SUCCESS_COVERAGE = 0.8;
+const MIN_FII_COMPLETE_COVERAGE = 0.6;
+const canonicalDecisionUniverseKey = (type: 'stock' | 'fii'): string =>
+  `decision:universe:v4:${type}`;
+
+function parseCanonicalRanking(
+  raw: string,
+  type: 'stock' | 'fii',
+): {
+  assets: AnalyzedAsset[];
+  generation: string;
+  status: 'available' | 'unavailable';
+  reason: string | null;
+} {
+  let envelope: CanonicalUniverseEnvelope;
+  try {
+    envelope = JSON.parse(raw) as CanonicalUniverseEnvelope;
+  } catch {
+    throw new AllocationDataUnavailableError(`Ranking canônico de ${type} está corrompido.`);
+  }
+  if (
+    envelope.version !== 'v4'
+    || !envelope.generation
+    || !Number.isFinite(envelope.expected)
+    || envelope.expected <= 0
+    || !Number.isFinite(envelope.successful)
+    || !Number.isFinite(envelope.eligible)
+    || !['available', 'unavailable'].includes(envelope.status)
+  ) {
+    throw new AllocationDataUnavailableError(
+      `Ranking canônico de ${type} não possui metadados de cobertura válidos.`,
+    );
+  }
+  const rows: unknown = envelope.data;
+  if (!Array.isArray(rows)) {
+    throw new AllocationDataUnavailableError(`Ranking canônico de ${type} possui formato inválido.`);
+  }
+
+  const assets = rows.flatMap((row): AnalyzedAsset[] => {
+    if (!row || typeof row !== 'object') return [];
+    const value = row as Record<string, unknown>;
+    const ticker = typeof value.ticker === 'string' ? value.ticker.trim().toUpperCase() : '';
+    const score = Number(value.score);
+    const price = Number(value.price);
+    if (!ticker || !Number.isFinite(score) || score <= 0 || !Number.isFinite(price) || price <= 0) {
+      return [];
+    }
+    return [{
+      ticker,
+      name: typeof value.name === 'string' && value.name.trim() ? value.name : ticker,
+      score,
+      price,
+      reasons: Array.isArray(value.reasons) ? value.reasons.map(String) : [],
+      alerts: Array.isArray(value.alerts) ? value.alerts.map(String) : [],
+      sector: typeof value.sector === 'string' && value.sector.trim() ? value.sector : null,
+    }];
+  });
+
+  if (assets.length === 0 && envelope.status === 'available') {
+    throw new AllocationDataUnavailableError(`Ranking canônico de ${type} está vazio.`);
+  }
+  if (assets.length !== envelope.eligible) {
+    throw new AllocationDataUnavailableError(
+      `Ranking canônico de ${type} perdeu ativos durante a validação.`,
+    );
+  }
+  return {
+    assets,
+    generation: envelope.generation,
+    status: envelope.status,
+    reason: envelope.reason ?? null,
+  };
+}
+
+/**
+ * Carrega um snapshot canônico já materializado. Nunca inicia centenas de
+ * chamadas externas dentro de uma requisição HTTP.
+ */
+export async function loadCanonicalDecisionUniverse(): Promise<{
+  stocks: AnalyzedAsset[];
+  fiis: AnalyzedAsset[];
+  availability: DecisionUniverseAvailability;
+}> {
+  let stockRaw: string | null;
+  let fiiRaw: string | null;
+  try {
+    const snapshots = await redis.mget(
+      canonicalDecisionUniverseKey('stock'),
+      canonicalDecisionUniverseKey('fii'),
+    );
+    stockRaw = snapshots[0] ?? null;
+    fiiRaw = snapshots[1] ?? null;
+  } catch {
+    throw new AllocationDataUnavailableError('Cache dos rankings canônicos está indisponível.');
+  }
+  if (!stockRaw || !fiiRaw) {
+    throw new AllocationDataUnavailableError();
+  }
+  const stockSnapshot = parseCanonicalRanking(stockRaw, 'stock');
+  const fiiSnapshot = parseCanonicalRanking(fiiRaw, 'fii');
+  if (stockSnapshot.generation !== fiiSnapshot.generation) {
+    throw new AllocationDataUnavailableError(
+      'As classes do universo canônico pertencem a gerações diferentes.',
+    );
+  }
+  return {
+    stocks: stockSnapshot.assets,
+    fiis: fiiSnapshot.assets,
+    availability: {
+      stocks: stockSnapshot.status,
+      fiis: fiiSnapshot.status,
+      warnings: [
+        ...(stockSnapshot.status === 'unavailable'
+          ? [
+              stockSnapshot.reason
+                ?? 'Ações indisponíveis para decisão; orçamento mantido em caixa.',
+            ]
+          : []),
+        ...(fiiSnapshot.status === 'unavailable'
+          ? [
+              fiiSnapshot.reason
+                ?? 'FIIs indisponíveis por cobertura insuficiente; orçamento mantido em caixa.',
+            ]
+          : []),
+      ],
+    },
+  };
+}
+
+/** Materializa em background o mesmo universo completo usado pela alocacao. */
+export async function materializeCanonicalDecisionUniverse(): Promise<{
+  stocks: number;
+  fiis: number;
+  expectedStocks: number;
+  expectedFiis: number;
+  stockStatus: 'available' | 'unavailable';
+  fiiStatus: 'available' | 'unavailable';
+}> {
+  const engine = new AllocationEngine();
+  const [stockAnalysis, fiiAnalysis] = await Promise.all([
+    engine.analyzeAllStocks(),
+    engine.analyzeAllFiis(),
+  ]);
+  if (stockAnalysis.expected === 0) {
+    throw new AllocationDataUnavailableError(
+      'O banco nao produziu candidatos de ações; snapshot anterior foi preservado.',
+    );
+  }
+
+  const stockCoverage = stockAnalysis.assets.length / stockAnalysis.expected;
+  const fiiSuccessCoverage = fiiAnalysis.expected > 0
+    ? fiiAnalysis.assets.length / fiiAnalysis.expected
+    : 0;
+  const eligibleFiis = fiiAnalysis.assets.filter(
+    (asset) => asset.dataCoverage?.criticalComplete === true,
+  );
+  const fiiCompleteCoverage = fiiAnalysis.expected > 0
+    ? eligibleFiis.length / fiiAnalysis.expected
+    : 0;
+
+  if (
+    stockCoverage < MIN_SUCCESS_COVERAGE
+    || (fiiAnalysis.expected > 0 && fiiSuccessCoverage < MIN_SUCCESS_COVERAGE)
+  ) {
+    throw new AllocationDataUnavailableError(
+      'Cobertura insuficiente para publicar o universo de decisao: '
+      + `acoes ${stockAnalysis.assets.length}/${stockAnalysis.expected}; `
+      + `FIIs cotados ${fiiAnalysis.assets.length}/${fiiAnalysis.expected}; `
+      + `FIIs comparaveis ${eligibleFiis.length}/${fiiAnalysis.expected}. `
+      + 'O snapshot anterior foi preservado.',
+    );
+  }
+
+  const fiiUnavailableReasons: string[] = [];
+  if (fiiAnalysis.expected === 0) {
+    fiiUnavailableReasons.push('nenhum candidato FII disponível no banco');
+  } else if (fiiCompleteCoverage < MIN_FII_COMPLETE_COVERAGE) {
+    fiiUnavailableReasons.push(
+      `cobertura comparável total ${eligibleFiis.length}/${fiiAnalysis.expected}`,
+    );
+  }
+
+  for (const group of ['papel', 'fisico'] as const) {
+    const expected = fiiAnalysis.expectedGroups?.[group] ?? 0;
+    const complete = eligibleFiis.filter((asset) =>
+      group === 'papel' ? asset.fiiType === 'papel' : asset.fiiType !== 'papel'
+    ).length;
+    if (expected > 0 && complete / expected < MIN_FII_COMPLETE_COVERAGE) {
+      fiiUnavailableReasons.push(
+        `cobertura comparável de ${group} ${complete}/${expected}`,
+      );
+    }
+  }
+  const fiiStatus = fiiUnavailableReasons.length === 0
+    ? 'available' as const
+    : 'unavailable' as const;
+  const publishedFiis = fiiStatus === 'available' ? eligibleFiis : [];
+  const fiiReason = fiiStatus === 'unavailable'
+    ? `Classe FII indisponível (${fiiUnavailableReasons.join('; ')}); `
+      + 'o orçamento correspondente será mantido em caixa.'
+    : null;
+  const stockStatus = SCORE_VALIDATION.decisionUseAllowed
+    ? 'available' as const
+    : 'unavailable' as const;
+  const publishedStocks = stockStatus === 'available'
+    ? stockAnalysis.assets
+    : [];
+  const stockReason = stockStatus === 'unavailable'
+    ? 'Classe ação indisponível para alocação: o score está com uso decisório bloqueado '
+      + `(${SCORE_VALIDATION.decisionBlockers.join('; ')}). O orçamento será mantido em caixa.`
+    : null;
+
+  const generatedAt = new Date().toISOString();
+  const generation = randomUUID();
+  const stockEnvelope: CanonicalUniverseEnvelope = {
+    version: 'v4',
+    generation,
+    generatedAt,
+    expected: stockAnalysis.expected,
+    successful: stockAnalysis.assets.length,
+    eligible: publishedStocks.length,
+    coveragePercent: Math.round(stockCoverage * 100),
+    status: stockStatus,
+    reason: stockReason,
+    data: publishedStocks,
+  };
+  const fiiEnvelope: CanonicalUniverseEnvelope = {
+    version: 'v4',
+    generation,
+    generatedAt,
+    expected: fiiAnalysis.expected,
+    successful: fiiAnalysis.assets.length,
+    eligible: publishedFiis.length,
+    coveragePercent: Math.round(fiiCompleteCoverage * 100),
+    status: fiiStatus,
+    reason: fiiReason,
+    data: publishedFiis,
+  };
+
+  const transaction = redis.multi();
+  transaction.set(
+    canonicalDecisionUniverseKey('stock'),
+    JSON.stringify(stockEnvelope),
+    'EX',
+    DECISION_UNIVERSE_TTL_SECONDS,
+  );
+  transaction.set(
+    canonicalDecisionUniverseKey('fii'),
+    JSON.stringify(fiiEnvelope),
+    'EX',
+    DECISION_UNIVERSE_TTL_SECONDS,
+  );
+  const published = await transaction.exec();
+  if (!published || published.some(([error]) => error !== null)) {
+    throw new AllocationDataUnavailableError(
+      'Falha ao publicar atomicamente o universo canônico.',
+    );
+  }
+  return {
+    stocks: publishedStocks.length,
+    fiis: publishedFiis.length,
+    expectedStocks: stockAnalysis.expected,
+    expectedFiis: fiiAnalysis.expected,
+    stockStatus,
+    fiiStatus,
+  };
+}
+
+export async function refreshCanonicalDecisionUniverseIfNeeded(
+  minRemainingTtlSeconds = 900,
+): Promise<'fresh' | 'refreshed'> {
+  const [stockTtl, fiiTtl] = await Promise.all([
+    redis.ttl(canonicalDecisionUniverseKey('stock')),
+    redis.ttl(canonicalDecisionUniverseKey('fii')),
+  ]);
+  if (stockTtl >= minRemainingTtlSeconds && fiiTtl >= minRemainingTtlSeconds) {
+    return 'fresh';
+  }
+  await materializeCanonicalDecisionUniverse();
+  return 'refreshed';
+}
+
+/** Resolve o percentual omitido como complemento do percentual informado. */
+export function resolveAllocationPercentages(
+  stockPercent: number | undefined,
+  fiiPercent: number | undefined,
+  defaults: { stockPercent: number; fiiPercent: number },
+): { stockPercent: number; fiiPercent: number } {
+  if (stockPercent !== undefined && fiiPercent === undefined) {
+    return { stockPercent, fiiPercent: 100 - stockPercent };
+  }
+  if (stockPercent === undefined && fiiPercent !== undefined) {
+    return { stockPercent: 100 - fiiPercent, fiiPercent };
+  }
+  return {
+    stockPercent: stockPercent ?? defaults.stockPercent,
+    fiiPercent: fiiPercent ?? defaults.fiiPercent,
+  };
+}
+
+export function validateAllocationConfig(config: AllocationConfig): void {
+  if (!Number.isFinite(config.totalAmount) || config.totalAmount <= 0) {
+    throw new AllocationValidationError('Valor total deve ser positivo e finito.');
+  }
+  if (
+    !Number.isFinite(config.stockPercent) ||
+    !Number.isFinite(config.fiiPercent) ||
+    config.stockPercent < 0 ||
+    config.stockPercent > 100 ||
+    config.fiiPercent < 0 ||
+    config.fiiPercent > 100
+  ) {
+    throw new AllocationValidationError('Percentuais devem estar entre 0% e 100%.');
+  }
+  const totalPercent = config.stockPercent + config.fiiPercent;
+  if (Math.abs(totalPercent - 100) > 0.01) {
+    throw new AllocationValidationError(
+      `Percentuais globais devem somar 100% (recebido: ${totalPercent.toFixed(2)}%).`,
+    );
+  }
+  if (!Number.isInteger(config.maxAssets) || config.maxAssets < 1 || config.maxAssets > 20) {
+    throw new AllocationValidationError('Quantidade maxima de ativos deve estar entre 1 e 20.');
+  }
+  if (!Number.isFinite(config.minScore) || config.minScore < 0 || config.minScore > 100) {
+    throw new AllocationValidationError('Score minimo deve estar entre 0 e 100.');
+  }
+}
+
+/**
+ * Converte orcamento teorico em ordens inteiras executaveis.
+ * `allocationAmount` sempre representa custo real (quantidade x preco), e
+ * ativos que nao cabem no orcamento nao sao contabilizados como investidos.
+ */
+export function allocateWholeUnits<
+  T extends {
+    ticker: string;
+    name: string;
+    score: number;
+    price: number;
+    reasons: string[];
+    alerts: string[];
+  },
+>(
+  assets: T[],
+  budget: number,
+  totalAmount: number,
+  assetType: 'stock' | 'fii',
+): AllocatedAsset[] {
+  if (assets.length === 0 || budget <= 0 || totalAmount <= 0) return [];
+
+  const validAssets = assets.filter(
+    (asset) =>
+      Number.isFinite(asset.score) &&
+      asset.score > 0 &&
+      Number.isFinite(asset.price) &&
+      asset.price > 0,
+  );
+  if (validAssets.length === 0) return [];
+  const equalTargetAmount = budget / validAssets.length;
+
+  return validAssets.flatMap((asset): AllocatedAsset[] => {
+    const quantity = Math.max(0, Math.floor(equalTargetAmount / asset.price));
+    if (quantity === 0) return [];
+
+    const actualCost = roundMoney(quantity * asset.price);
+    return [{
+      ticker: asset.ticker,
+      name: asset.name,
+      assetType,
+      score: asset.score,
+      price: asset.price,
+      allocationPercent: Math.round((actualCost / totalAmount) * 1_000) / 10,
+      allocationAmount: actualCost,
+      quantity,
+      reasons: asset.reasons,
+      alerts: asset.alerts,
+    }];
+  });
+}
+
+export function summarizeAllocation(
+  totalAmount: number,
+  allocatedStocks: AllocatedAsset[],
+  allocatedFiis: AllocatedAsset[],
+): AllocationResult['summary'] {
+  const allAssets = [...allocatedStocks, ...allocatedFiis];
+  const totalInvested = roundMoney(
+    allAssets.reduce((sum, asset) => sum + asset.allocationAmount, 0),
+  );
+  if (totalInvested > totalAmount + 0.01) {
+    throw new AllocationValidationError('Custo executavel excedeu o valor total.');
+  }
+  const averageScore = allAssets.length > 0
+    ? Math.round(allAssets.reduce((sum, asset) => sum + asset.score, 0) / allAssets.length)
+    : 0;
+
+  return {
+    totalAssets: allAssets.length,
+    stocks: allocatedStocks.length,
+    fiis: allocatedFiis.length,
+    totalInvested,
+    remainingCash: Math.max(0, roundMoney(totalAmount - totalInvested)),
+    averageScore,
+    estimatedAnnualDividend: null,
+    estimatedMonthlyDividend: null,
+    estimatedDividendYield: null,
+    dividendEstimateStatus: 'unavailable',
   };
 }
 
@@ -80,27 +550,33 @@ export interface AllocationResult {
 
 export class AllocationEngine {
   /**
-   * Constrói uma carteira-modelo filtrada por score e perfil de risco.
-   * O score é quality-filter (não preditor de retorno) — ver SCORE_VALIDATION.
+   * Constroi um cenario experimental de alocacao por score e mix de ativos.
+   * A validação ponto-no-tempo do score está pendente — ver SCORE_VALIDATION.
    */
   async buildAllocation(
     config?: Partial<AllocationConfig>,
   ): Promise<AllocationResult> {
     const profile = config?.riskProfile ?? 'moderado';
     const profileConfig = RISK_CONFIGS[profile];
+    const percentages = resolveAllocationPercentages(
+      config?.stockPercent,
+      config?.fiiPercent,
+      profileConfig,
+    );
 
     const finalConfig: AllocationConfig = {
       totalAmount: config?.totalAmount ?? 10_000,
       riskProfile: profile,
-      stockPercent: config?.stockPercent ?? profileConfig.stockPercent,
-      fiiPercent: config?.fiiPercent ?? profileConfig.fiiPercent,
+      stockPercent: percentages.stockPercent,
+      fiiPercent: percentages.fiiPercent,
       minScore: config?.minScore ?? profileConfig.minScore,
       maxAssets: config?.maxAssets ?? profileConfig.maxAssets,
     };
+    validateAllocationConfig(finalConfig);
 
     // Cache de resposta (mesmo perfil/valor) — evita re-scrape a cada clique
     const cacheKey =
-      `allocation:${finalConfig.riskProfile}:${finalConfig.totalAmount}:` +
+      `allocation:v4:${finalConfig.riskProfile}:${finalConfig.totalAmount}:` +
       `${finalConfig.minScore}:${finalConfig.maxAssets}:` +
       `${finalConfig.stockPercent}:${finalConfig.fiiPercent}`;
     try {
@@ -108,20 +584,17 @@ export class AllocationEngine {
       if (hit) return JSON.parse(hit) as AllocationResult;
     } catch { /* redis offline */ }
 
-    // Preferir scores do warmup (Redis) — O(1) por ativo, sem StatusInvest em lote.
-    // Fallback: análise completa (lenta) só se cache vazio.
-    let stocks = await this.loadCachedScores('stock');
-    let fiis = await this.loadCachedScores('fii');
-    if (stocks.length === 0) stocks = await this.analyzeAllStocks();
-    if (fiis.length === 0) fiis = await this.analyzeAllFiis();
+    // O caminho HTTP nunca recalcula ~200 ativos em linha. Usa somente o
+    // universo canônico v4 materializado; sem ele, falha rápido e com diagnóstico.
+    const { stocks, fiis, availability } = await loadCanonicalDecisionUniverse();
 
     // Filtra por score mínimo e ordena
     const eligibleStocks = stocks
-      .filter((s) => s.score >= finalConfig.minScore && s.price > 0)
+      .filter((s) => s.score > 0 && s.score >= finalConfig.minScore && s.price > 0)
       .sort((a, b) => b.score - a.score);
 
     const eligibleFiis = fiis
-      .filter((f) => f.score >= finalConfig.minScore && f.price > 0)
+      .filter((f) => f.score > 0 && f.score >= finalConfig.minScore && f.price > 0)
       .sort((a, b) => b.score - a.score);
 
     // Seleciona com diversificação setorial
@@ -146,34 +619,31 @@ export class AllocationEngine {
       maxFiis,
     );
 
-    const allocatedStocks = this.allocateByScore(selectedStocks, stockBudget, 'stock');
-    const allocatedFiis = this.allocateByScore(selectedFiis, fiiBudget, 'fii');
+    const allocatedStocks = allocateWholeUnits(
+      selectedStocks,
+      stockBudget,
+      finalConfig.totalAmount,
+      'stock',
+    );
+    const allocatedFiis = allocateWholeUnits(
+      selectedFiis,
+      fiiBudget,
+      finalConfig.totalAmount,
+      'fii',
+    );
 
     const allAssets = [...allocatedStocks, ...allocatedFiis];
-
-    const totalInvested = allAssets.reduce((s, a) => s + a.allocationAmount, 0);
-    const avgScore = allAssets.length > 0
-      ? allAssets.reduce((s, a) => s + a.score, 0) / allAssets.length
-      : 0;
-
-    const estimatedAnnualDividend = allAssets.reduce((sum, a) => {
-      return sum + (a.allocationAmount * 0.06); // fallback 6% a.a.
-    }, 0);
 
     const result: AllocationResult = {
       config: finalConfig,
       assets: allAssets,
-      summary: {
-        totalAssets: allAssets.length,
-        stocks: allocatedStocks.length,
-        fiis: allocatedFiis.length,
-        totalInvested: Math.round(totalInvested * 100) / 100,
-        remainingCash: Math.round((finalConfig.totalAmount - totalInvested) * 100) / 100,
-        averageScore: Math.round(avgScore),
-        estimatedAnnualDividend: Math.round(estimatedAnnualDividend * 100) / 100,
-        estimatedMonthlyDividend: Math.round(estimatedAnnualDividend / 12 * 100) / 100,
-        estimatedDividendYield: +(estimatedAnnualDividend / finalConfig.totalAmount * 100).toFixed(2),
-      },
+      dataAvailability: availability,
+      warnings: availability.warnings,
+      summary: summarizeAllocation(
+        finalConfig.totalAmount,
+        allocatedStocks,
+        allocatedFiis,
+      ),
     };
 
     try {
@@ -181,40 +651,6 @@ export class AllocationEngine {
     } catch { /* ok */ }
 
     return result;
-  }
-
-  /** Lê scores do warmup Redis (score:stock:* / score:fii:*). */
-  private async loadCachedScores(type: 'stock' | 'fii'): Promise<AnalyzedAsset[]> {
-    try {
-      const keys = await redis.keys(`score:${type}:*`);
-      if (keys.length === 0) return [];
-      const out: AnalyzedAsset[] = [];
-      for (const key of keys) {
-        try {
-          const raw = await redis.get(key);
-          if (!raw) continue;
-          const s = JSON.parse(raw) as {
-            ticker: string;
-            name: string;
-            score: number;
-            price: number;
-          };
-          if (!s.ticker || !(s.score > 0) || !(s.price > 0)) continue;
-          out.push({
-            ticker: s.ticker,
-            name: s.name || s.ticker,
-            score: s.score,
-            price: s.price,
-            reasons: ['Score de qualidade (cache warmup)'],
-            alerts: [],
-            sector: null,
-          });
-        } catch { /* skip */ }
-      }
-      return out;
-    } catch {
-      return [];
-    }
   }
 
   /** Atualiza preço só dos candidatos finais (poucos getQuote). */
@@ -231,10 +667,7 @@ export class AllocationEngine {
 
   // ─── Análise ──────────────────────────────────────────────────────────
 
-  async analyzeAllStocks(): Promise<Array<{
-    ticker: string; name: string; score: number; price: number;
-    reasons: string[]; alerts: string[]; sector: string | null;
-  }>> {
+  async analyzeAllStocks(): Promise<AnalyzedUniverse> {
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (c.ticker)
         c.ticker, c.name, c.sector,
@@ -250,12 +683,10 @@ export class AllocationEngine {
       LIMIT 100
     `);
 
-    const results: Array<{
-      ticker: string; name: string; score: number; price: number;
-      reasons: string[]; alerts: string[]; sector: string | null;
-    }> = [];
+    const candidates = rows as unknown as Record<string, unknown>[];
+    const results: AnalyzedAsset[] = [];
 
-    for (const r of rows as unknown as Record<string, unknown>[]) {
+    for (const r of candidates) {
       const ticker = String(r.ticker);
       let price = 0;
       try { const q = await stockQuoteService.getQuote(ticker); price = q.price; } catch { continue; }
@@ -267,8 +698,12 @@ export class AllocationEngine {
         const proventos = await dividendsProvider.fetchDividends(ticker);
         if (proventos && price > 0) {
           const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-          const sum12m = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10))
-            .reduce((s, e) => s + e.value, 0);
+          const sum12m = sumIncomeDistributions(
+            incomeDistributionsSince(
+              proventos,
+              cutoff.toISOString().slice(0, 10),
+            ),
+          );
           if (sum12m > 0) indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
         }
       } catch { /* sem proventos */ }
@@ -286,32 +721,41 @@ export class AllocationEngine {
       });
     }
 
-    return results;
+    return { assets: results, expected: candidates.length };
   }
 
-  async analyzeAllFiis(): Promise<Array<{
-    ticker: string; name: string; score: number; price: number;
-    reasons: string[]; alerts: string[]; sector: string | null;
-  }>> {
+  async analyzeAllFiis(): Promise<AnalyzedUniverse> {
     const rows = await db.execute(sql`
       SELECT ticker, name, sector FROM companies
       WHERE ticker LIKE '%11' AND LENGTH(ticker) = 6 AND ticker NOT IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11')
       ORDER BY ticker LIMIT 100
     `);
 
-    const results: Array<{
-      ticker: string; name: string; score: number; price: number;
-      reasons: string[]; alerts: string[]; sector: string | null;
-    }> = [];
+    const { cvmFiiService } = await import('../../infra/services/cvm-fii-service.ts');
+    const navByTicker = await cvmFiiService.getLatestNavByTickerMap().catch(
+      () => new Map<string, { navPerShare: number; referenceDate: string }>(),
+    );
 
-    for (const r of rows as unknown as Record<string, unknown>[]) {
+    const candidates = rows as unknown as Record<string, unknown>[];
+    const expectedGroups = candidates.reduce<{ papel: number; fisico: number }>(
+      (counts, row) => {
+        const classification = getFIIClassification(String(row.ticker));
+        if (classification?.type === 'papel') counts.papel++;
+        else counts.fisico++;
+        return counts;
+      },
+      { papel: 0, fisico: 0 },
+    );
+    const results: AnalyzedAsset[] = [];
+
+    for (const r of candidates) {
       const ticker = String(r.ticker);
       let price = 0;
       let liquidity: number | null = null;
       try {
         const q = await stockQuoteService.getQuote(ticker);
         price = q.price;
-        liquidity = q.volume;
+        liquidity = q.volume > 0 && q.price > 0 ? q.volume * q.price : null;
         if (price <= 0) continue;
       } catch { continue; }
 
@@ -322,13 +766,37 @@ export class AllocationEngine {
         const proventos = await dividendsProvider.fetchDividends(ticker);
         if (proventos) {
           const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-          dividendEvents = proventos.filter((e) => e.date >= cutoff.toISOString().slice(0, 10));
-          const sum12m = dividendEvents.reduce((s, e) => s + e.value, 0);
+          dividendEvents = incomeDistributionsSince(
+            proventos,
+            cutoff.toISOString().slice(0, 10),
+          );
+          const sum12m = sumIncomeDistributions(dividendEvents);
           if (sum12m > 0) dy = +(sum12m / price * 100).toFixed(2);
         }
       } catch { /* ok */ }
 
-      const input: FIIScoreInput = { ticker, price, dy, pvp: null, liquidity, dividendsHistory: dividendEvents };
+      const nav = navByTicker.get(ticker)?.navPerShare;
+      const pvp = nav && nav > 0 ? +(price / nav).toFixed(3) : null;
+      let vacancy: number | undefined;
+      let delinquency: number | undefined;
+      try {
+        const operational = await fiiOperationalService.fetchOperationalData(ticker);
+        if (operational.vacancyPct !== null) vacancy = operational.vacancyPct;
+        if (operational.delinquencyPct !== null) {
+          delinquency = operational.delinquencyPct;
+        }
+      } catch { /* cobertura fica explicitamente incompleta */ }
+
+      const input: FIIScoreInput = {
+        ticker,
+        price,
+        dy,
+        pvp,
+        liquidity,
+        dividendsHistory: dividendEvents,
+        vacancy,
+        delinquency,
+      };
       const scoreResult = FIIScoreCalculatorV4.calculate(input);
 
       results.push({
@@ -336,10 +804,20 @@ export class AllocationEngine {
         reasons: [scoreResult.explanation_short],
         alerts: scoreResult.risk.primary_risk ? [scoreResult.risk.primary_risk] : [],
         sector: scoreResult.subclasse_tijolo || scoreResult.subclasse_papel || null,
+        fiiType: scoreResult.type,
+        dataCoverage: {
+          percent: scoreResult.metadata.data_coverage.percent,
+          criticalComplete: scoreResult.metadata.data_coverage.critical_complete,
+          missingFields: scoreResult.metadata.data_coverage.missing_fields,
+        },
       });
     }
 
-    return results;
+    return {
+      assets: results,
+      expected: candidates.length,
+      expectedGroups,
+    };
   }
 
   // ─── Seleção e alocação ───────────────────────────────────────────────
@@ -383,36 +861,4 @@ export class AllocationEngine {
     return selected;
   }
 
-  /**
-   * Distribui o orçamento proporcionalmente ao score de cada ativo.
-   */
-  private allocateByScore<T extends { ticker: string; name: string; score: number; price: number; reasons: string[]; alerts: string[] }>(
-    assets: T[],
-    budget: number,
-    assetType: 'stock' | 'fii',
-  ): AllocatedAsset[] {
-    if (assets.length === 0) return [];
-
-    const totalScore = assets.reduce((s, a) => s + a.score, 0);
-
-    return assets.map((a) => {
-      const weight = a.score / totalScore;
-      const allocPct = weight * 100;
-      const allocAmount = budget * weight;
-      const qty = a.price > 0 ? Math.floor(allocAmount / a.price) : 0;
-
-      return {
-        ticker: a.ticker,
-        name: a.name,
-        assetType,
-        score: a.score,
-        price: a.price,
-        allocationPercent: Math.round(allocPct * 10) / 10,
-        allocationAmount: Math.round(allocAmount * 100) / 100,
-        quantity: qty,
-        reasons: a.reasons,
-        alerts: a.alerts,
-      };
-    });
-  }
 }

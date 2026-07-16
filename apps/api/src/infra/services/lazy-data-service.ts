@@ -13,15 +13,14 @@
  *  5. Retorna os dados
  */
 
-import { statusInvestScraper, type ScrapedIndicators, type FiisData } from './statusinvest-scraper.ts';
-import { stockQuoteService, type StockQuote } from './stock-quote-service.ts';
-import { dividendsProvider } from './dividends-provider.ts';
+import { statusInvestScraper } from './statusinvest-scraper.ts';
+import { stockQuoteService } from './stock-quote-service.ts';
 import { scoreWarmup, type CachedScore } from './score-warmup.ts';
 import { redis } from './redis.ts';
 import { sql } from 'drizzle-orm';
 import { db } from '../database/connection.ts';
-import { companies, companyFundamentals } from '../database/schema.ts';
-import { isFii, getAssetType } from '../../shared/ticker-utils.ts';
+import { companies } from '../database/schema.ts';
+import { getAssetType } from '../../shared/ticker-utils.ts';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -176,7 +175,7 @@ export class LazyDataService {
 
   // ─── Privados ──────────────────────────────────────────────────────────
 
-  private async fetchFromDb(ticker: string, type: 'stock' | 'fii'): Promise<LazyAssetData | null> {
+  private async fetchFromDb(ticker: string, _type: 'stock' | 'fii'): Promise<LazyAssetData | null> {
     try {
       const rows = await db.execute(sql`
         SELECT ticker, name, sector FROM companies
@@ -246,7 +245,9 @@ export class LazyDataService {
         const data = await statusInvestScraper.fetchStock(ticker);
 
         // Persiste no PostgreSQL
-        const placeholderCnpj = `STOCK${ticker.toUpperCase().padEnd(11, '0').slice(0, 11)}`;
+        // Synthetic identifiers must still fit companies.cnpj CHAR(14).
+        // `STK` also keeps the value visibly non-CNPJ until CVM replaces it.
+        const placeholderCnpj = `STK${ticker.toUpperCase().padEnd(11, '0').slice(0, 11)}`;
         await db
           .insert(companies)
           .values({
@@ -258,8 +259,7 @@ export class LazyDataService {
           .onConflictDoUpdate({
             target: companies.ticker,
             set: { name: data.name, sector: data.sector || null, updatedAt: new Date() },
-          })
-          .catch(() => {});
+          });
 
         // Cache no Redis
         await scoreWarmup.warmupSingle(ticker, 'stock').catch(() => {});
@@ -297,8 +297,7 @@ export class LazyDataService {
           .onConflictDoUpdate({
             target: companies.ticker,
             set: { name: data.name, updatedAt: new Date() },
-          })
-          .catch(() => {});
+          });
 
         await scoreWarmup.warmupSingle(ticker, 'fii').catch(() => {});
 

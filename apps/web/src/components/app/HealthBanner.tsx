@@ -116,6 +116,7 @@ function normalizeHealthPayload(raw: HealthData): HealthData {
   };
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook de dados co-locado com o banner neste arquivo
 export function useHealthData() {
   return useQuery<HealthData>({
     queryKey: ["health", "data"],

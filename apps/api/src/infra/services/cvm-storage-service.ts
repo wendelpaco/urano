@@ -12,19 +12,47 @@ import { cvmCircuitBreaker } from './circuit-breaker.ts';
 
 const CVM_CSV_DELIMITER = ';';
 
+/** CVM publica `ÚLTIMO`/`PENÚLTIMO`; normalização evita variações Unicode. */
+export function normalizeCvmExerciseOrder(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+export function isLatestCvmExercise(value: string): boolean {
+  return normalizeCvmExerciseOrder(value) === 'ULTIMO';
+}
+
+/**
+ * Os CSVs oficiais da CVM são historicamente Windows-1252/Latin-1. JSZip
+ * `async('string')` assume UTF-8 e transforma `ÚLTIMO` em `�LTIMO`, o que
+ * faria o filtro fail-closed eliminar 100% das linhas. Aceitamos UTF-8 quando
+ * ele é realmente válido e fazemos fallback determinístico para Windows-1252.
+ */
+export function decodeCvmCsv(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
+
 const SCALE_FACTORS: Record<string, number> = {
   UNIDADE: 1, UN: 1, MIL: 1_000, MILHAR: 1_000, MILHAO: 1_000_000,
 };
 
 const ACCOUNT_NET_INCOME_CONSOLIDATED = '3.11';
 const ACCOUNT_NET_INCOME_PARENT = '3.11.01';
-const ACCOUNT_NET_INCOME_NON_CONTROLLING = '3.11.02';
 const ACCOUNT_REVENUE = '3.01';
 const ACCOUNT_COGS = '3.02';
 const ACCOUNT_EBIT = '3.05';
 const ACCOUNT_EQUITY_CONSOLIDATED = '2.03';
 const ACCOUNT_TOTAL_ASSETS = '1';
-const ACCOUNT_CASH = '1.01';
+// 1.01 é Ativo Circulante; Caixa e Equivalentes é 1.01.01 no plano CVM.
+const ACCOUNT_CASH = '1.01.01';
 const ACCOUNT_CURRENT_LIABILITIES = '2.01';
 const ACCOUNT_NON_CURRENT_LIABILITIES = '2.02';
 const ACCOUNT_OPERATING_CASH_FLOW = '6.01';
@@ -52,6 +80,7 @@ interface CvmDreRow {
   exerciseEndDate: string;
   accountCode: string;
   accountDescription: string;
+  statementColumn: string;
   rawValue: string;
 }
 
@@ -91,7 +120,7 @@ export class CvmStorageService {
     year: number,
     targetCnpjs: string[],
   ): Promise<Map<string, CompanyFundamentals[]>> {
-    const normalize = (c: string) => c.replace(/[.\/-]/g, '').trim();
+    const normalize = (c: string) => c.replace(/[./-]/g, '').trim();
     const cnpjSet = new Set(targetCnpjs.map(normalize));
     const zipUrl = this.buildDfpZipUrl(year);
 
@@ -115,7 +144,10 @@ export class CvmStorageService {
     for (const pattern of csvPatterns) {
       try {
         const file = Object.keys(zip.files).find((n) => n.includes(pattern));
-        if (file) csvs[pattern] = await zip.file(file)!.async('string');
+        if (file) {
+          const bytes = await zip.file(file)!.async('uint8array');
+          csvs[pattern] = decodeCvmCsv(bytes);
+        }
         else csvs[pattern] = null;
       } catch { csvs[pattern] = null; }
     }
@@ -187,6 +219,10 @@ export class CvmStorageService {
     for (const [cnpj, pmap] of byCnpj) {
       const fundamentals: CompanyFundamentals[] = [];
       for (const [, entry] of pmap) {
+        const fiscalYear = Number(entry.exerciseEndDate.slice(0, 4));
+        // O ZIP é indexado pelo ano de referência solicitado. Uma data de
+        // outro exercício não pode ser gravada sob esse fiscalYear.
+        if (!Number.isInteger(fiscalYear) || fiscalYear !== year) continue;
         fundamentals.push({
           cnpj, ticker: '', companyName: entry.companyName,
           referenceDate: entry.exerciseEndDate,
@@ -195,7 +231,7 @@ export class CvmStorageService {
           revenue: entry.revenue || undefined,
           cogs: entry.cogs || undefined,
           ebit: entry.ebit || undefined,
-          fiscalYear: year, source: 'DFP', extractedAt: new Date(),
+          fiscalYear, source: 'DFP', extractedAt: new Date(),
         });
       }
 
@@ -219,7 +255,7 @@ export class CvmStorageService {
 
   async fetchAndParseCvmData(year: number, cnpj: string): Promise<{ fundamentals: CompanyFundamentals[] }> {
     const batch = await this.fetchAndParseCvmDataBatch(year, [cnpj]);
-    return { fundamentals: batch.get(cnpj.replace(/[.\/-]/g, '').trim()) ?? [] };
+    return { fundamentals: batch.get(cnpj.replace(/[./-]/g, '').trim()) ?? [] };
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -259,13 +295,13 @@ export class CvmStorageService {
   }
 
   private enrichDmpl(rows: CvmDreRow[], cnpj: string, fundamentals: CompanyFundamentals[]): void {
-    const normalize = (c: string) => c.replace(/[.\/-]/g, '').trim();
+    const normalize = (c: string) => c.replace(/[./-]/g, '').trim();
     const target = normalize(cnpj);
     const divMap = new Map<string, { dividends: number; jcp: number }>();
 
     for (const row of rows) {
       if (normalize(row.cnpj) !== target) continue;
-      const col = (row.accountDescription || '').toLowerCase();
+      const col = (row.statementColumn || '').toLowerCase();
       if (!col.includes('consolidado')) continue;
 
       const raw = parseFloat((row.rawValue || '0').replace(',', '.'));
@@ -303,15 +339,16 @@ export class CvmStorageService {
     const iShares = header.indexOf('QT_ACAO_TOTAL_CAP_INTEGR');
     if (iCnpj < 0 || iShares < 0) return;
 
-    const normalize = (c: string) => c.replace(/[.\/-]/g, '').trim();
+    const normalize = (c: string) => c.replace(/[./-]/g, '').trim();
     const target = normalize(cnpj);
 
     for (let i = 1; i < lines.length; i++) {
       const fld = this.parseCsvLine(lines[i]!);
       if (normalize(fld[iCnpj] ?? '') === target) {
-        let shares = parseFloat((fld[iShares] ?? '0').replace(/[^0-9.-]/g, ''));
-        if (shares > 0) {
-          if (shares < 100_000_000) shares *= 1000;
+        const shares = parseFloat((fld[iShares] ?? '0').replace(/[^0-9.-]/g, ''));
+        if (Number.isFinite(shares) && shares > 0) {
+          // QT_ACAO_TOTAL_CAP_INTEGR já representa quantidade de ações. O
+          // antigo limiar de 100 milhões multiplicava small caps por 1.000.
           for (const f of fundamentals) f.sharesOutstanding = shares;
         }
         break;
@@ -327,7 +364,7 @@ export class CvmStorageService {
     return `${this.baseUrl}/DFP/DADOS/dfp_cia_aberta_${year}.zip`;
   }
 
-  private async downloadZip(url: string): Promise<ArrayBuffer> {
+  protected async downloadZip(url: string): Promise<ArrayBuffer> {
     // Circuit breaker: verifica se a CVM está acessível
     await cvmCircuitBreaker.beforeRequest();
 
@@ -368,11 +405,12 @@ export class CvmStorageService {
   private extractAccountFromCsv(
     rows: CvmDreRow[], targetCnpj: string, accountCode: string,
   ): Map<string, number> {
-    const normalize = (c: string) => c.replace(/[.\/-]/g, '').trim();
+    const normalize = (c: string) => c.replace(/[./-]/g, '').trim();
     const target = normalize(targetCnpj);
     const result = new Map<string, number>();
     for (const row of rows) {
       if (normalize(row.cnpj) !== target) continue;
+      if (!isLatestCvmExercise(row.exerciseOrder)) continue;
       if (row.accountCode !== accountCode) continue;
       const key = row.exerciseEndDate || row.referenceDate;
       const scale = SCALE_FACTORS[row.currencyScale] ?? 1;
@@ -402,21 +440,27 @@ export class CvmStorageService {
     const idxDtFimExerc = this.getColumnIndex(colIndex, 'DT_FIM_EXERC');
     const idxCdConta = this.getColumnIndex(colIndex, 'CD_CONTA');
     const idxDsConta = this.getColumnIndex(colIndex, 'DS_CONTA');
+    const idxColunaDf = this.getOptionalColumnIndex(colIndex, 'COLUNA_DF');
     const idxVlConta = this.getColumnIndex(colIndex, 'VL_CONTA');
 
     for (let i = 1; i < lines.length; i++) {
       const fields = this.parseCsvLine(lines[i]!);
       if (fields.length < header.length) continue;
+      const exerciseOrder = fields[idxOrdemExerc] ?? '';
+      // Fail-closed: comparativos (`PENÚLTIMO`) nunca alimentam o mesmo ano
+      // fiscal do exercício corrente. Valor ausente/desconhecido também sai.
+      if (!isLatestCvmExercise(exerciseOrder)) continue;
       rows.push({
         cnpj: fields[idxCnpj] ?? '',
         referenceDate: fields[idxDtRefer] ?? '',
         companyName: fields[idxDenomCia] ?? '',
         currencyScale: idxEscalaMoeda >= 0 ? (fields[idxEscalaMoeda] ?? 'UNIDADE') : 'UNIDADE',
-        exerciseOrder: fields[idxOrdemExerc] ?? '',
+        exerciseOrder,
         exerciseStartDate: idxDtIniExerc >= 0 ? (fields[idxDtIniExerc] ?? '') : '',
         exerciseEndDate: fields[idxDtFimExerc] ?? '',
         accountCode: fields[idxCdConta] ?? '',
         accountDescription: fields[idxDsConta] ?? '',
+        statementColumn: idxColunaDf >= 0 ? (fields[idxColunaDf] ?? '') : '',
         rawValue: fields[idxVlConta] ?? '0',
       });
     }

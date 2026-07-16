@@ -75,6 +75,15 @@ async function main(): Promise<void> {
   await warm('/analysis/ranking?type=stock&limit=10', 'stocks top10');
   await warm('/analysis/ranking?type=fii&limit=10', 'fiis top10');
 
+  // Universo completo usado por alocacao/aporte. E calculado diretamente em
+  // background para que requests HTTP nunca iniciem centenas de scrapes.
+  console.log('\n🧩 Universo de decisao:');
+  const { materializeCanonicalDecisionUniverse } = await import(
+    '../src/core/services/allocation-engine.ts'
+  );
+  const universe = await materializeCanonicalDecisionUniverse();
+  console.log(`  ✅ ${universe.stocks} acoes + ${universe.fiis} FIIs`);
+
   // Screener (cache genérico)
   console.log('\n🔍 Screeners:');
   await warm('/screener?minScore=50&sortBy=roe&limit=10', 'score>50');

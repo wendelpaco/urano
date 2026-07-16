@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { eq, desc } from 'drizzle-orm';
 import { fundamentalsQueries } from '../../database/fundamentals-queries.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
@@ -7,6 +8,10 @@ import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import { calcAllIndicators } from '../../../core/services/indicators.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../../core/services/dividend-income.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -17,7 +22,7 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 }
 
 const paramsSchema = z.object({
-  ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
 });
 
 const historyQuerySchema = z.object({
@@ -81,9 +86,9 @@ export async function getLatestFundamentalsController(
       const twelveMonthsAgo = new Date();
       twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
       const cutoff = twelveMonthsAgo.toISOString().slice(0, 10);
-      const sum12m = proventos
-        .filter((e) => e.date >= cutoff)
-        .reduce((s, e) => s + e.value, 0);
+      const sum12m = sumIncomeDistributions(
+        incomeDistributionsSince(proventos, cutoff),
+      );
       if (sum12m > 0) {
         indicators.dividendYield = +(sum12m / price * 100).toFixed(2);
         dividendYieldSource = true;

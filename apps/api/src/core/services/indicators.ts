@@ -35,8 +35,6 @@ export function calcAllIndicators(
   const cogs = Math.abs(num('cogs')); // CVM reporta COGS negativo
   const ebit = num('ebit');
   const totalAssets = num('totalAssets', 'total_assets');
-  const totalLiabilities = num('totalLiabilities', 'total_liabilities');
-  const cash = num('cash');
   const equity = num('equity');
   const ocf = num('operatingCashFlow', 'operating_cash_flow');
   const shares = num('sharesOutstanding', 'shares_outstanding');
@@ -45,10 +43,9 @@ export function calcAllIndicators(
   const bvps = shares > 0 ? equity / shares : 0;
   const marketCap = shares > 0 ? shares * price : 0;
   const grossProfit = revenue - cogs;
-  const netDebt = totalLiabilities - cash;
-  // Enterprise Value = market cap + net debt. Requires a price (marketCap > 0);
-  // total liabilities is the only debt figure the schema carries, so it proxies debt.
-  const enterpriseValue = marketCap + netDebt;
+  // Passivo total inclui fornecedores, impostos, provisões e outras obrigações;
+  // não é dívida financeira. Até o ETL mapear empréstimos/debêntures por conta,
+  // EV e índices de dívida permanecem indisponíveis em vez de usar um proxy falso.
 
   // DY a partir de DMPL CVM (dividendos + JCP do ano) / (cotação × ações) — dado real oficial
   const divPaid = num('dividendsPaid', 'dividends_paid');
@@ -74,10 +71,10 @@ export function calcAllIndicators(
     pbRatio: bvps > 0 && price > 0 ? +(price / bvps).toFixed(2) : null,
     psRatio: revenue > 0 && shares > 0 ? +(marketCap / revenue).toFixed(2) : null,
     pebit: ebit > 0 && shares > 0 ? +(marketCap / ebit).toFixed(2) : null,
-    evEbit: ebit > 0 && marketCap > 0 && enterpriseValue > 0 ? +(enterpriseValue / ebit).toFixed(2) : null,
+    evEbit: null,
     // Endividamento
-    debtToEquity: equity > 0 ? +(totalLiabilities / equity).toFixed(2) : null,
-    netDebtToEquity: equity > 0 ? +(netDebt / equity).toFixed(2) : null,
+    debtToEquity: null,
+    netDebtToEquity: null,
     // Per-share
     eps: +eps.toFixed(2),
     bvps: +bvps.toFixed(2),

@@ -14,11 +14,10 @@
 import 'dotenv/config';
 import { db } from '../database/connection.ts';
 import { dailySnapshots, companies } from '../database/schema.ts';
-import { statusInvestScraper, type ScrapedIndicators } from '../services/statusinvest-scraper.ts';
-import { fiisScraper, type FiisData } from '../services/fiis-scraper.ts';
+import { statusInvestScraper } from '../services/statusinvest-scraper.ts';
+import { fiisScraper } from '../services/fiis-scraper.ts';
 import { batchWithConcurrency } from '../../shared/retry.ts';
 import { isFii } from '../../shared/ticker-utils.ts';
-import { eq } from 'drizzle-orm';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 

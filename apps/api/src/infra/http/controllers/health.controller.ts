@@ -40,7 +40,9 @@ export async function getDataHealthController(
       status: coverage >= 0.7 ? 'ok' : coverage >= 0.4 ? 'warn' : 'error',
       coverage,
       freshness: freshnessRatio >= 0.5 ? 'ok' : 'stale',
-      lastUpdate: health.generatedAt,
+      // Until extraction telemetry is stored per source, do not present the
+      // time of this HTTP request as if it were the CVM update time.
+      lastUpdate: null,
     },
     {
       name: 'Job Scheduler',
@@ -51,16 +53,24 @@ export async function getDataHealthController(
     },
     {
       name: 'Market Quotes (I10/Yahoo)',
-      status: 'ok',
+      // Quote providers are fetched on demand and currently have no durable
+      // last-success metric. Unknown is safer than a fabricated green status.
+      status: 'unknown',
       coverage: null,
-      freshness: 'live-cache',
-      lastUpdate: health.generatedAt,
+      freshness: 'unknown',
+      lastUpdate: null,
     },
   ];
+  // 'unknown' = fonte sem telemetria durável (ex.: quotes on-demand). Não é uma
+  // degradação observada, então não rebaixa o status global — senão o endpoint
+  // ficaria preso em 'warn' para sempre e mascararia degradações reais ('warn'/'error').
+  const hasDegradedSource = sources.some(
+    (source) => source.status === 'warn' || source.status === 'error',
+  );
 
   const response = {
     ...health,
-    status: warnings.length > 0 ? 'warn' : 'ok',
+    status: warnings.length > 0 || hasDegradedSource ? 'warn' : 'ok',
     sources,
     warnings,
   };

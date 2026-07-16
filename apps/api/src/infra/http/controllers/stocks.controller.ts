@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { stockQuoteService } from '../../services/stock-quote-service.ts';
 import { redis } from '../../services/redis.ts';
 import { technicalIndicators } from '../../services/analysis/technical-indicators.ts';
@@ -13,11 +14,7 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 }
 
 const paramsSchema = z.object({
-  ticker: z
-    .string()
-    .min(4)
-    .max(10)
-    .transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
 });
 
 const historyQuerySchema = z.object({
@@ -31,7 +28,7 @@ const batchQuerySchema = z.object({
     .transform((s) =>
       s.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
     )
-    .pipe(z.array(z.string().min(4).max(10)).min(1).max(20)),
+    .pipe(z.array(tickerParamSchema).min(1).max(20)),
 });
 
 /**

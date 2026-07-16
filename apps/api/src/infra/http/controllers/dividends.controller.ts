@@ -1,10 +1,15 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { tickerParamSchema } from '../../../shared/ticker-utils.ts';
 import { db } from '../../database/connection.ts';
 import { companies, companyFundamentals } from '../../database/schema.ts';
 import { eq, desc } from 'drizzle-orm';
 import { dividendsProvider } from '../../services/dividends-provider.ts';
 import { DividendsAnalyzer } from '../../../core/services/dividends-analyzer.ts';
+import {
+  incomeDistributionsSince,
+  sumIncomeDistributions,
+} from '../../../core/services/dividend-income.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -15,7 +20,7 @@ function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): 
 }
 
 const paramsSchema = z.object({
-  ticker: z.string().min(4).max(10).transform((t) => t.toUpperCase()),
+  ticker: tickerParamSchema,
 });
 
 /**
@@ -127,9 +132,11 @@ export async function getDividendsController(
     const cutoff = new Date();
     cutoff.setFullYear(cutoff.getFullYear() - 1);
     const cutoffIso = cutoff.toISOString().slice(0, 10);
-    const trailing = monthlyHistory.filter((e) => e.date >= cutoffIso);
-    const window = trailing.length > 0 ? trailing : monthlyHistory.slice(0, 12);
-    const sum = window.reduce((s, e) => s + e.value, 0);
+    const trailing = incomeDistributionsSince(monthlyHistory, cutoffIso);
+    const window = trailing.length > 0
+      ? trailing
+      : monthlyHistory.filter((event) => event.type !== 'AMORTIZACAO').slice(0, 12);
+    const sum = sumIncomeDistributions(window);
     totalValuePerShare = Math.round(sum * 100) / 100;
   }
 

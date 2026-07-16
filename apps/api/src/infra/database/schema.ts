@@ -15,6 +15,7 @@ import {
   boolean,
   jsonb,
   text,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -207,7 +208,7 @@ export const jobRuns = pgTable(
       .notNull()
       .defaultNow(),
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
-    durationMs: smallint('duration_ms'),
+    durationMs: integer('duration_ms'),
     errorMessage: varchar('error_message', { length: 500 }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
@@ -332,7 +333,9 @@ export const apiKeys = pgTable(
     keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
     active: boolean('active').notNull().default(true),
     /** Parent key that created this one (self for bootstrap/CLI). */
-    ownerId: uuid('owner_id'),
+    ownerId: uuid('owner_id').references((): AnyPgColumn => apiKeys.id, {
+      onDelete: 'set null',
+    }),
     /**
      * Coarse RBAC: read:market | write:wallet | admin:keys | admin:ops | *
      * Bootstrap keys get full set; HTTP children default without admin:*.

@@ -23,7 +23,7 @@ export const db = drizzle(pgClient, { schema });
  */
 export async function checkDatabaseConnection(): Promise<void> {
   try {
-    const result = await db.execute('SELECT 1 AS ok');
+    await db.execute('SELECT 1 AS ok');
     console.log('[Database] ✅ Conexão com PostgreSQL estabelecida (Drizzle ORM)');
   } catch (error) {
     console.error(

@@ -103,7 +103,7 @@ export class FiiOperationalService {
    */
   async fetchOperationalData(ticker: string): Promise<FiiOperationalData> {
     const t = ticker.toUpperCase();
-    const cacheKey = `fii:operational:${t}`;
+    const cacheKey = `fii:operational:v2:${t}`;
 
     try {
       const cached = await redis.get(cacheKey);
@@ -137,12 +137,22 @@ export class FiiOperationalService {
       tenantData = await this.scrapeTenantsSection(t);
     } catch { /* ok */ }
 
+    const hasOperationalEvidence = operationalData !== null && (
+      operationalData.assetComposition !== null
+      || operationalData.vacancyPct !== null
+      || operationalData.delinquencyPct !== null
+      || operationalData.propertyCount !== null
+      || operationalData.totalAreaSqm !== null
+      || operationalData.topProperties.length > 0
+      || operationalData.referenceDate !== null
+    );
+
     const result: FiiOperationalData = {
       ticker: t,
       name: marketData?.name ?? t,
       source: {
         market: marketData !== null || quotePrice !== null,
-        operational: operationalData !== null,
+        operational: hasOperationalEvidence,
         tenants: tenantData !== null && tenantData.length > 0,
       },
 
@@ -193,6 +203,7 @@ export class FiiOperationalService {
     const html = await withRetry(async () => {
       const r = await fetch(url, {
         headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
+        signal: AbortSignal.timeout(15_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
@@ -381,7 +392,6 @@ export class FiiOperationalService {
 
     // Busca em blocos de informações
     $('div.info, div[class*="info"], div[class*="details"], div[class*="dados"]').each((_, el) => {
-      const text = $(el).text();
       const html = $(el).html() || '';
 
       // Tenta extrair pares label: valor
@@ -429,7 +439,7 @@ export class FiiOperationalService {
   }
 
   /** Deriva a classificação (tijolo/papel/híbrido) do nome e segmento */
-  private deriveCategory($: cheerio.CheerioAPI, ticker: string): string | null {
+  private deriveCategory($: cheerio.CheerioAPI, _ticker: string): string | null {
     const fullText = $('body').text().toLowerCase();
 
     // Busca classificação explícita
@@ -463,6 +473,7 @@ export class FiiOperationalService {
     const html = await withRetry(async () => {
       const r = await fetch(url, {
         headers: userAgentPool.getFingerprint(this.baseUrl + '/') as unknown as Record<string, string>,
+        signal: AbortSignal.timeout(15_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();

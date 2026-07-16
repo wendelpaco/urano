@@ -27,8 +27,9 @@ function BenchmarksPage() {
   const [range, setRange] = useState("1y");
   const detail = useBenchmark(selected, range);
 
-  const hist = (detail.data?.history as { points?: Array<{ date: string; close: number }> } | undefined)
-    ?.points;
+  const hist = (
+    detail.data?.history as { points?: Array<{ date: string; close: number }> } | undefined
+  )?.points;
   const chartData = (hist ?? []).map((p) => ({ date: p.date, close: p.close }));
 
   return (

@@ -7,6 +7,7 @@ import {
   useTechnicalIndicators,
   useStockStats,
   type Asset,
+  type AssetDataCoverage,
   type HistoryResponse,
   type DividendsResponse,
 } from "@/lib/queries";
@@ -31,7 +32,21 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import { CheckCircle2, XCircle, MinusCircle, Sparkles } from "lucide-react";
+import { CheckCircle2, XCircle, MinusCircle, Sparkles, AlertTriangle } from "lucide-react";
+
+/** Labels legíveis dos campos críticos do score FII (fii-score requiredData). */
+const COVERAGE_FIELD_LABELS: Record<string, string> = {
+  classification: "Classificação (papel/tijolo)",
+  pvp: "P/VP (NAV CVM)",
+  liquidity: "Liquidez",
+  dividends_history: "Histórico de proventos (≥6 meses com renda)",
+  vacancy: "Vacância",
+  delinquency: "Inadimplência",
+};
+
+function fieldLabel(field: string): string {
+  return COVERAGE_FIELD_LABELS[field] ?? field.replace(/_/g, " ");
+}
 
 export const Route = createFileRoute("/research/$type/$ticker")({
   head: ({ params }) => ({
@@ -289,6 +304,8 @@ function ResearchPage() {
             </div>
 
             <div className="col-span-12 xl:col-span-4 space-y-3">
+              <DataCoveragePanel coverage={data.dataCoverage} assetType={t} />
+
               <Panel>
                 <PanelHeader title="Reasons" />
                 {reasons.length === 0 ? (
@@ -341,6 +358,120 @@ function ResearchPage() {
   );
 }
 
+/**
+ * F4 — checklist "O que falta neste ativo" a partir de dataCoverage do score FII.
+ * Ações: sem cobertura estruturada no endpoint — painel informativo breve.
+ */
+function DataCoveragePanel({
+  coverage,
+  assetType,
+}: {
+  coverage: AssetDataCoverage | undefined;
+  assetType: "stock" | "fii";
+}) {
+  if (assetType === "stock") {
+    return (
+      <Panel>
+        <PanelHeader title="O que falta neste ativo" />
+        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
+          Cobertura crítica estruturada (vacância, P/VP CVM, etc.) aplica-se ao score de{" "}
+          <span className="text-foreground/80">FII</span>. Para ações, use métricas e pilares ao
+          lado — dívida financeira e shares ainda podem estar incompletos no motor.
+        </div>
+      </Panel>
+    );
+  }
+
+  if (!coverage) {
+    return (
+      <Panel>
+        <PanelHeader title="O que falta neste ativo" />
+        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
+          Endpoint não retornou <span className="font-mono">dataCoverage</span>. Se o score FII
+          estiver desatualizado no cache, reabra a página ou confira o contrato em{" "}
+          <span className="font-mono">GET /analysis/fiis/:ticker</span>.
+        </div>
+      </Panel>
+    );
+  }
+
+  const missing = coverage.missingFields;
+  const complete = coverage.criticalComplete;
+  const knownCritical = [
+    "classification",
+    "pvp",
+    "liquidity",
+    "dividends_history",
+    "vacancy",
+    "delinquency",
+  ];
+  // Campos conhecidos: ok se não estão em missing; extras só listados se missing.
+  const checklist = [
+    ...knownCritical.map((field) => ({
+      field,
+      ok: !missing.includes(field),
+    })),
+    ...missing.filter((f) => !knownCritical.includes(f)).map((field) => ({ field, ok: false })),
+  ];
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="O que falta neste ativo"
+        actions={
+          <span
+            className={
+              "text-[11px] font-mono tabular " + (complete ? "text-positive" : "text-warning")
+            }
+            title={
+              coverage.policy
+                ? `Política: ${coverage.policy}`
+                : "percent = campos críticos disponíveis"
+            }
+          >
+            {Math.round(coverage.percent)}% cobertura
+          </span>
+        }
+      />
+      <div className="p-3 space-y-2">
+        {!complete ? (
+          <div className="flex gap-2 text-[11px] text-warning/90 leading-relaxed">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>
+              Dados críticos incompletos — o score aplica pior caso + penalidade (não imputa
+              favorável).
+            </span>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Campos críticos presentes. Score ainda é experimental (ver Validação).
+          </p>
+        )}
+        <ul className="space-y-1.5">
+          {checklist.map(({ field, ok }) => (
+            <li key={field} className="flex items-start gap-2 text-xs">
+              {ok ? (
+                <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-positive" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-negative" />
+              )}
+              <span className={ok ? "text-muted-foreground" : "text-foreground/90"}>
+                {fieldLabel(field)}
+                {!ok ? <span className="text-muted-foreground"> — ausente</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {missing.length > 0 ? (
+          <p className="text-[10px] font-mono text-muted-foreground pt-1">
+            missing: {missing.join(", ")}
+          </p>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
 function ExplainScoreBanner({
   score,
   ticker,
@@ -379,7 +510,7 @@ function ExplainScoreBanner({
             ? "O motor foi validado como filtro de qualidade: score baixo sinaliza fundamentos mais fracos; score alto não garante retorno superior ao mercado."
             : v?.summary
               ? v.summary
-              : "Score de qualidade fundamentalista — não use como sinal de timing."}
+              : "Heurística fundamentalista experimental — não use como sinal de timing ou retorno."}
         </p>
         {(pros.length > 0 || cons.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">

@@ -6,6 +6,9 @@
 
 export interface ScoreValidation {
   scoreVersion: string;
+  /** False bloqueia qualquer uso do score para gerar ordens/alocação. */
+  decisionUseAllowed: boolean;
+  decisionBlockers: string[];
   validatedAt: string | null; // "YYYY-MM-DD" ou null se pendente
   yearsTested: number[];
   verdict: 'edge' | 'quality-filter' | 'pending';
@@ -38,27 +41,19 @@ export interface ScoreValidation {
 
 export const SCORE_VALIDATION: ScoreValidation = {
   scoreVersion: 'v1',
-  validatedAt: '2026-07-15',
-  yearsTested: [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-  verdict: 'quality-filter',
+  decisionUseAllowed: false,
+  decisionBlockers: [
+    'backtest sem datas de publicação e universo histórico ponto-no-tempo',
+    'taxonomia de dívida financeira ainda não separada de passivos operacionais',
+    'quantidade de ações e proventos CVM exigem reconciliação por emissor',
+  ],
+  validatedAt: null,
+  yearsTested: [],
+  verdict: 'pending',
   summary:
-    'Comprando as 10 ações de maior score a cada ano entre 2015 e 2024, o retorno médio foi 23,2% ao ano contra 24,0% da média do universo coberto e 9,0% do IBOV — a estratégia ganhou do universo em 7/10 anos e do IBOV em 7/10. O score não ordena bem as melhores ações (correlação score×retorno ~0), mas a faixa mais baixa costuma ir pior; funciona melhor como filtro de qualidade do que como sinal de excess return. topN alinhado ao run persistido (docs/backtest/LATEST-RUN.json; freeze 2026-07-15).',
-  topN: {
-    n: 10,
-    avgPortfolio: 23.18,
-    avgMarket: 24.01,
-    winYears: 7,
-    totalYears: 10,
-  },
-  pillarCorrelations: {
-    score: -0.099,
-    valuation: -0.022,
-    profitability: -0.182,
-    growth: -0.094,
-    dividends: 0,
-    quality: -0.027,
-    momentum: -0.002,
-  },
+    'A validação anterior foi invalidada: os fundamentos foram associados à data de referência contábil, embora só tenham se tornado públicos depois, e o universo histórico não foi reconstruído ponto no tempo. Até um novo backtest usar datas de publicação, universo histórico e custos observáveis, o score é apenas uma heurística experimental e não sustenta alegações de filtro validado, retorno ou recomendação.',
+  topN: null,
+  pillarCorrelations: null,
   ibovBenchmark: {
     source: 'yahoo',
     symbol: '^BVSP',
@@ -66,7 +61,8 @@ export const SCORE_VALIDATION: ScoreValidation = {
   },
   dataPolicy: {
     freeSourcesOnly: true,
-    fundamentals: 'CVM (DFP/ITR) — oficial',
+    fundamentals:
+      'CVM (DFP/ITR) — oficial; revalidação deve respeitar a data de publicação',
     prices: 'Yahoo Finance + StatusInvest (fallback) — gratuitos, sem SLA',
     macro: 'BCB SGS — oficial e gratuito',
     dividends: 'StatusInvest → Postgres dividend_events; DMPL CVM como fallback anual',

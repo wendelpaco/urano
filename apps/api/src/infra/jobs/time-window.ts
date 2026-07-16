@@ -139,18 +139,12 @@ export class TimeWindow {
     });
 
     const parts = formatter.formatToParts(now);
-    const dayMap: Record<string, number> = {
-      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
-    };
 
-    let day = 0;
     let hour = 0;
     let minute = 0;
 
     for (const part of parts) {
-      if (part.type === 'weekday') {
-        day = dayMap[part.value] ?? 0;
-      } else if (part.type === 'hour') {
+      if (part.type === 'hour') {
         hour = parseInt(part.value, 10);
       } else if (part.type === 'minute') {
         minute = parseInt(part.value, 10);

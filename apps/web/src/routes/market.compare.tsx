@@ -14,7 +14,13 @@ import { useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { useState } from "react";
 import { ErrorState, EmptyState } from "@/components/app/states";
-import { ScoreBadge, TickerBadge } from "@/components/app/badges";
+import {
+  DY_TTM_LABEL,
+  DY_TTM_TITLE,
+  SCORE_BADGE_TRUST_TITLE,
+  ScoreBadge,
+  TickerBadge,
+} from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { asArray } from "@/lib/queries";
 import { GitCompareArrows } from "lucide-react";
@@ -134,12 +140,17 @@ function ComparePage() {
                     <thead>
                       <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
                         <th className="text-left px-3 h-8">Ticker</th>
-                        <th className="text-right px-3 h-8">Score</th>
+                        <th className="text-right px-3 h-8" title={SCORE_BADGE_TRUST_TITLE}>
+                          Score
+                        </th>
                         <th className="text-right px-3 h-8">Preço</th>
                         <th className="text-right px-3 h-8">P/L</th>
                         <th className="text-right px-3 h-8">P/VP</th>
                         <th className="text-right px-3 h-8">ROE</th>
-                        <th className="text-right px-3 h-8">DY</th>
+                        {/* TODO(F3): chip DY vs CDI se compare passar a carregar useMacro */}
+                        <th className="text-right px-3 h-8" title={DY_TTM_TITLE}>
+                          {DY_TTM_LABEL}
+                        </th>
                         <th className="text-right px-3 h-8">Margem</th>
                         <th className="text-right px-3 h-8">Dív/PL</th>
                       </tr>
@@ -164,21 +175,13 @@ function ComparePage() {
                           </td>
                           <td className="px-3 h-9 text-right tabular">{fmtBRL(r.price)}</td>
                           <td className="px-3 h-9 text-right tabular">
-                            {fmtNum(
-                              r.peRatio ??
-                                (r as { pe?: number | null }).pe ??
-                                null,
-                            )}
+                            {fmtNum(r.peRatio ?? (r as { pe?: number | null }).pe ?? null)}
                           </td>
                           <td className="px-3 h-9 text-right tabular">
-                            {fmtNum(
-                              r.pvp ?? (r as { pbRatio?: number | null }).pbRatio ?? null,
-                            )}
+                            {fmtNum(r.pvp ?? (r as { pbRatio?: number | null }).pbRatio ?? null)}
                           </td>
-                          <td className="px-3 h-9 text-right tabular">
-                            {fmtPct(r.roe, true)}
-                          </td>
-                          <td className="px-3 h-9 text-right tabular">
+                          <td className="px-3 h-9 text-right tabular">{fmtPct(r.roe, true)}</td>
+                          <td className="px-3 h-9 text-right tabular" title={DY_TTM_TITLE}>
                             {fmtPct(
                               r.dy ??
                                 (r as { dividendYield?: number | null }).dividendYield ??

@@ -11,7 +11,7 @@ import { CvmStorageService } from '../../infra/services/cvm-storage-service.ts';
  * No futuro, isso será carregado de uma tabela de configuração no banco.
  * CNPJ deve ter 14 dígitos numéricos (sem pontuação).
  */
-const TICKER_TO_CNPJ: Record<string, string> = {
+export const TICKER_TO_CNPJ: Readonly<Record<string, string>> = {
   // Petrobras
   PETR4: '33000167000101', PETR3: '33000167000101',
   // Vale
@@ -78,6 +78,11 @@ const TICKER_TO_CNPJ: Record<string, string> = {
   RADL3: '61585144000177', RENT3: '71681390000107',
   SMTO3: '51901295000151', SLCE3: '49353498000179', VAMO3: '23290290000165',
   BPAC11: '30280595000183', BPAN4: '61153721000109',
+  // Adicionais de alta liquidez (cadastro oficial de companhias abertas CVM)
+  BBSE3: '17344597000194', B3SA3: '09346601000125',
+  HYPE3: '02932074000191', IGTI11: '60543816000193',
+  RAIZ4: '33453598000123', PSSA3: '02149205000169',
+  CSAN3: '50746577000115',
 };
 
 export interface SyncCompanyFundamentalsInput {
@@ -104,6 +109,43 @@ export interface SyncBatchOutput {
   error?: string;
 }
 
+export const DEFAULT_CVM_MIN_COVERAGE_PERCENT = 80;
+export const MIN_ALLOWED_CVM_COVERAGE_PERCENT = 70;
+
+export interface SyncBatchOptions {
+  minCoveragePercent?: number;
+}
+
+export interface CvmCoverageReport {
+  year: number;
+  candidateTickers: string[];
+  candidateCompanies: number;
+  resolvedCnpjs: string[];
+  foundCnpjs: string[];
+  missingCnpjs: string[];
+  unmappedTickers: string[];
+  coveragePercent: number;
+  minCoveragePercent: number;
+  passed: boolean;
+}
+
+export interface SyncBatchExecution {
+  results: SyncBatchOutput[];
+  coverage: CvmCoverageReport;
+}
+
+export class CvmCoverageError extends Error {
+  constructor(public readonly report: CvmCoverageReport) {
+    super(
+      `Cobertura CVM ${report.year} insuficiente: ` +
+      `${report.coveragePercent.toFixed(2)}% < ${report.minCoveragePercent.toFixed(2)}%.`,
+    );
+    this.name = 'CvmCoverageError';
+  }
+}
+
+const normalizeCnpj = (cnpj: string): string => cnpj.replace(/[./-]/g, '').trim();
+
 export class SyncCompanyFundamentalsUseCase {
   constructor(
     private readonly companyRepository: ICompanyRepository,
@@ -117,12 +159,29 @@ export class SyncCompanyFundamentalsUseCase {
   async executeBatch(
     tickers: string[],
     year: number,
-  ): Promise<SyncBatchOutput[]> {
+    options: SyncBatchOptions = {},
+  ): Promise<SyncBatchExecution> {
+    const minCoveragePercent = options.minCoveragePercent
+      ?? DEFAULT_CVM_MIN_COVERAGE_PERCENT;
+    if (
+      !Number.isFinite(minCoveragePercent)
+      || minCoveragePercent < MIN_ALLOWED_CVM_COVERAGE_PERCENT
+      || minCoveragePercent > 100
+    ) {
+      throw new RangeError(
+        `minCoveragePercent deve estar entre ${MIN_ALLOWED_CVM_COVERAGE_PERCENT} e 100.`,
+      );
+    }
+
+    const candidateTickers = [...new Set(
+      tickers.map((ticker) => ticker.trim().toUpperCase()).filter(Boolean),
+    )];
+
     // 1. Resolve CNPJs (filtra os que não têm mapeamento)
     const tickerCnpjMap = new Map<string, string>();
     const skipped: SyncBatchOutput[] = [];
 
-    for (const t of tickers) {
+    for (const t of candidateTickers) {
       try {
         const cnpj = this.resolveCnpj(t);
         tickerCnpjMap.set(t, cnpj);
@@ -134,22 +193,54 @@ export class SyncCompanyFundamentalsUseCase {
       }
     }
 
-    if (tickerCnpjMap.size === 0) return skipped;
-
     // 2. Chama CVM UMA vez para todos os CNPJs
-    const cnpjs = [...new Set(tickerCnpjMap.values())];
+    const cnpjs = [...new Set([...tickerCnpjMap.values()].map(normalizeCnpj))];
     console.log(
-      `[SyncCompanyFundamentals] Batch: ${tickers.length} tickers → ${cnpjs.length} CNPJs únicos, ano ${year}`,
+      `[SyncCompanyFundamentals] Batch: ${candidateTickers.length} tickers → ${cnpjs.length} CNPJs únicos, ano ${year}`,
     );
 
-    const dataByCnpj = await this.cvmService.fetchAndParseCvmDataBatch(year, cnpjs);
+    const dataByCnpj = cnpjs.length > 0
+      ? await this.cvmService.fetchAndParseCvmDataBatch(year, cnpjs)
+      : new Map<string, CompanyFundamentals[]>();
+
+    // Gate antes de QUALQUER upsert: uma execução incompleta não pode trocar
+    // silenciosamente o universo nem publicar um backtest enviesado.
+    const foundCnpjs = cnpjs.filter((cnpj) => {
+      const fundamentals = dataByCnpj.get(cnpj) ?? [];
+      return fundamentals.some(
+        (item) => item.source === 'DFP' && item.fiscalYear === year,
+      );
+    });
+    const foundSet = new Set(foundCnpjs);
+    const missingCnpjs = cnpjs.filter((cnpj) => !foundSet.has(cnpj));
+    const unmappedTickers = skipped.map((item) => item.ticker);
+    const candidateCompanies = cnpjs.length + unmappedTickers.length;
+    const coveragePercent = candidateCompanies > 0
+      ? (foundCnpjs.length / candidateCompanies) * 100
+      : 0;
+    const coverage: CvmCoverageReport = {
+      year,
+      candidateTickers,
+      candidateCompanies,
+      resolvedCnpjs: cnpjs,
+      foundCnpjs,
+      missingCnpjs,
+      unmappedTickers,
+      coveragePercent: Math.round(coveragePercent * 100) / 100,
+      minCoveragePercent,
+      passed: coveragePercent >= minCoveragePercent,
+    };
+
+    if (!coverage.passed) {
+      throw new CvmCoverageError(coverage);
+    }
 
     // 3. Para cada ticker, persiste os fundamentos do seu CNPJ
     const results: SyncBatchOutput[] = [];
 
     for (const [ticker, cnpj] of tickerCnpjMap) {
       try {
-        const fundamentals = dataByCnpj.get(cnpj.replace(/[.\/-]/g, '').trim()) ?? [];
+        const fundamentals = dataByCnpj.get(normalizeCnpj(cnpj)) ?? [];
 
         if (fundamentals.length === 0) {
           results.push({ ticker, cnpj, year, recordsImported: 0, companyName: '' });
@@ -185,7 +276,7 @@ export class SyncCompanyFundamentalsUseCase {
       }
     }
 
-    return [...results, ...skipped];
+    return { results: [...results, ...skipped], coverage };
   }
 
   /**

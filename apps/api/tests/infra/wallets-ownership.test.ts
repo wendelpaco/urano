@@ -380,6 +380,43 @@ describe('createWalletController — never trusts a client-supplied userId', () 
 });
 
 describe('rebalanceController — ownership guard', () => {
+  test('rejeita limites não finitos/excessivos antes de consultar a carteira', async () => {
+    const { db, captured } = makeInstrumentedDb([]);
+    mockConnectionWith(db);
+    const { rebalanceController } = await import('../../src/infra/http/controllers/rebalance.controller.ts');
+
+    const invalidBodies = [
+      { availableAmount: Number.POSITIVE_INFINITY },
+      {
+        availableAmount: 1_000,
+        currentPositions: [{ ticker: 'AAAA3', quantity: 1_000_000_001 }],
+      },
+      {
+        availableAmount: 1_000,
+        currentPositions: Array.from(
+          { length: 101 },
+          () => ({ ticker: 'AAAA3', quantity: 1 }),
+        ),
+      },
+    ];
+
+    for (const body of invalidBodies) {
+      const { reply, getCaptured } = fakeReply();
+      await rebalanceController(
+        {
+          params: { walletId: WALLET_ID },
+          body,
+          apiKeyId: OWNER,
+          log: { error: () => {} },
+        } as never,
+        reply as never,
+      );
+      expect(getCaptured()?.status).toBe(400);
+    }
+
+    expect(captured).toHaveLength(0);
+  });
+
   test('returns 404 before executing any rebalance when the wallet is not owned by the caller', async () => {
     const { db, captured } = makeInstrumentedDb([[]]);
     mockConnectionWith(db);

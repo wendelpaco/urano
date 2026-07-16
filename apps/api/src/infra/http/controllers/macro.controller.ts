@@ -31,7 +31,7 @@ interface MacroSeriesPoint {
   value: number;
 }
 
-interface MacroSeries {
+interface _MacroSeries {
   code: string;
   name: string;
   unit: string;

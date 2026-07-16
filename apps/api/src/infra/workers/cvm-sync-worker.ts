@@ -13,10 +13,17 @@
  *   1. ticker | --all  (obrigatório) - Ticker da empresa ou "--all" para todas
  *   2. ano              (opcional)    - Ano fiscal. Padrão: ano atual.
  *   --dry-run           (opcional)    - Apenas extrai e exibe, sem persistir.
+ *   --min-coverage=N     (opcional)    - Gate por empresa, entre 70 e 100.
  */
 
 import 'dotenv/config';
-import { SyncCompanyFundamentalsUseCase } from '../../core/use-cases/sync-company-fundamentals.ts';
+import {
+  CvmCoverageError,
+  DEFAULT_CVM_MIN_COVERAGE_PERCENT,
+  MIN_ALLOWED_CVM_COVERAGE_PERCENT,
+  SyncCompanyFundamentalsUseCase,
+  type CvmCoverageReport,
+} from '../../core/use-cases/sync-company-fundamentals.ts';
 import { PgCompanyRepository } from '../database/pg-company-repository.ts';
 import { checkDatabaseConnection, closeDatabaseConnection } from '../database/connection.ts';
 import type { ICompanyRepository } from '../../core/repositories/company-repository.ts';
@@ -24,8 +31,8 @@ import type { CompanyFundamentals } from '../../core/entities/company-fundamenta
 import { ALL_STOCK_TICKERS } from '../../shared/tickers-master-list.ts';
 
 // ---------------------------------------------------------------------------
-// Implementação de fallback do repositório (apenas loga, sem persistir).
-// Usada no modo --dry-run ou quando o banco está indisponível.
+// Implementação de dry-run (apenas loga, sem persistir).
+// Só pode ser usada quando --dry-run foi solicitado explicitamente.
 // ---------------------------------------------------------------------------
 
 class ConsoleCompanyRepository implements ICompanyRepository {
@@ -83,19 +90,36 @@ interface CliArgs {
   year: number;
   dryRun: boolean;
   allMode: boolean;
+  minCoveragePercent: number;
 }
 
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const allMode = args.includes('--all');
+  const coverageFlag = args.find((arg) => arg.startsWith('--min-coverage='));
+  const minCoveragePercent = Number(
+    coverageFlag?.slice('--min-coverage='.length)
+      ?? process.env.CVM_MIN_COVERAGE_PERCENT
+      ?? DEFAULT_CVM_MIN_COVERAGE_PERCENT,
+  );
+  if (
+    !Number.isFinite(minCoveragePercent)
+    || minCoveragePercent < MIN_ALLOWED_CVM_COVERAGE_PERCENT
+    || minCoveragePercent > 100
+  ) {
+    console.error(
+      `❌ --min-coverage deve estar entre ${MIN_ALLOWED_CVM_COVERAGE_PERCENT} e 100.`,
+    );
+    process.exit(1);
+  }
 
   // Filtra flags para extrair tickers e ano
   const positional = args.filter((a) => !a.startsWith('--'));
 
   if (allMode) {
     const year = positional[0] ? parseInt(positional[0], 10) : new Date().getFullYear();
-    return { tickers: ALL_TICKERS, year, dryRun, allMode: true };
+    return { tickers: ALL_TICKERS, year, dryRun, allMode: true, minCoveragePercent };
   }
 
   if (positional.length === 0) {
@@ -110,11 +134,26 @@ function parseArgs(): CliArgs {
   const tickers = [positional[0]!.toUpperCase()];
   const year = positional[1] ? parseInt(positional[1], 10) : new Date().getFullYear();
 
-  return { tickers, year, dryRun, allMode: false };
+  return { tickers, year, dryRun, allMode: false, minCoveragePercent };
+}
+
+function printCoverageReport(report: CvmCoverageReport): void {
+  const status = report.passed ? '✅' : '❌';
+  console.log(
+    `${status} Cobertura CVM ${report.year}: ${report.foundCnpjs.length}/` +
+    `${report.candidateCompanies} empresas (${report.coveragePercent.toFixed(2)}%; ` +
+    `mínimo ${report.minCoveragePercent.toFixed(2)}%)`,
+  );
+  if (report.missingCnpjs.length > 0) {
+    console.log(`   CNPJs sem DFP válida no ano: ${report.missingCnpjs.join(', ')}`);
+  }
+  if (report.unmappedTickers.length > 0) {
+    console.log(`   Tickers sem CNPJ mapeado: ${report.unmappedTickers.join(', ')}`);
+  }
 }
 
 async function main(): Promise<void> {
-  const { tickers, year, dryRun, allMode } = parseArgs();
+  const { tickers, year, dryRun, allMode, minCoveragePercent } = parseArgs();
 
   // Determina modo e repositório
   let repository: ICompanyRepository;
@@ -130,24 +169,47 @@ async function main(): Promise<void> {
       modeLabel = 'PostgreSQL (persistência real)';
     } catch (error) {
       console.error(
-        '⚠️  Banco de dados indisponível. Usando fallback dry-run.\n' +
-          '   Execute "docker compose up -d" para iniciar PostgreSQL e Redis.\n',
+        '❌ Banco de dados indisponível; a sincronização foi abortada para evitar um falso sucesso sem persistência.\n' +
+          '   Execute "docker compose up -d" ou use --dry-run explicitamente.\n',
       );
-      repository = new ConsoleCompanyRepository();
-      modeLabel = 'Dry-run (banco indisponível)';
+      throw error;
     }
   }
 
   console.log(`\n🚀 Urano CVM Sync Worker`);
   console.log(`   Tickers: ${allMode ? 'TODOS (' + tickers.length + ')' : tickers.join(', ')}`);
   console.log(`   Ano:     ${year}`);
-  console.log(`   Modo:    ${modeLabel}\n`);
+  console.log(`   Modo:    ${modeLabel}`);
+  console.log(`   Gate:    cobertura mínima ${minCoveragePercent}%\n`);
 
   const useCase = new SyncCompanyFundamentalsUseCase(repository);
   const startTime = performance.now();
 
   // Processamento em batch: ZIP baixado 1×, CSVs parseados 1×, todos os tickers de uma vez
-  const results = await useCase.executeBatch(tickers, year);
+  let results;
+  try {
+    const execution = await useCase.executeBatch(tickers, year, { minCoveragePercent });
+    printCoverageReport(execution.coverage);
+    results = execution.results;
+  } catch (error) {
+    if (error instanceof CvmCoverageError) {
+      printCoverageReport(error.report);
+      console.error(
+        '\n❌ Gate de cobertura reprovado antes de qualquer persistência. ' +
+        'O estado anterior foi preservado e o pipeline deve parar.',
+      );
+    } else {
+      console.error(
+        '\n❌ Sincronização CVM abortada:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+
+    if (!dryRun && repository instanceof PgCompanyRepository) {
+      await closeDatabaseConnection();
+    }
+    process.exit(1);
+  }
 
   let totalSuccess = 0;
   let totalRecords = 0;
@@ -182,12 +244,18 @@ async function main(): Promise<void> {
     }
   }
 
+  if (!dryRun && totalRecords === 0) {
+    console.error(
+      '\n❌ Nenhum fundamento foi persistido; a sincronização será encerrada como falha.',
+    );
+  }
+
   // Encerra conexão com o banco se estiver usando PostgreSQL
   if (!dryRun && repository instanceof PgCompanyRepository) {
     await closeDatabaseConnection();
   }
 
-  process.exit(errors.length > 0 ? 1 : 0);
+  process.exit(errors.length > 0 || (!dryRun && totalRecords === 0) ? 1 : 0);
 }
 
 function formatCurrency(value: number): string {
