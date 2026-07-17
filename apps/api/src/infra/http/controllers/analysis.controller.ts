@@ -34,6 +34,19 @@ import {
   incomeDistributionsSince,
   sumIncomeDistributions,
 } from '../../../core/services/dividend-income.ts';
+import {
+  buildInvestmentGuidance,
+  stanceFromScore,
+} from '../../../core/services/investment-guidance.ts';
+import {
+  buildFundamentusEnrichment,
+  fillMissingFromFundamentus,
+} from '../../../core/services/fundamentus-enrichment.ts';
+import {
+  buildSectorPeerSummary,
+  type PeerMetricRow,
+} from '../../../core/services/sector-peers.ts';
+import { fundamentusScraper } from '../../services/scrapers/fundamentus-scraper.ts';
 import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
 import { STOCK_UNITS_SQL_LIST } from '../../../shared/ticker-utils.ts';
@@ -71,7 +84,8 @@ export async function getStockAnalysisController(
     return sendZodError(reply, parsed.error, 'Ticker inválido.');
   const { ticker } = parsed.data;
 
-  const cacheKey = `analysis:stock:${ticker}`;
+  // v5: guidance + fundamentus + peers setoriais
+  const cacheKey = `analysis:stock:v5:${ticker}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -201,12 +215,60 @@ export async function getStockAnalysisController(
     indicators, f.sector, f.companyName, historical, momentum,
   );
 
+  // Fundamentus: complementar (não entra no score). Timeout curto via cache/scraper.
+  const fundData = await fundamentusScraper.fetchWithCache(ticker).catch(() => null);
+  const fundEnrichment = buildFundamentusEnrichment(fundData, {
+    peRatio: indicators.peRatio,
+    pbRatio: indicators.pbRatio,
+    roe: indicators.roe,
+    dividendYield: indicators.dividendYield,
+    netMargin: indicators.netMargin,
+    debtToEquity: indicators.debtToEquity,
+    roic: indicators.roic,
+    psRatio: indicators.psRatio,
+    evEbit: indicators.evEbit,
+  });
+  const indicatorsOut = fillMissingFromFundamentus(
+    indicators as unknown as Record<string, unknown>,
+    fundData,
+  );
+
   const anomalies = flagAbsurdMetrics({
     price: price || null,
     peRatio: indicators.peRatio,
     dividendYield: indicators.dividendYield,
     pbRatio: indicators.pbRatio,
   });
+
+  const guidance = buildInvestmentGuidance({
+    ticker: result.ticker,
+    assetType: 'stock',
+    score: result.score,
+    reasons: result.reasons,
+    alerts: result.alerts,
+    diagnosis: result.diagnosis,
+    dataCoveragePercent: result.dataCoverage.percent,
+    criticalComplete: result.dataCoverage.criticalComplete,
+    anomalyCount: anomalies.length,
+    sourceDivergences: fundEnrichment.divergenceMessages,
+  });
+
+  // Peers do mesmo setor (mediana + posição relativa) — offline-first, sem scrape.
+  const sectorPeers = await loadSectorPeersForTicker(
+    ticker,
+    f.sector,
+    {
+      ticker,
+      name: f.companyName,
+      peRatio: indicators.peRatio,
+      pbRatio: indicators.pbRatio,
+      roe: indicators.roe,
+      dividendYield: indicators.dividendYield,
+      netMargin: indicators.netMargin,
+      debtToEquity: indicators.debtToEquity,
+      score: result.score,
+    },
+  ).catch(() => null);
 
   const response = {
     ticker: result.ticker,
@@ -216,16 +278,24 @@ export async function getStockAnalysisController(
     breakdown: result.breakdown,
     reasons: result.reasons,
     alerts: result.alerts,
+    /** Reasons tipados para UI (pro/con/info). */
+    structuredReasons: guidance.structuredReasons,
     sector: result.sector,
     diagnosis: result.diagnosis,
     dataCoverage: result.dataCoverage,
-    indicators,
+    indicators: indicatorsOut,
     price: price || null,
     anomalies,
+    /** Orientação acionável para investidor mediano (não é recomendação CVM). */
+    guidance,
+    fundamentus: fundEnrichment,
+    sectorPeers,
     dataQuality: {
       quotes: quotesOk,
       dividends: dividendsOk,
       fundamentals: true,
+      fundamentus: fundEnrichment.available,
+      sectorPeers: sectorPeers != null && sectorPeers.peerCount > 0,
     },
   };
 
@@ -250,7 +320,8 @@ export async function getFiiAnalysisController(
     return sendZodError(reply, parsed.error, 'Ticker inválido.');
   const { ticker } = parsed.data;
 
-  const cacheKey = `analysis:fii:v3:${ticker}`;
+  // v4: guidance orientativo (score FII continua experimental)
+  const cacheKey = `analysis:fii:v4:${ticker}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -424,6 +495,39 @@ export async function getFiiAnalysisController(
     pvp,
   });
 
+  const fiiReasons: string[] = [];
+  if (score.explanation_short) fiiReasons.push(score.explanation_short);
+  if (score.income_quality.rating) {
+    fiiReasons.push(`Qualidade de renda: ${score.income_quality.rating}`);
+  }
+  if (score.asset_quality.rating) {
+    fiiReasons.push(`Qualidade de ativo: ${score.asset_quality.rating}`);
+  }
+  const fiiAlerts: string[] = [];
+  if (score.risk.primary_risk) fiiAlerts.push(`Risco principal: ${score.risk.primary_risk}`);
+  if (score.metadata.data_coverage.missing_fields.length > 0) {
+    fiiAlerts.push(
+      `Dados faltantes: ${score.metadata.data_coverage.missing_fields.join(', ')}`,
+    );
+  }
+  if (score.overall_rating === 'ruim' || score.overall_rating === 'evitar') {
+    fiiAlerts.push(`Rating ${score.overall_rating} — perfil fraco no filtro experimental`);
+  }
+
+  const guidance = buildInvestmentGuidance({
+    ticker: score.ticker,
+    assetType: 'fii',
+    score: score.overall_score,
+    reasons: fiiReasons,
+    alerts: fiiAlerts,
+    explanation: score.explanation_short,
+    dataCoveragePercent: score.metadata.data_coverage.percent,
+    criticalComplete: score.metadata.data_coverage.critical_complete,
+    anomalyCount: anomalies.length,
+    qualityRating: score.overall_rating,
+    experimental: true,
+  });
+
   const response = {
     ticker: score.ticker,
     name: company.name,
@@ -454,6 +558,10 @@ export async function getFiiAnalysisController(
     dataCoverage: score.metadata.data_coverage,
     missingDataPenalty: score.missing_data_penalty,
     explanation: score.explanation_short,
+    reasons: fiiReasons,
+    alerts: fiiAlerts,
+    structuredReasons: guidance.structuredReasons,
+    guidance,
     dataQuality: {
       quotes: quotesOk,
       dividends: dividendsOk,
@@ -501,6 +609,85 @@ const rankingSchema = z.object({
   order: z.enum(['asc', 'desc']).optional().default('desc'),
 });
 
+/**
+ * Carrega peers do mesmo setor (fundamentals + quote cache) e monta mediana.
+ * Sem scrape síncrono — se cotação falhar, peer é omitido.
+ */
+async function loadSectorPeersForTicker(
+  ticker: string,
+  sector: string | null,
+  self: PeerMetricRow,
+): Promise<ReturnType<typeof buildSectorPeerSummary> | null> {
+  if (!sector || sector.trim().length < 2) {
+    return buildSectorPeerSummary(self, sector, []);
+  }
+
+  const rows = await db.execute(sql`
+    SELECT DISTINCT ON (c.ticker)
+      c.ticker,
+      c.name,
+      c.sector,
+      cf.net_income_parent AS "netIncomeParent",
+      cf.net_income AS "netIncome",
+      cf.revenue AS "revenue",
+      cf.cogs AS "cogs",
+      cf.ebit AS "ebit",
+      cf.total_assets AS "totalAssets",
+      cf.total_liabilities AS "totalLiabilities",
+      cf.cash AS "cash",
+      cf.operating_cash_flow AS "operatingCashFlow",
+      cf.equity AS "equity",
+      cf.shares_outstanding AS "sharesOutstanding"
+    FROM companies c
+    INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
+    WHERE c.sector ILIKE ${`%${sector.slice(0, 40)}%`}
+      AND c.ticker <> ${ticker}
+      AND (c.ticker NOT LIKE '%11' OR c.ticker IN (${sql.join(
+        STOCK_UNITS_SQL_LIST.map((u) => sql`${u}`),
+        sql`, `,
+      )}))
+      AND LENGTH(c.ticker) >= 5
+    ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
+    LIMIT 20
+  `);
+
+  const peerRows = rows as unknown as Record<string, unknown>[];
+  const peers: PeerMetricRow[] = [];
+
+  const scored = await batchWithConcurrency(
+    peerRows,
+    async (r) => {
+      const t = String(r.ticker);
+      const quote = await stockQuoteService.getQuote(t).catch(() => null);
+      if (!quote || quote.price <= 0) return null;
+      const ind = calcAllIndicators(r, quote.price);
+      const score = StockScoreCalculator.calculate(
+        ind,
+        (r.sector as string) || sector,
+        String(r.name ?? t),
+      );
+      return {
+        ticker: t,
+        name: String(r.name ?? t),
+        peRatio: ind.peRatio,
+        pbRatio: ind.pbRatio,
+        roe: ind.roe,
+        dividendYield: ind.dividendYield,
+        netMargin: ind.netMargin,
+        debtToEquity: ind.debtToEquity,
+        score: score.score,
+      } satisfies PeerMetricRow;
+    },
+    5,
+  );
+
+  for (const p of scored) {
+    if (p) peers.push(p);
+  }
+
+  return buildSectorPeerSummary(self, sector, peers);
+}
+
 // Sort ranking rows by a chosen numeric column (missing values always last),
 // falling back to score. Ticker sorts alphabetically.
 function sortRankingRows<T extends Record<string, unknown>>(
@@ -534,7 +721,8 @@ export async function getRankingController(
     return sendZodError(reply, parsed.error, 'Query inválida.');
   const { type, limit, minScore, sort, order } = parsed.data;
 
-  const cacheKey = `analysis:ranking:v3:${type}:${limit}:${minScore ?? 'none'}:${sort ?? 'score'}:${order}`;
+  // v4: stance labels no ranking
+  const cacheKey = `analysis:ranking:v4:${type}:${limit}:${minScore ?? 'none'}:${sort ?? 'score'}:${order}`;
 
   try {
     const cached = await redis.get(cacheKey);
@@ -614,6 +802,10 @@ export async function getRankingController(
 
         const result = StockScoreCalculator.calculate(indicators, (r.sector as string) || null, String(r.name));
         if (minScore !== undefined && result.score < minScore) return null;
+        const stance = stanceFromScore(result.score, {
+          criticalComplete: result.dataCoverage.criticalComplete,
+          alertCount: result.alerts.length,
+        });
         return {
           ticker,
           name: String(r.name),
@@ -629,6 +821,9 @@ export async function getRankingController(
           peRatio: indicators.peRatio ?? null,
           pvp: indicators.pbRatio ?? null,
           roe: indicators.roe ?? null,
+          stance: stance.stance,
+          stanceLabel: stance.stanceLabel,
+          stanceTone: stance.stanceTone,
         };
       },
       8, // concorrência maior para ranking (usa cache interno do quote service)
@@ -733,6 +928,11 @@ export async function getRankingController(
         });
         if (minScore !== undefined && score.overall_score < minScore) return null;
         const subclass = score.subclasse_tijolo || score.subclasse_papel || score.type || null;
+        const stance = stanceFromScore(score.overall_score, {
+          experimental: true,
+          qualityRating: score.overall_rating,
+          criticalComplete: score.metadata.data_coverage.critical_complete,
+        });
         return {
           ticker,
           name: String(r.name),
@@ -756,6 +956,9 @@ export async function getRankingController(
           pe: null,
           peRatio: null,
           roe: null,
+          stance: stance.stance,
+          stanceLabel: stance.stanceLabel,
+          stanceTone: stance.stanceTone,
         };
       },
       8,

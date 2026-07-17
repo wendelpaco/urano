@@ -134,6 +134,20 @@
       "when": 1784163876550,
       "tag": "0018_stable_job_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784163876551,
+      "tag": "0019_drop_legacy_key_column",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784163876552,
+      "tag": "0020_wallet_asset_quantity",
+      "breakpoints": true
     }
   ]
 }

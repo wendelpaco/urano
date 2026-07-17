@@ -11,6 +11,7 @@ Hierarquia de confiança e uso no monorepo. O score de ações é um **filtro de
 | 3 | **Investidor10 (JSON)** | **Primária de cotação/histórico** (`batch`, `chart`); não substitui CVM | Média — API não documentada; rate limit + circuit |
 | 4 | **Yahoo Finance** | Fallback cotação/histórico OHLCV, **IBOV (`^BVSP`)**, volume | Média — gratuito, sem SLA |
 | 5 | **StatusInvest** | Proventos (`dividend_events`), indicadores FII, **último** fallback de cotação | Baixa/média — HTML frágil; 429 frequentes |
+| 6 | **Fundamentus** | Fallback de indicadores (lazy load); **cross-check** na ficha de ação (`guidance` + divergências); **não** entra no score | Baixa/média — HTML estável há anos, mas não oficial |
 
 ### Pacote A (free-only) — implementado
 
@@ -98,6 +99,8 @@ Regra prática: indicadores de score de **ações** vêm de fundamentals CVM + p
 | Yahoo / cadeia de quote | `stock-quote-service.ts`, `market-data-service.ts` |
 | StatusInvest | `statusinvest-scraper.ts`, `dividends-provider.ts`, `scrapers/statusinvest-parse.ts` |
 | Lazy / composição | `lazy-data-service.ts` |
+| Fundamentus | `scrapers/fundamentus-scraper.ts`, `fundamentus-enrichment.ts` (cross-check) |
+| Orientação (porquê comprar/evitar) | `investment-guidance.ts` — embutido em `/analysis/stocks|fiis/:ticker` |
 
 ## Leitura relacionada
 

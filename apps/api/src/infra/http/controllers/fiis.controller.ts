@@ -11,6 +11,9 @@ import {
 import { fiisScraper } from '../../services/fiis-scraper.ts';
 import { fiiOperationalService } from '../../services/fii-operational.service.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
+import { FIIScoreCalculatorV4 } from '../../../core/services/fii-score.ts';
+import { stanceFromScore } from '../../../core/services/investment-guidance.ts';
+import { getFIIClassification } from '../../../core/data/fii-classification.data.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -243,10 +246,13 @@ const screenerSchema = z.object({
   dy_gte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
   dy_lte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
   liquidity_gte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).optional()),
+  score_gte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).max(100).optional()),
+  score_lte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).max(100).optional()),
+  vacancy_lte: z.string().optional().transform((v) => (v ? parseFloat(v) : undefined)).pipe(z.number().min(0).max(100).optional()),
   // Classificação derivada (do score/balanço)
   classification: z.enum(['tijolo', 'papel', 'hibrido', 'fundo_de_fundos']).optional(),
   // Ordenação
-  sort: z.enum(['dy', 'pvp', 'price', 'liquidity', 'ticker']).default('dy'),
+  sort: z.enum(['dy', 'pvp', 'price', 'liquidity', 'ticker', 'score', 'vacancy']).default('score'),
   order: z.enum(['asc', 'desc']).default('desc'),
   // Paginação
   limit: z.string().optional().default('20').transform(Number).pipe(z.number().int().min(1).max(50)),
@@ -264,6 +270,13 @@ export interface FiiScreenerResult {
   pvp: number | null;
   liquidity: number | null;   // volume financeiro diário
   classification?: string;     // tijolo, papel, hibrido, fundo_de_fundos
+  score?: number | null;
+  vacancy?: number | null;
+  qualityRating?: string | null;
+  stance?: string;
+  stanceLabel?: string;
+  stanceTone?: string;
+  type?: 'fii';
 }
 
 /**
@@ -421,8 +434,8 @@ export async function fiiScreenerController(
 
   const filters = parsed.data;
 
-  // Cache key (ignora refresh param)
-  const cacheKey = `fiis:screener:${JSON.stringify({ ...filters, refresh: undefined })}`;
+  // Cache key v2 (score + vacancy + stance)
+  const cacheKey = `fiis:screener:v2:${JSON.stringify({ ...filters, refresh: undefined })}`;
 
   if (!filters.refresh) {
     try {
@@ -481,6 +494,9 @@ async function buildScreenerResult(
         dy: null,
         pvp: null,
         liquidity: null,
+        score: null,
+        vacancy: null,
+        type: 'fii',
       };
 
       // Cotação + liquidez (Yahoo)
@@ -518,7 +534,25 @@ async function buildScreenerResult(
         } catch { /* redis offline */ }
       }
 
-      // Scrape só se ainda faltar P/VP ou DY (e só com refresh explícito ou gaps)
+      // Vacância só de cache operacional (sem scrape no screener)
+      try {
+        const { redis } = await import('../../services/redis.ts');
+        const opCached = await redis.get(`fii:operational:v2:${fii.ticker}`);
+        if (opCached) {
+          const op = JSON.parse(opCached) as { vacancyPct?: number | null };
+          if (typeof op.vacancyPct === 'number' && Number.isFinite(op.vacancyPct)) {
+            result.vacancy = op.vacancyPct;
+          }
+        }
+      } catch { /* ok */ }
+
+      // Classificação estática se ainda não veio do cache
+      if (!result.classification) {
+        const cls = getFIIClassification(fii.ticker);
+        if (cls?.type) result.classification = cls.type;
+      }
+
+      // Scrape só se ainda faltar P/VP ou DY
       if (result.pvp === null || result.dy === null) {
         try {
           const scraped = await fiisScraper.fetchFII(fii.ticker);
@@ -528,20 +562,44 @@ async function buildScreenerResult(
         } catch { /* ok */ }
       }
 
-      // DY por eventos normalizados tem prioridade sobre o agregado do scraper,
-      // pois exclui amortizacao quando o historico esta disponivel.
+      // DY por eventos normalizados tem prioridade sobre o agregado do scraper
+      let dividendEvents: Array<{ date: string; value: number; type: string }> = [];
       try {
         const proventos = await dividendsProvider.fetchDividends(fii.ticker);
         if (proventos !== null && result.price && result.price > 0) {
           const cutoff = new Date();
           cutoff.setMonth(cutoff.getMonth() - 12);
           const cutoffStr = cutoff.toISOString().slice(0, 10);
-          const sum12m = sumIncomeDistributions(
-            incomeDistributionsSince(proventos, cutoffStr),
-          );
+          dividendEvents = incomeDistributionsSince(proventos, cutoffStr);
+          const sum12m = sumIncomeDistributions(dividendEvents);
           result.dy = +((sum12m / result.price) * 100).toFixed(2);
         }
       } catch { /* ok */ }
+
+      // Score experimental FII + postura (quando houver preço)
+      if (result.price && result.price > 0) {
+        try {
+          const score = FIIScoreCalculatorV4.calculate({
+            ticker: fii.ticker,
+            price: result.price,
+            dy: result.dy ?? 0,
+            pvp: result.pvp,
+            liquidity: result.liquidity,
+            dividendsHistory: dividendEvents,
+            vacancy: result.vacancy ?? undefined,
+          });
+          result.score = score.overall_score;
+          result.qualityRating = score.overall_rating;
+          const stance = stanceFromScore(score.overall_score, {
+            experimental: true,
+            qualityRating: score.overall_rating,
+            criticalComplete: score.metadata.data_coverage.critical_complete,
+          });
+          result.stance = stance.stance;
+          result.stanceLabel = stance.stanceLabel;
+          result.stanceTone = stance.stanceTone;
+        } catch { /* score opcional */ }
+      }
 
       return result;
     },
@@ -566,17 +624,26 @@ async function buildScreenerResult(
   if (filters.liquidity_gte !== undefined) {
     filtered = filtered.filter((f) => f.liquidity !== null && f.liquidity >= filters.liquidity_gte!);
   }
+  if (filters.score_gte !== undefined) {
+    filtered = filtered.filter((f) => f.score != null && f.score >= filters.score_gte!);
+  }
+  if (filters.score_lte !== undefined) {
+    filtered = filtered.filter((f) => f.score != null && f.score <= filters.score_lte!);
+  }
+  if (filters.vacancy_lte !== undefined) {
+    filtered = filtered.filter((f) => f.vacancy != null && f.vacancy <= filters.vacancy_lte!);
+  }
   if (filters.classification) {
     filtered = filtered.filter((f) => f.classification === filters.classification);
   }
 
   // 4. Ordena
-  const sortKey = filters.sort;
+  const sortKey = filters.sort as keyof FiiScreenerResult;
   const sortOrder = filters.order === 'asc' ? 1 : -1;
 
   filtered.sort((a, b) => {
-    const va = a[sortKey] ?? (sortOrder === 1 ? Infinity : -Infinity);
-    const vb = b[sortKey] ?? (sortOrder === 1 ? Infinity : -Infinity);
+    const va = (a[sortKey] as number | null | undefined) ?? (sortOrder === 1 ? Infinity : -Infinity);
+    const vb = (b[sortKey] as number | null | undefined) ?? (sortOrder === 1 ? Infinity : -Infinity);
     if (va === vb) return 0;
     return (va as number) > (vb as number) ? sortOrder : -sortOrder;
   });
@@ -593,6 +660,9 @@ async function buildScreenerResult(
       dy_gte: filters.dy_gte ?? null,
       dy_lte: filters.dy_lte ?? null,
       liquidity_gte: filters.liquidity_gte ?? null,
+      score_gte: filters.score_gte ?? null,
+      score_lte: filters.score_lte ?? null,
+      vacancy_lte: filters.vacancy_lte ?? null,
       classification: filters.classification ?? null,
       sort: filters.sort,
       order: filters.order,

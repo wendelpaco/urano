@@ -10,6 +10,8 @@ import {
   type AssetDataCoverage,
   type HistoryResponse,
   type DividendsResponse,
+  type InvestmentGuidance,
+  type SectorPeerSummary,
 } from "@/lib/queries";
 import {
   MetricCard,
@@ -32,7 +34,18 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import { CheckCircle2, XCircle, MinusCircle, Sparkles, AlertTriangle } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  MinusCircle,
+  Sparkles,
+  AlertTriangle,
+  ShoppingCart,
+  Wallet,
+  TrendingDown,
+  BookOpen,
+  ShieldAlert,
+} from "lucide-react";
 
 /** Labels legíveis dos campos críticos do score FII (fii-score requiredData). */
 const COVERAGE_FIELD_LABELS: Record<string, string> = {
@@ -126,6 +139,18 @@ function ResearchPage() {
         actions={
           <div className="flex gap-2">
             <Link
+              to="/portfolio/contribution"
+              search={{
+                fromScratch: "1",
+                profile: "moderado",
+                onlyTypes: t === "fii" ? "fii" : "all",
+                amount: "3000",
+              }}
+              className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 h-8 px-3 text-xs text-primary hover:bg-primary/20"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Simular aporte
+            </Link>
+            <Link
               to="/market/compare"
               className="inline-flex items-center gap-1.5 rounded border border-border h-8 px-3 text-xs text-muted-foreground hover:bg-surface-2"
             >
@@ -133,9 +158,9 @@ function ResearchPage() {
             </Link>
             <Link
               to="/ai"
-              className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 h-8 px-3 text-xs text-primary hover:bg-primary/20"
+              className="inline-flex items-center gap-1.5 rounded border border-border h-8 px-3 text-xs text-muted-foreground hover:bg-surface-2"
             >
-              <Sparkles className="h-3.5 w-3.5" /> Copilot
+              Copilot
             </Link>
           </div>
         }
@@ -146,6 +171,14 @@ function ResearchPage() {
 
       {detail.isSuccess ? (
         <>
+          <GuidancePanel
+            guidance={data.guidance}
+            score={score}
+            ticker={ticker}
+            type={t}
+            diagnosis={data.diagnosis}
+          />
+
           <ExplainScoreBanner score={score} ticker={ticker} type={t} reasons={reasons} />
 
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -160,6 +193,12 @@ function ResearchPage() {
             <MetricCard label="P/VP" value={fmtNum(data.pvp)} />
             <MetricCard label="ROE" value={fmtPct(data.roe, true)} />
           </div>
+
+          <FundamentalsDensePanel data={data} type={t} />
+
+          {t === "stock" && data.sectorPeers ? (
+            <SectorPeersPanel peers={data.sectorPeers} />
+          ) : null}
 
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-12 xl:col-span-8 space-y-3">
@@ -495,6 +534,338 @@ function DataCoveragePanel({
     "classification", "pvp", "liquidity", "dividends_history", "vacancy", "delinquency",
   ];
   return renderCoverageChecklist(coverage, fiiCriticalFields);
+}
+
+function GuidancePanel({
+  guidance,
+  score,
+  ticker,
+  type,
+  diagnosis,
+}: {
+  guidance?: InvestmentGuidance;
+  score: number | null;
+  ticker: string;
+  type: "stock" | "fii";
+  diagnosis?: string;
+}) {
+  if (!guidance?.stanceLabel && !guidance?.headline) {
+    return (
+      <Panel>
+        <PanelHeader title="O que fazer com este ativo?" />
+        <div className="p-3 text-xs text-muted-foreground">
+          Orientação indisponível para {ticker}. Score: {score ?? "—"}.{" "}
+          {diagnosis ?? "Recarregue a análise após o sync de fundamentals."}
+        </div>
+      </Panel>
+    );
+  }
+
+  const tone = guidance.stanceTone ?? "muted";
+  const toneCls =
+    tone === "positive"
+      ? "border-positive/40 bg-positive/5"
+      : tone === "negative"
+        ? "border-negative/40 bg-negative/5"
+        : tone === "warning"
+          ? "border-warning/40 bg-warning/5"
+          : "border-border bg-surface-2/40";
+  const badgeCls =
+    tone === "positive"
+      ? "bg-positive/15 text-positive border-positive/30"
+      : tone === "negative"
+        ? "bg-negative/15 text-negative border-negative/30"
+        : tone === "warning"
+          ? "bg-warning/15 text-warning border-warning/30"
+          : "bg-muted text-muted-foreground border-border";
+
+  const why = Array.isArray(guidance.why) ? guidance.why : [];
+  const risks = Array.isArray(guidance.risks) ? guidance.risks : [];
+  const steps = Array.isArray(guidance.nextSteps) ? guidance.nextSteps : [];
+  const disclaimers = Array.isArray(guidance.disclaimers) ? guidance.disclaimers : [];
+
+  return (
+    <Panel className={toneCls}>
+      <PanelHeader
+        title="O que fazer com este ativo?"
+        actions={
+          <span
+            className={
+              "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium " +
+              badgeCls
+            }
+          >
+            {guidance.stanceLabel}
+          </span>
+        }
+      />
+      <div className="p-3 space-y-3 text-xs leading-relaxed">
+        <p className="text-sm text-foreground font-medium">{guidance.headline}</p>
+
+        {guidance.confidenceNote ? (
+          <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+            <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            {guidance.confidenceNote}
+            {type === "fii" ? " · FII experimental." : null}
+          </p>
+        ) : null}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border border-border/80 bg-background/60 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <ShoppingCart className="h-3.5 w-3.5" />
+              Se você ainda NÃO tem
+            </div>
+            <p className="text-foreground/90">{guidance.ifNotHolding}</p>
+          </div>
+          <div className="rounded border border-border/80 bg-background/60 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <Wallet className="h-3.5 w-3.5" />
+              Se você JÁ tem na carteira
+            </div>
+            <p className="text-foreground/90">{guidance.ifHolding}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {why.length > 0 ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-positive mb-1.5 flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" /> Por que
+              </div>
+              <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+                {why.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {risks.length > 0 ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-negative mb-1.5 flex items-center gap-1">
+                <TrendingDown className="h-3 w-3" /> Riscos / atenção
+              </div>
+              <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+                {risks.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        {steps.length > 0 ? (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-primary mb-1.5 flex items-center gap-1">
+              <BookOpen className="h-3 w-3" /> Próximos passos (iniciante)
+            </div>
+            <ol className="list-decimal pl-4 space-y-1 text-muted-foreground">
+              {steps.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+
+        {(guidance.stance === "study_to_buy" ||
+          guidance.stance === "accumulate" ||
+          guidance.stance === "hold_watch") && (
+          <div className="flex flex-wrap gap-2 pt-1 border-t border-border">
+            <Link
+              to="/portfolio/contribution"
+              search={{
+                fromScratch: "1",
+                profile:
+                  guidance.stance === "accumulate" || guidance.stance === "study_to_buy"
+                    ? "moderado"
+                    : "conservador",
+                onlyTypes: type === "fii" ? "fii" : "all",
+                amount: "3000",
+              }}
+              className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 h-8 px-3 text-xs text-primary hover:bg-primary/20"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Simular se este tipo de ativo cabe no aporte
+            </Link>
+            <Link
+              to="/market/screener"
+              search={{
+                type: type === "fii" ? "fii" : "stock",
+                scoreMin: "65",
+                sortBy: "score",
+                preset: type === "fii" ? "fii_income" : "first_conservative",
+              }}
+              className="inline-flex items-center gap-1.5 rounded border border-border h-8 px-3 text-xs text-muted-foreground hover:bg-surface-2"
+            >
+              Ver outros no screener
+            </Link>
+          </div>
+        )}
+
+        {guidance.whenToRevisit ? (
+          <p className="text-[11px] text-muted-foreground border-t border-border pt-2">
+            <span className="font-medium text-foreground/80">Quando reavaliar: </span>
+            {guidance.whenToRevisit}
+          </p>
+        ) : null}
+
+        {disclaimers.length > 0 ? (
+          <p className="text-[10px] text-muted-foreground/80 leading-snug">
+            {disclaimers[0]}
+          </p>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function SectorPeersPanel({ peers }: { peers: SectorPeerSummary }) {
+  const list = Array.isArray(peers.peers) ? peers.peers : [];
+  const vs = Array.isArray(peers.vsSector) ? peers.vsSector : [];
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="Vs setor (peers)"
+        actions={
+          <span className="text-[10px] text-muted-foreground">
+            {peers.peerCount ?? 0} peers
+            {peers.sector ? ` · ${peers.sector}` : ""}
+          </span>
+        }
+      />
+      <div className="p-3 space-y-3 text-xs">
+        {peers.summary ? (
+          <p className="text-foreground/90 leading-relaxed">{peers.summary}</p>
+        ) : null}
+
+        {vs.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {vs.map((m) => {
+              const tone =
+                m.standing === "better"
+                  ? "text-positive"
+                  : m.standing === "worse"
+                    ? "text-negative"
+                    : "text-muted-foreground";
+              return (
+                <div
+                  key={m.field ?? m.label}
+                  className="rounded border border-border/70 bg-surface-2/40 px-2 py-1.5"
+                >
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {m.label}
+                  </div>
+                  <div className={"font-mono text-sm tabular-nums " + tone}>
+                    {fmtNum(m.self ?? null)}
+                    <span className="text-muted-foreground text-[10px] ml-1">
+                      med {fmtNum(m.sectorMedian ?? null)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {list.length > 0 ? (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+              Peers por score
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {list.map((p) => (
+                <Link
+                  key={p.ticker}
+                  to="/research/$type/$ticker"
+                  params={{ type: "stock", ticker: p.ticker ?? "" }}
+                  className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 hover:bg-surface-2"
+                >
+                  <TickerBadge ticker={p.ticker ?? "—"} />
+                  <ScoreBadge score={p.score} size="sm" />
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <EmptyState title="Sem peers no mesmo setor" />
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function FundamentalsDensePanel({ data, type }: { data: Asset; type: "stock" | "fii" }) {
+  const snap = data.fundamentus?.snapshot ?? null;
+  const ind = (data.indicators ?? {}) as Record<string, unknown>;
+
+  const rows: Array<{ label: string; value: string }> =
+    type === "fii"
+      ? [
+          { label: "DY 12m", value: fmtPct(data.dy, true) },
+          { label: "P/VP", value: fmtNum(data.pvp) },
+          { label: "Liquidez", value: fmtBRL(data.liquidity, true) },
+          { label: "Preço", value: fmtBRL(data.price) },
+        ]
+      : [
+          { label: "P/L", value: fmtNum(num(ind.peRatio) ?? data.pe) },
+          { label: "P/VP", value: fmtNum(num(ind.pbRatio) ?? data.pvp) },
+          { label: "PSR", value: fmtNum(num(ind.psRatio) ?? num(snap?.psr)) },
+          { label: "EV/EBIT", value: fmtNum(num(ind.evEbit) ?? num(snap?.evEbit)) },
+          { label: "ROE", value: fmtPct(num(ind.roe) ?? data.roe, true) },
+          { label: "ROIC", value: fmtPct(num(ind.roic) ?? data.roic ?? num(snap?.roic), true) },
+          { label: "Marg. líquida", value: fmtPct(num(ind.netMargin) ?? data.netMargin, true) },
+          { label: "Dív/PL", value: fmtNum(num(ind.debtToEquity) ?? data.debtEquity) },
+          { label: "DY", value: fmtPct(num(ind.dividendYield) ?? data.dy, true) },
+          { label: "LPA", value: fmtNum(num(ind.eps) ?? data.eps ?? num(snap?.lpa)) },
+          { label: "VPA", value: fmtNum(num(ind.bvps) ?? data.bvps ?? num(snap?.vpa)) },
+          {
+            label: "Liq. 2m (Fund.)",
+            value: fmtBRL(num(snap?.avgDailyLiquidity), true),
+          },
+        ];
+
+  const divergences = data.fundamentus?.divergenceMessages ?? [];
+
+  return (
+    <Panel>
+      <PanelHeader
+        title={type === "fii" ? "Indicadores FII" : "Indicadores fundamentalistas"}
+        actions={
+          data.fundamentus?.available ? (
+            <span className="text-[10px] text-muted-foreground">
+              + cross-check Fundamentus
+            </span>
+          ) : null
+        }
+      />
+      <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            className="rounded border border-border/70 bg-surface-2/40 px-2 py-1.5"
+          >
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {r.label}
+            </div>
+            <div className="font-mono text-sm tabular-nums">{r.value}</div>
+          </div>
+        ))}
+      </div>
+      {divergences.length > 0 ? (
+        <div className="px-3 pb-3 space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-warning flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3" /> Divergências CVM vs Fundamentus
+          </div>
+          <ul className="text-[11px] text-muted-foreground list-disc pl-4">
+            {divergences.slice(0, 4).map((d, i) => (
+              <li key={i}>{d}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </Panel>
+  );
 }
 
 function ExplainScoreBanner({

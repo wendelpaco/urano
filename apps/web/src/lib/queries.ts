@@ -46,7 +46,64 @@ export type Asset = {
   motivos?: unknown;
   /** FII analysis: campos ausentes / % cobertura (F4). */
   dataCoverage?: AssetDataCoverage;
+  /** Orientação acionável (API analysis v4). */
+  guidance?: InvestmentGuidance;
+  diagnosis?: string;
+  alerts?: string[];
+  structuredReasons?: Array<{ kind: "pro" | "con" | "info"; text: string }>;
+  stance?: string;
+  stanceLabel?: string;
+  stanceTone?: string;
+  vacancy?: number;
+  sectorPeers?: SectorPeerSummary;
+  fundamentus?: {
+    available?: boolean;
+    snapshot?: Record<string, number | string | null | undefined> | null;
+    divergenceMessages?: string[];
+  };
   [k: string]: unknown;
+};
+
+export type SectorPeerSummary = {
+  sector?: string | null;
+  peerCount?: number;
+  summary?: string;
+  medians?: Record<string, number | null>;
+  vsSector?: Array<{
+    field?: string;
+    label?: string;
+    self?: number | null;
+    sectorMedian?: number | null;
+    standing?: string;
+    note?: string;
+  }>;
+  peers?: Array<{
+    ticker?: string;
+    name?: string | null;
+    score?: number | null;
+    peRatio?: number | null;
+    pbRatio?: number | null;
+    roe?: number | null;
+    dividendYield?: number | null;
+  }>;
+};
+
+/** Postura + porquês gerados pelo motor de orientação. */
+export type InvestmentGuidance = {
+  stance?: string;
+  stanceLabel?: string;
+  stanceTone?: "positive" | "warning" | "negative" | "muted" | string;
+  headline?: string;
+  why?: string[];
+  risks?: string[];
+  ifNotHolding?: string;
+  ifHolding?: string;
+  nextSteps?: string[];
+  whenToRevisit?: string;
+  confidence?: string;
+  confidenceNote?: string;
+  disclaimers?: string[];
+  structuredReasons?: Array<{ kind: "pro" | "con" | "info"; text: string }>;
 };
 
 export type RankingParams = {
@@ -76,11 +133,14 @@ export type RankingResponse =
 export type ScreenerParams = Record<string, string | number | boolean | undefined | null>;
 
 export type Position = {
+  id?: string;
   ticker: string;
   type?: "stock" | "fii" | string;
   sector?: string;
-  quantity?: number;
-  qty?: number;
+  quantity?: number | null;
+  qty?: number | null;
+  targetAllocationPercent?: number;
+  companyName?: string;
   price?: number;
   value?: number;
   total?: number;
@@ -169,24 +229,92 @@ export function rankingMeta(data: RankingResponse | undefined): RankingMeta | un
   return data.meta;
 }
 
+/**
+ * Screener de ações (`/screener`) ou FIIs (`/fiis/screener`) conforme `params.type`.
+ */
 export function useScreener(params: ScreenerParams) {
+  const isFii = params.type === "fii";
+  const query = isFii ? mapFiiScreenerParams(params) : mapStockScreenerParams(params);
+  const path = isFii ? "/fiis/screener" : "/screener";
+
   return useQuery<Asset[] | { items?: Asset[]; data?: Asset[] }>({
-    queryKey: ["screener", params],
-    queryFn: () => apiFetch({ path: "/screener", query: params }),
+    queryKey: ["screener", path, query],
+    queryFn: () => apiFetch({ path, query }),
     staleTime: 30_000,
     placeholderData: (prev) => prev,
     select: (raw) => {
-      if (Array.isArray(raw)) return raw.map((a) => normalizeAsset(a));
+      if (Array.isArray(raw)) {
+        return raw.map((a) =>
+          normalizeAsset({ ...a, type: a.type ?? (isFii ? "fii" : "stock") }),
+        );
+      }
       if (raw && typeof raw === "object") {
         const obj = raw as { items?: Asset[]; data?: Asset[] };
-        if (Array.isArray(obj.data))
-          return { ...obj, data: obj.data.map((a) => normalizeAsset(a)) };
-        if (Array.isArray(obj.items))
+        if (Array.isArray(obj.data)) {
+          return {
+            ...obj,
+            data: obj.data.map((a) =>
+              normalizeAsset({ ...a, type: a.type ?? (isFii ? "fii" : "stock") }),
+            ),
+          };
+        }
+        if (Array.isArray(obj.items)) {
           return { ...obj, items: obj.items.map((a) => normalizeAsset(a)) };
+        }
       }
       return raw;
     },
   });
+}
+
+function mapStockScreenerParams(
+  params: ScreenerParams,
+): Record<string, string | number | boolean | undefined | null> {
+  const out: Record<string, string | number | boolean | undefined | null> = {};
+  const map: Record<string, string> = {
+    peMin: "minPE",
+    peMax: "maxPE",
+    pvpMin: "minPVP",
+    pvpMax: "maxPVP",
+    roeMin: "minROE",
+    roeMax: "maxROE",
+    dyMin: "minDY",
+    dyMax: "maxDY",
+    scoreMin: "minScore",
+    scoreMax: "maxScore",
+    sector: "sector",
+    sortBy: "sortBy",
+    order: "order",
+    limit: "limit",
+  };
+  for (const [from, to] of Object.entries(map)) {
+    const v = params[from];
+    if (v !== "" && v !== undefined && v !== null) out[to] = v;
+  }
+  return out;
+}
+
+function mapFiiScreenerParams(
+  params: ScreenerParams,
+): Record<string, string | number | boolean | undefined | null> {
+  const out: Record<string, string | number | boolean | undefined | null> = {};
+  if (params.pvpMin) out.pvp_gte = params.pvpMin;
+  if (params.pvpMax) out.pvp_lte = params.pvpMax;
+  if (params.dyMin) out.dy_gte = params.dyMin;
+  if (params.dyMax) out.dy_lte = params.dyMax;
+  if (params.scoreMin) out.score_gte = params.scoreMin;
+  if (params.scoreMax) out.score_lte = params.scoreMax;
+  if (params.liquidityMin) out.liquidity_gte = params.liquidityMin;
+  if (params.vacancyMax) out.vacancy_lte = params.vacancyMax;
+  if (params.sector) out.segment = params.sector;
+  if (params.classification) out.classification = params.classification;
+  const sort = String(params.sortBy ?? "score");
+  out.sort = ["dy", "pvp", "price", "liquidity", "ticker", "score", "vacancy"].includes(sort)
+    ? sort
+    : "score";
+  if (params.order) out.order = params.order;
+  if (params.limit) out.limit = params.limit;
+  return out;
 }
 
 const asNum = (v: unknown): number | undefined =>
@@ -254,7 +382,11 @@ export function normalizeAsset(raw: Asset | Record<string, unknown>): Asset {
     marketCap: asNum(r.marketCap) ?? asNum(ind.marketCap),
     netMargin: asNum(r.netMargin) ?? asNum(ind.netMargin),
     debtEquity: asNum(r.debtEquity) ?? asNum(r.debtToEquity) ?? asNum(ind.debtToEquity),
-    sector: (r.sector as string | undefined) ?? undefined,
+    sector: (r.sector as string | undefined) ?? (r.segment as string | undefined) ?? undefined,
+    stance: (r.stance as string | undefined) ?? undefined,
+    stanceLabel: (r.stanceLabel as string | undefined) ?? undefined,
+    stanceTone: (r.stanceTone as string | undefined) ?? undefined,
+    vacancy: asNum(r.vacancy) ?? asNum(r.vacancyPct),
   };
 }
 
@@ -277,12 +409,48 @@ export function flattenAssetDetail(raw: Asset, type: "stock" | "fii"): Asset {
   // F4: preservar cobertura de dados (top-level dataCoverage ou metadata.data_coverage).
   const coverage = normalizeDataCoverage(raw);
   if (coverage) flat.dataCoverage = coverage;
+
+  // Guidance + reasons tipados (analysis v4)
+  if (raw.guidance && typeof raw.guidance === "object") {
+    flat.guidance = raw.guidance as InvestmentGuidance;
+  }
+  if (Array.isArray(raw.structuredReasons) && raw.structuredReasons.length > 0) {
+    flat.reasons = raw.structuredReasons;
+    flat.structuredReasons = raw.structuredReasons as Asset["structuredReasons"];
+  } else if (flat.guidance?.structuredReasons?.length) {
+    flat.reasons = flat.guidance.structuredReasons;
+  } else if (Array.isArray(raw.reasons) || Array.isArray(raw.alerts)) {
+    // Converte strings soltas → pro/con para o painel
+    const pros = (Array.isArray(raw.reasons) ? raw.reasons : [])
+      .map((r) => (typeof r === "string" ? { kind: "pro" as const, text: r } : r))
+      .filter(Boolean);
+    const cons = (Array.isArray(raw.alerts) ? raw.alerts : [])
+      .map((a) =>
+        typeof a === "string" ? { kind: "con" as const, text: a } : a,
+      )
+      .filter(Boolean);
+    if (pros.length + cons.length > 0) {
+      flat.reasons = [...pros, ...cons];
+    }
+  }
+
+  if (raw.fundamentus && typeof raw.fundamentus === "object") {
+    flat.fundamentus = raw.fundamentus as Asset["fundamentus"];
+  }
+  if (raw.sectorPeers && typeof raw.sectorPeers === "object") {
+    flat.sectorPeers = raw.sectorPeers as SectorPeerSummary;
+  }
+  if (typeof raw.diagnosis === "string") flat.diagnosis = raw.diagnosis;
+  if (typeof raw.stanceLabel === "string") flat.stanceLabel = raw.stanceLabel;
+  if (typeof raw.stance === "string") flat.stance = raw.stance;
+  if (typeof raw.stanceTone === "string") flat.stanceTone = raw.stanceTone;
+
   if (type === "fii") {
     flat.dy = asNum(raw.dividendYield ?? raw.dy) ?? flat.dy;
     flat.pvp = asNum(raw.pvp) ?? flat.pvp;
     flat.price = asNum(raw.price) ?? flat.price;
     flat.liquidity = asNum(raw.liquidity);
-    if (!Array.isArray(raw.reasons) && typeof raw.explanation === "string" && raw.explanation) {
+    if (!Array.isArray(flat.reasons) && typeof raw.explanation === "string" && raw.explanation) {
       flat.reasons = [raw.explanation];
     }
   } else {
@@ -290,6 +458,7 @@ export function flattenAssetDetail(raw: Asset, type: "stock" | "fii"): Asset {
     flat.pe = asNum(ind.peRatio) ?? flat.pe;
     flat.pvp = asNum(ind.pbRatio) ?? flat.pvp;
     flat.roe = asNum(ind.roe) ?? flat.roe;
+    flat.roic = asNum(ind.roic) ?? flat.roic;
     flat.marketCap = asNum(ind.marketCap) ?? flat.marketCap;
     flat.netMargin = asNum(ind.netMargin) ?? flat.netMargin;
     flat.debtEquity = asNum(ind.debtToEquity) ?? flat.debtEquity;

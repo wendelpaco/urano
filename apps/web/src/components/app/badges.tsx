@@ -39,6 +39,39 @@ export function DyTtmHeader({
   );
 }
 
+/**
+ * Postura do filtro de qualidade (study_to_buy / avoid_entry / …).
+ * Linguagem orientativa — não é ordem de compra/venda.
+ */
+export function StanceBadge({
+  label,
+  tone,
+  className,
+}: {
+  label?: string | null;
+  tone?: "positive" | "warning" | "negative" | "muted" | string | null;
+  className?: string;
+}) {
+  if (!label) return null;
+  const t = tone ?? "muted";
+  return (
+    <span
+      title="Orientação do filtro de qualidade — não é recomendação de investimento."
+      className={cn(
+        "inline-flex items-center max-w-[11rem] truncate rounded border px-1.5 py-0.5 text-[10px] font-medium leading-tight",
+        t === "positive" && "bg-positive/12 text-positive border-positive/30",
+        t === "warning" && "bg-warning/12 text-warning border-warning/30",
+        t === "negative" && "bg-negative/12 text-negative border-negative/30",
+        (t === "muted" || !["positive", "warning", "negative"].includes(t)) &&
+          "bg-surface-3 text-muted-foreground border-border",
+        className,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function ScoreBadge({
   score,
   size = "md",

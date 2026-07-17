@@ -135,6 +135,11 @@ export const walletAssets = pgTable(
       precision: 5,
       scale: 2,
     }).notNull(),
+    /**
+     * Quantidade de cotas/ações em custódia.
+     * Null = meta só (ainda sem custódia informada). Usado no aporte/rebalance.
+     */
+    quantity: decimal('quantity', { precision: 18, scale: 6 }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -153,6 +158,10 @@ export const walletAssets = pgTable(
     check(
       'chk_allocation_range',
       sql`${table.targetAllocationPercent} >= 0 AND ${table.targetAllocationPercent} <= 100`,
+    ),
+    check(
+      'chk_wallet_asset_quantity_nonneg',
+      sql`${table.quantity} IS NULL OR ${table.quantity} >= 0`,
     ),
   ],
 );

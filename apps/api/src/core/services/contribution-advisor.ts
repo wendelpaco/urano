@@ -7,6 +7,7 @@
  */
 
 import { RISK_CONFIGS, type RiskProfile } from '../data/risk-profiles.ts';
+import { buildInvestmentGuidance } from './investment-guidance.ts';
 
 export interface AdvisorAsset {
   ticker: string;
@@ -39,6 +40,11 @@ export interface ContributionPurchase {
   cost: number;
   score: number;
   why: string[];
+  /** Postura do filtro de qualidade (mesma linguagem da research). */
+  stance?: string;
+  stanceLabel?: string;
+  /** Frase curta se o investidor ainda não tem o ativo. */
+  ifNotHolding?: string;
 }
 
 export interface ContributionSuggestion {
@@ -148,6 +154,14 @@ export function suggestContribution(
       existing.quantity += quantity;
       existing.cost = round2(existing.cost + cost);
     } else {
+      const guidance = buildInvestmentGuidance({
+        ticker: a.ticker,
+        assetType: a.assetType,
+        score: a.score,
+        reasons: a.reasons,
+        alerts: a.alerts,
+        experimental: a.assetType === 'fii',
+      });
       purchases.push({
         ticker: a.ticker,
         name: a.name,
@@ -156,7 +170,15 @@ export function suggestContribution(
         unitPrice: a.price,
         cost: round2(cost),
         score: a.score,
-        why: [`Score ${a.score}/100`, ...a.reasons.slice(0, 2)],
+        stance: guidance.stance,
+        stanceLabel: guidance.stanceLabel,
+        ifNotHolding: guidance.ifNotHolding,
+        why: [
+          guidance.stanceLabel,
+          `Score ${a.score}/100 no filtro de qualidade`,
+          ...a.reasons.slice(0, 2),
+          a.alerts[0] ? `Atenção: ${a.alerts[0]}` : '',
+        ].filter(Boolean),
       });
     }
     plannedCost.set(a.ticker, (plannedCost.get(a.ticker) ?? 0) + cost);

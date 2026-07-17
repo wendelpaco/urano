@@ -14,7 +14,27 @@ import { DeltaPill, HealthBadge, ScoreBadge, TickerBadge } from "@/components/ap
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
 import { apiSettings } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { Activity, ArrowRight, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  CheckCircle2,
+  Filter,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SCREENER_PRESETS } from "@/lib/screener-presets";
+
+const ONBOARDING_KEY = "urano.onboarding.dismissed";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -43,6 +63,7 @@ function OverviewPage() {
           timeStyle: "short",
         })}
       />
+      <FirstInvestmentOnboarding />
       <MarketSummary />
       <div className="grid grid-cols-12 gap-3">
         <div className="col-span-12 xl:col-span-8 space-y-3">
@@ -59,6 +80,171 @@ function OverviewPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Onboarding em 3 passos: perfil → screener (preset) → simular aporte.
+ * Persist dismiss em localStorage.
+ */
+function FirstInvestmentOnboarding() {
+  const [dismissed, setDismissed] = useState(true);
+  const [step, setStep] = useState(1);
+  const [profile, setProfile] = useState<"conservador" | "moderado" | "agressivo">(
+    "conservador",
+  );
+
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(ONBOARDING_KEY) === "1");
+    } catch {
+      setDismissed(false);
+    }
+  }, []);
+
+  if (dismissed) return null;
+
+  const preset =
+    profile === "conservador"
+      ? SCREENER_PRESETS.find((p) => p.id === "first_conservative")
+      : profile === "agressivo"
+        ? SCREENER_PRESETS.find((p) => p.id === "quality_value")
+        : SCREENER_PRESETS.find((p) => p.id === "dividend_focus");
+
+  const dismiss = () => {
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setDismissed(true);
+  };
+
+  return (
+    <Panel className="border-primary/30 bg-primary/5">
+      <PanelHeader
+        title="Seu primeiro investimento em 3 passos"
+        actions={
+          <button
+            type="button"
+            onClick={dismiss}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            Dispensar
+          </button>
+        }
+      />
+      <div className="p-3 space-y-3">
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setStep(n)}
+              className={
+                "inline-flex items-center gap-1.5 rounded border px-2 py-1 " +
+                (step === n
+                  ? "border-primary/50 bg-primary/15 text-primary"
+                  : step > n
+                    ? "border-positive/30 text-positive"
+                    : "border-border text-muted-foreground")
+              }
+            >
+              {step > n ? <CheckCircle2 className="h-3 w-3" /> : null}
+              {n === 1 ? "1 · Perfil" : n === 2 ? "2 · Candidatos" : "3 · Aporte"}
+            </button>
+          ))}
+        </div>
+
+        {step === 1 ? (
+          <div className="space-y-3 text-xs">
+            <p className="text-muted-foreground leading-relaxed">
+              O score Urano é um <strong className="text-foreground">filtro de qualidade</strong>,
+              não previsão de retorno. Escolha o perfil que guia o screener e o simulador de aporte.
+            </p>
+            <div className="max-w-xs">
+              <Select
+                value={profile}
+                onValueChange={(v) =>
+                  setProfile(v as "conservador" | "moderado" | "agressivo")
+                }
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="conservador">Conservador — score alto, liquidez</SelectItem>
+                  <SelectItem value="moderado">Moderado — qualidade + renda</SelectItem>
+                  <SelectItem value="agressivo">Agressivo — mais seletivo em preço</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="button" size="sm" onClick={() => setStep(2)}>
+              Continuar <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
+          <div className="space-y-3 text-xs">
+            <p className="text-muted-foreground leading-relaxed">
+              Abra o screener com o preset{" "}
+              <strong className="text-foreground">{preset?.label ?? "Primeiro aporte"}</strong>
+              : candidatos já filtrados por score e liquidez. Leia a postura de cada um na research.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" asChild>
+                <Link
+                  to="/market/screener"
+                  search={{
+                    ...(preset?.search ?? { type: "stock", scoreMin: "70", sortBy: "score" }),
+                    preset: preset?.id ?? "first_conservative",
+                  }}
+                >
+                  <Filter className="h-3.5 w-3.5 mr-1.5" />
+                  Abrir screener
+                </Link>
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => setStep(3)}>
+                Já olhei candidatos <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="space-y-3 text-xs">
+            <p className="text-muted-foreground leading-relaxed">
+              Simule o aporte <strong className="text-foreground">do zero</strong> (primeiro
+              investimento) ou com sua carteira. Cada compra traz o porquê e a postura do filtro de
+              qualidade.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" asChild>
+                <Link
+                  to="/portfolio/contribution"
+                  search={{
+                    fromScratch: "1",
+                    profile,
+                    amount: "3000",
+                    onlyTypes: "all",
+                  }}
+                >
+                  <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                  Simular primeiro aporte
+                </Link>
+              </Button>
+              <Button type="button" size="sm" variant="outline" asChild>
+                <Link to="/portfolio">Criar / ver carteiras</Link>
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={dismiss}>
+                Concluir
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </Panel>
   );
 }
 

@@ -14,6 +14,7 @@
  */
 
 import { statusInvestScraper } from './statusinvest-scraper.ts';
+import { fundamentusScraper } from './scrapers/fundamentus-scraper.ts';
 import { stockQuoteService } from './stock-quote-service.ts';
 import { scoreWarmup, type CachedScore } from './score-warmup.ts';
 import { redis } from './redis.ts';
@@ -250,7 +251,47 @@ export class LazyDataService {
 
     try {
       if (type === 'stock') {
-        const data = await statusInvestScraper.fetchStock(ticker);
+        // StatusInvest primeiro; Fundamentus como fallback de indicadores (não substitui CVM no score).
+        let name = ticker.toUpperCase();
+        let sector: string | null = null;
+        let price = 0;
+        let dy: number | undefined;
+        let pl: number | undefined;
+        let pvp: number | undefined;
+        let roe: number | undefined;
+        let scrapedOk = false;
+
+        try {
+          const data = await statusInvestScraper.fetchStock(ticker);
+          name = data.name || name;
+          sector = data.sector || null;
+          price = data.price;
+          dy = data.dy12m;
+          pl = data.pl;
+          pvp = data.pvp;
+          roe = data.roe;
+          scrapedOk = true;
+        } catch (err) {
+          console.warn(
+            `[lazy] StatusInvest falhou para ${ticker}, tentando Fundamentus: ${(err as Error).message}`,
+          );
+        }
+
+        if (!scrapedOk || price <= 0 || pl == null || pvp == null) {
+          const fund = await fundamentusScraper.fetchWithCache(ticker);
+          if (fund) {
+            name = fund.name || name;
+            sector = fund.sector || sector;
+            if (price <= 0 && fund.price > 0) price = fund.price;
+            if (dy == null && fund.dy > 0) dy = fund.dy;
+            if (pl == null && fund.pl !== 0) pl = fund.pl;
+            if (pvp == null && fund.pvp !== 0) pvp = fund.pvp;
+            if (roe == null && fund.roe !== 0) roe = fund.roe;
+            scrapedOk = true;
+          }
+        }
+
+        if (!scrapedOk) return null;
 
         // Persiste no PostgreSQL
         // Synthetic identifiers must still fit companies.cnpj CHAR(14).
@@ -261,12 +302,12 @@ export class LazyDataService {
           .values({
             cnpj: placeholderCnpj,
             ticker: ticker.toUpperCase(),
-            name: data.name || ticker.toUpperCase(),
-            sector: data.sector || null,
+            name,
+            sector,
           })
           .onConflictDoUpdate({
             target: companies.ticker,
-            set: { name: data.name, sector: data.sector || null, updatedAt: new Date() },
+            set: { name, sector, updatedAt: new Date() },
           });
 
         // Cache no Redis
@@ -276,17 +317,17 @@ export class LazyDataService {
 
         return {
           ticker: ticker.toUpperCase(),
-          name: data.name || ticker,
+          name,
           type: 'stock',
-          price: data.price,
+          price,
           change: 0,
           changePct: 0,
           score: 50, // score básico até warmup calcular
-          sector: data.sector || null,
-          dy: data.dy12m,
-          pl: data.pl,
-          pvp: data.pvp,
-          roe: data.roe,
+          sector,
+          dy,
+          pl,
+          pvp,
+          roe,
           source: 'scraped',
           updatedAt: new Date().toISOString(),
         };

@@ -8,12 +8,16 @@ import { fmtBRL, fmtPct } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BookMarked, RefreshCw } from "lucide-react";
+import { BookMarked, Plus, RefreshCw, Save } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addJournalEntry } from "@/lib/journal";
+
+function isFiiTicker(t: string): boolean {
+  return /^[A-Z]{4}11$/.test(t.toUpperCase());
+}
 
 export const Route = createFileRoute("/portfolio/$id")({
   head: ({ params }) => ({ meta: [{ title: `Carteira ${params.id}` }] }),
@@ -52,18 +56,92 @@ type RebalanceResult = {
 
 function WalletDetail() {
   const { id } = Route.useParams();
+  const qc = useQueryClient();
   const q = useWallet(id);
   const w: Wallet = q.data ?? ({ id: id ?? "" } as Wallet);
   const positions = asArray<Position>(w.positions ?? w.assets);
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+  const [newTicker, setNewTicker] = useState("");
+  const [newQty, setNewQty] = useState("");
+
+  // Sync drafts from server when wallet loads
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const p of positions) {
+      const key = String(p.id ?? p.ticker);
+      const qv = p.quantity ?? p.qty;
+      if (qv != null && Number.isFinite(Number(qv))) next[key] = String(qv);
+      else next[key] = "";
+    }
+    setQtyDraft(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when asset list identity changes
+  }, [q.dataUpdatedAt]);
+
   const currentPositions = positions.flatMap((position) => {
-    const quantity = position.quantity ?? position.qty;
-    return typeof quantity === "number" && Number.isFinite(quantity) && quantity >= 0
+    const key = String(position.id ?? position.ticker);
+    const draft = qtyDraft[key];
+    const quantity =
+      draft !== undefined && draft !== ""
+        ? Number(draft.replace(",", "."))
+        : Number(position.quantity ?? position.qty);
+    return Number.isFinite(quantity) && quantity >= 0
       ? [{ ticker: position.ticker, quantity }]
       : [];
   });
   const hasCompletePositionQuantities =
-    positions.length > 0 && currentPositions.length === positions.length;
+    positions.length > 0 &&
+    positions.every((p) => {
+      const key = String(p.id ?? p.ticker);
+      const draft = qtyDraft[key];
+      const n =
+        draft !== undefined && draft !== ""
+          ? Number(draft.replace(",", "."))
+          : Number(p.quantity ?? p.qty);
+      return Number.isFinite(n) && n >= 0;
+    });
   const [availableAmount, setAvailableAmount] = useState("1000");
+
+  const saveQty = useMutation({
+    mutationFn: async ({ assetId, quantity }: { assetId: string; quantity: number | null }) =>
+      apiFetch({
+        path: `/wallets/${id}/assets/${assetId}`,
+        method: "PATCH",
+        body: { quantity },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wallets", id] });
+      toast.success("Quantidade salva");
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Falha ao salvar quantidade"),
+  });
+
+  const addAsset = useMutation({
+    mutationFn: async () => {
+      const ticker = newTicker.trim().toUpperCase();
+      if (ticker.length < 5) throw new Error("Ticker inválido (ex.: PETR4, HGLG11).");
+      const quantity =
+        newQty.trim() === "" ? null : Number(newQty.replace(",", "."));
+      if (quantity != null && (!Number.isFinite(quantity) || quantity < 0)) {
+        throw new Error("Quantidade inválida.");
+      }
+      return apiFetch({
+        path: `/wallets/${id}/assets`,
+        method: "POST",
+        body: {
+          ticker,
+          targetAllocationPercent: 0,
+          quantity,
+        },
+      });
+    },
+    onSuccess: () => {
+      setNewTicker("");
+      setNewQty("");
+      qc.invalidateQueries({ queryKey: ["wallets", id] });
+      toast.success("Ativo adicionado");
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Falha ao adicionar"),
+  });
 
   const rebalance = useMutation({
     mutationFn: () => {
@@ -107,9 +185,24 @@ function WalletDetail() {
         title={w.name ?? `Carteira #${id}`}
         subtitle={w.strategy ?? w.profile ?? "Detalhes da carteira e alocação atual."}
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/portfolio">Voltar</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link
+                to="/portfolio/contribution"
+                search={{
+                  walletId: id,
+                  fromScratch: "0",
+                  amount: availableAmount || "1000",
+                  profile: "moderado",
+                }}
+              >
+                Simular aporte (qualidade)
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/portfolio">Voltar</Link>
+            </Button>
+          </div>
         }
       />
 
@@ -137,56 +230,140 @@ function WalletDetail() {
 
           <div className="grid grid-cols-12 gap-3">
             <Panel className="col-span-12 xl:col-span-8">
-              <PanelHeader title="Composição" />
+              <PanelHeader
+                title="Composição / custódia"
+                actions={
+                  <span className="text-[10px] text-muted-foreground">
+                    Quantidade salva no servidor
+                  </span>
+                }
+              />
               {positions.length === 0 ? (
-                <EmptyState title="Sem posições" />
+                <EmptyState
+                  title="Sem posições"
+                  description="Adicione um ticker abaixo para montar a carteira."
+                />
               ) : (
                 <table className="w-full text-[12.5px]">
                   <thead>
                     <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
                       <th className="text-left px-3 h-8">Ticker</th>
-                      <th className="text-left px-3 h-8">Setor</th>
+                      <th className="text-left px-3 h-8">Nome</th>
                       <th className="text-right px-3 h-8">Qtd</th>
+                      <th className="text-right px-3 h-8 w-20">Salvar</th>
+                      <th className="text-right px-3 h-8">% alvo</th>
                       <th className="text-right px-3 h-8">Preço</th>
-                      <th className="text-right px-3 h-8">Valor</th>
-                      <th className="text-right px-3 h-8">Peso</th>
-                      <th className="text-right px-3 h-8">Var %</th>
                       <th className="text-right px-3 h-8">Score</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {positions.map((p) => (
-                      <tr key={p.ticker} className="border-b border-border/60 hover:bg-surface-2">
-                        <td className="px-3 h-8">
-                          <Link
-                            to="/research/$type/$ticker"
-                            params={{ type: p.type ?? "stock", ticker: p.ticker }}
-                          >
-                            <TickerBadge ticker={p.ticker} />
-                          </Link>
-                        </td>
-                        <td className="px-3 h-8">
-                          <SectorBadge sector={p.sector} />
-                        </td>
-                        <td className="px-3 h-8 text-right tabular">
-                          {p.quantity ?? p.qty ?? "—"}
-                        </td>
-                        <td className="px-3 h-8 text-right tabular">{fmtBRL(p.price)}</td>
-                        <td className="px-3 h-8 text-right tabular">
-                          {fmtBRL(p.value ?? p.total)}
-                        </td>
-                        <td className="px-3 h-8 text-right tabular">{fmtPct(p.weight, true)}</td>
-                        <td className="px-3 h-8 text-right">
-                          <DeltaPill value={p.changePct} alreadyPct />
-                        </td>
-                        <td className="px-3 h-8 text-right">
-                          <ScoreBadge score={p.score} size="sm" />
-                        </td>
-                      </tr>
-                    ))}
+                    {positions.map((p) => {
+                      const key = String(p.id ?? p.ticker);
+                      const serverQty = p.quantity ?? p.qty;
+                      const draft = qtyDraft[key] ?? "";
+                      const dirty =
+                        (draft === "" && serverQty != null) ||
+                        (draft !== "" && Number(draft.replace(",", ".")) !== Number(serverQty));
+                      return (
+                        <tr key={key} className="border-b border-border/60 hover:bg-surface-2">
+                          <td className="px-3 h-10">
+                            <Link
+                              to="/research/$type/$ticker"
+                              params={{
+                                type: p.type ?? (isFiiTicker(p.ticker) ? "fii" : "stock"),
+                                ticker: p.ticker,
+                              }}
+                            >
+                              <TickerBadge ticker={p.ticker} />
+                            </Link>
+                          </td>
+                          <td className="px-3 h-10 text-xs text-muted-foreground truncate max-w-[140px]">
+                            {(p.companyName as string | undefined) ?? p.sector ?? "—"}
+                          </td>
+                          <td className="px-3 h-10 text-right">
+                            <Input
+                              value={draft}
+                              onChange={(e) =>
+                                setQtyDraft((prev) => ({ ...prev, [key]: e.target.value }))
+                              }
+                              placeholder="0"
+                              className="h-7 w-24 ml-auto font-mono text-xs text-right"
+                              inputMode="decimal"
+                            />
+                          </td>
+                          <td className="px-3 h-10 text-right">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={dirty ? "default" : "ghost"}
+                              className="h-7 px-2"
+                              disabled={!p.id || saveQty.isPending || !dirty}
+                              onClick={() => {
+                                if (!p.id) {
+                                  toast.error("Ativo sem id — recarregue a carteira.");
+                                  return;
+                                }
+                                const raw = qtyDraft[key]?.trim() ?? "";
+                                const quantity =
+                                  raw === "" ? null : Number(raw.replace(",", "."));
+                                if (quantity != null && (!Number.isFinite(quantity) || quantity < 0)) {
+                                  toast.error("Quantidade inválida");
+                                  return;
+                                }
+                                saveQty.mutate({ assetId: String(p.id), quantity });
+                              }}
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
+                          <td className="px-3 h-10 text-right tabular text-muted-foreground">
+                            {fmtPct(p.targetAllocationPercent, true)}
+                          </td>
+                          <td className="px-3 h-10 text-right tabular">{fmtBRL(p.price)}</td>
+                          <td className="px-3 h-10 text-right">
+                            <ScoreBadge score={p.score} size="sm" />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
+              <div className="p-3 border-t border-border flex flex-wrap gap-2 items-end">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Adicionar ticker
+                  </Label>
+                  <Input
+                    value={newTicker}
+                    onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
+                    placeholder="PETR4"
+                    className="h-8 w-28 font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Qtd
+                  </Label>
+                  <Input
+                    value={newQty}
+                    onChange={(e) => setNewQty(e.target.value)}
+                    placeholder="100"
+                    className="h-8 w-24 font-mono"
+                    inputMode="decimal"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8"
+                  disabled={addAsset.isPending}
+                  onClick={() => addAsset.mutate()}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  Incluir
+                </Button>
+              </div>
             </Panel>
 
             <div className="col-span-12 xl:col-span-4 space-y-3">

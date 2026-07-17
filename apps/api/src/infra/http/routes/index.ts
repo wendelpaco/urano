@@ -36,6 +36,7 @@ import {
   updateWalletController,
   deleteWalletController,
   addAssetToWalletController,
+  updateAssetInWalletController,
   removeAssetFromWalletController,
 } from '../controllers/wallets.controller.ts';
 
@@ -69,6 +70,7 @@ export async function routesPlugin(
   app.put('/wallets/:walletId', { ...wallet }, updateWalletController);
   app.delete('/wallets/:walletId', { ...wallet }, deleteWalletController);
   app.post('/wallets/:walletId/assets', { ...wallet }, addAssetToWalletController);
+  app.patch('/wallets/:walletId/assets/:assetId', { ...wallet }, updateAssetInWalletController);
   app.delete('/wallets/:walletId/assets/:assetId', { ...wallet }, removeAssetFromWalletController);
   app.post('/wallets/:walletId/rebalance', { ...wallet }, rebalanceController);
 

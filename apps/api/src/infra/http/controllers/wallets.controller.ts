@@ -31,8 +31,18 @@ const updateWalletSchema = z.object({
 
 const addAssetSchema = z.object({
   ticker: tickerParamSchema,
-  targetAllocationPercent: z.number().min(0).max(100),
+  targetAllocationPercent: z.number().min(0).max(100).optional().default(0),
+  /** Quantidade em custódia (cotas/ações). Opcional. */
+  quantity: z.number().finite().min(0).max(1_000_000_000).nullable().optional(),
 });
+
+const updateAssetSchema = z.object({
+  targetAllocationPercent: z.number().min(0).max(100).optional(),
+  quantity: z.number().finite().min(0).max(1_000_000_000).nullable().optional(),
+}).refine(
+  (v) => v.targetAllocationPercent !== undefined || v.quantity !== undefined,
+  { message: 'Informe targetAllocationPercent e/ou quantity.' },
+);
 
 const paramsSchema = z.object({
   walletId: z.string().uuid(),
@@ -42,6 +52,18 @@ const assetParamsSchema = z.object({
   walletId: z.string().uuid(),
   assetId: z.string().uuid(),
 });
+
+function qtyToDb(q: number | null | undefined): string | null | undefined {
+  if (q === undefined) return undefined;
+  if (q === null) return null;
+  return String(q);
+}
+
+function qtyFromDb(q: string | null | undefined): number | null {
+  if (q == null || q === '') return null;
+  const n = Number(q);
+  return Number.isFinite(n) ? n : null;
+}
 
 // ─── Controllers ────────────────────────────────────────────────────────────
 
@@ -98,12 +120,13 @@ export async function getWalletController(
     return;
   }
 
-  // Busca os ativos da carteira com nome da empresa
-  const assets = await db
+  // Busca os ativos da carteira com nome da empresa + quantidade
+  const rows = await db
     .select({
       id: walletAssets.id,
       ticker: walletAssets.ticker,
       targetAllocationPercent: walletAssets.targetAllocationPercent,
+      quantity: walletAssets.quantity,
       companyName: companies.name,
       cnpj: companies.cnpj,
     })
@@ -112,7 +135,15 @@ export async function getWalletController(
     .where(eq(walletAssets.walletId, walletId))
     .orderBy(walletAssets.ticker);
 
-  reply.send({ ...wallet, assets });
+  const assets = rows.map((r) => ({
+    ...r,
+    quantity: qtyFromDb(r.quantity as string | null),
+    targetAllocationPercent: r.targetAllocationPercent != null
+      ? Number(r.targetAllocationPercent)
+      : 0,
+  }));
+
+  reply.send({ ...wallet, assets, positions: assets });
 }
 
 /** PUT /v1/wallets/:walletId */
@@ -180,7 +211,7 @@ export async function addAssetToWalletController(
   if (!bodyParsed.success) return sendZodError(reply, bodyParsed.error, 'Payload inválido.');
 
   const { walletId } = paramsParsed.data;
-  const { ticker, targetAllocationPercent } = bodyParsed.data;
+  const { ticker, targetAllocationPercent, quantity } = bodyParsed.data;
 
   // Verifica se a carteira existe e pertence à chave autenticada
   const [wallet] = await db
@@ -193,27 +224,115 @@ export async function addAssetToWalletController(
   }
 
   try {
+    const qtyDb = qtyToDb(quantity);
+    const setOnConflict: {
+      targetAllocationPercent: string;
+      updatedAt: Date;
+      quantity?: string | null;
+    } = {
+      targetAllocationPercent: String(targetAllocationPercent),
+      updatedAt: new Date(),
+    };
+    if (qtyDb !== undefined) setOnConflict.quantity = qtyDb;
+
     const [row] = await db
       .insert(walletAssets)
       .values({
         walletId,
         ticker,
         targetAllocationPercent: String(targetAllocationPercent),
+        ...(qtyDb !== undefined ? { quantity: qtyDb } : {}),
       })
       .onConflictDoUpdate({
         target: [walletAssets.walletId, walletAssets.ticker],
-        set: {
-          targetAllocationPercent: String(targetAllocationPercent),
-          updatedAt: new Date(),
-        },
+        set: setOnConflict,
       })
       .returning();
 
-    reply.status(201).send(row);
+    reply.status(201).send({
+      ...row,
+      quantity: qtyFromDb(row?.quantity as string | null),
+      targetAllocationPercent: row?.targetAllocationPercent != null
+        ? Number(row.targetAllocationPercent)
+        : 0,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('chk_allocation_range')) {
       reply.status(400).send({ error: 'ValidationError', message: 'targetAllocationPercent deve estar entre 0 e 100.' });
+      return;
+    }
+    if (message.includes('chk_wallet_asset_quantity_nonneg')) {
+      reply.status(400).send({ error: 'ValidationError', message: 'quantity deve ser >= 0.' });
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * PATCH /v1/wallets/:walletId/assets/:assetId
+ * Atualiza % alvo e/ou quantidade de custódia.
+ */
+export async function updateAssetInWalletController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const paramsParsed = assetParamsSchema.safeParse(request.params);
+  if (!paramsParsed.success) return sendZodError(reply, paramsParsed.error, 'Parâmetros de rota inválidos.');
+
+  const bodyParsed = updateAssetSchema.safeParse(request.body);
+  if (!bodyParsed.success) return sendZodError(reply, bodyParsed.error, 'Payload inválido.');
+
+  const { walletId, assetId } = paramsParsed.data;
+  const { targetAllocationPercent, quantity } = bodyParsed.data;
+
+  // Ownership: join via wallet
+  const [owned] = await db
+    .select({ assetId: walletAssets.id })
+    .from(walletAssets)
+    .innerJoin(wallets, eq(walletAssets.walletId, wallets.id))
+    .where(and(
+      eq(walletAssets.id, assetId),
+      eq(walletAssets.walletId, walletId),
+      eq(wallets.userId, request.apiKeyId!),
+    ));
+
+  if (!owned) {
+    reply.status(404).send({ error: 'NotFound', message: 'Ativo ou carteira não encontrado.' });
+    return;
+  }
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (targetAllocationPercent !== undefined) {
+    patch.targetAllocationPercent = String(targetAllocationPercent);
+  }
+  if (quantity !== undefined) {
+    patch.quantity = qtyToDb(quantity);
+  }
+
+  try {
+    const [row] = await db
+      .update(walletAssets)
+      .set(patch)
+      .where(and(eq(walletAssets.id, assetId), eq(walletAssets.walletId, walletId)))
+      .returning();
+
+    reply.send({
+      ...row,
+      quantity: qtyFromDb(row?.quantity as string | null),
+      targetAllocationPercent: row?.targetAllocationPercent != null
+        ? Number(row.targetAllocationPercent)
+        : 0,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('chk_allocation_range')) {
+      reply.status(400).send({ error: 'ValidationError', message: 'targetAllocationPercent deve estar entre 0 e 100.' });
+      return;
+    }
+    if (message.includes('chk_wallet_asset_quantity_nonneg')) {
+      reply.status(400).send({ error: 'ValidationError', message: 'quantity deve ser >= 0.' });
       return;
     }
     throw err;

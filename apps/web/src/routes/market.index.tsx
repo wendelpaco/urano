@@ -8,6 +8,7 @@ import {
   SCORE_BADGE_TRUST_TITLE,
   ScoreBadge,
   SectorBadge,
+  StanceBadge,
   TickerBadge,
 } from "@/components/app/badges";
 import { fmtBRL, fmtNum, fmtPct } from "@/lib/format";
@@ -179,6 +180,7 @@ function RankingPage() {
                   onClick={setSort}
                   title={SCORE_BADGE_TRUST_TITLE}
                 />
+                <th className="text-left px-3 h-8">Postura</th>
               </tr>
             </thead>
             <tbody>
@@ -217,6 +219,18 @@ function RankingPage() {
                   <td className="px-3 h-8 text-right tabular">{fmtPct(a.roe, true)}</td>
                   <td className="px-3 h-8 text-right">
                     <ScoreBadge score={a.score} size="sm" />
+                  </td>
+                  <td className="px-3 h-8">
+                    <StanceBadge
+                      label={
+                        (a.stanceLabel as string | undefined) ??
+                        (a.guidance as { stanceLabel?: string } | undefined)?.stanceLabel
+                      }
+                      tone={
+                        (a.stanceTone as string | undefined) ??
+                        (a.guidance as { stanceTone?: string } | undefined)?.stanceTone
+                      }
+                    />
                   </td>
                 </tr>
               ))}

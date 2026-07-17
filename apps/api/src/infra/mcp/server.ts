@@ -108,7 +108,7 @@ const server = new McpServer({
 
 server.tool(
   'get_stock_analysis',
-  'Análise completa de uma ação brasileira: score 0-100, valuation, rentabilidade, crescimento, dividendos, qualidade, momento. Inclui reasons, alerts e diagnóstico em português.',
+  'Análise completa de uma ação brasileira: score 0-100, pilares, reasons/alerts, diagnóstico e guidance (o que fazer se tem/não tem o ativo — estudar para aportar, manter, evitar, reduzir). Não é recomendação regulada; é filtro de qualidade.',
   { ticker: z.string().describe('Ticker da ação (ex: PETR4, VALE3, WEGE3)') },
   async ({ ticker }) => {
     const data = await api(`/analysis/stocks/${ticker.toUpperCase()}`);
@@ -120,7 +120,7 @@ server.tool(
 
 server.tool(
   'get_fii_analysis',
-  'Análise experimental de um Fundo Imobiliário: score de triagem 0-100, P/VP, DY, rendimento mensal médio, tipo e subclassificação. O modelo FII não foi validado ponto-no-tempo e não emite recomendação de investimento.',
+  'Análise experimental de um Fundo Imobiliário: score de triagem 0-100, P/VP, DY, guidance orientativa (sempre experimental). O modelo FII não foi validado ponto-no-tempo e não emite recomendação de investimento.',
   { ticker: z.string().describe('Ticker do FII (ex: HGLG11, XPML11, KNCR11)') },
   async ({ ticker }) => {
     const data = await api(`/analysis/fiis/${ticker.toUpperCase()}`);
@@ -171,9 +171,19 @@ server.tool(
     for (const t of tickers) {
       try {
         const data = await api(`/analysis/stocks/${t.toUpperCase()}`) as Record<string, unknown>;
+        const guidance = data.guidance as Record<string, unknown> | undefined;
         results[t.toUpperCase()] = {
           score: data.score,
           diagnosis: data.diagnosis,
+          guidance: guidance
+            ? {
+                stance: guidance.stance,
+                stanceLabel: guidance.stanceLabel,
+                headline: guidance.headline,
+                ifNotHolding: guidance.ifNotHolding,
+                ifHolding: guidance.ifHolding,
+              }
+            : undefined,
           valuation: (data.breakdown as Record<string, unknown>)?.valuation,
           profitability: (data.breakdown as Record<string, unknown>)?.profitability,
           peRatio: (data.indicators as Record<string, unknown>)?.peRatio,
@@ -228,20 +238,24 @@ server.tool(
 
 server.tool(
   'screen_fiis',
-  'Filtra FIIs por métricas: P/VP máximo, dividend yield mínimo, liquidez mínima, classificação (tijolo/papel/híbrido/fundo_de_fundos), ordenação por DY ou P/VP.',
+  'Filtra FIIs por métricas: P/VP, DY, score experimental, vacância (cache), liquidez, classificação, segmento. Retorna postura (stance) orientativa.',
   {
     pvp_lte: z.number().min(0).optional().describe('P/VP máximo (ex: 1.0 = abaixo do valor patrimonial)'),
     dy_gte: z.number().min(0).optional().describe('Dividend yield mínimo em % a.a. (ex: 8)'),
+    score_gte: z.number().min(0).max(100).optional().describe('Score mínimo 0-100'),
+    vacancy_lte: z.number().min(0).max(100).optional().describe('Vacância máxima % (se cache operacional existir)'),
     liquidity_gte: z.number().min(0).optional().describe('Liquidez mínima em R$ (ex: 1000000)'),
     classification: z.enum(['tijolo', 'papel', 'hibrido', 'fundo_de_fundos']).optional().describe('Classificação do FII'),
     segment: z.string().optional().describe('Segmento (ex: Logística, Shopping, Lajes Corporativas)'),
-    sort: z.enum(['dy', 'pvp', 'price', 'liquidity']).default('dy'),
+    sort: z.enum(['dy', 'pvp', 'price', 'liquidity', 'score', 'vacancy']).default('score'),
     limit: z.number().int().min(1).max(20).default(10),
   },
   async (params) => {
     const qs = new URLSearchParams();
     if (params.pvp_lte !== undefined) qs.set('pvp_lte', String(params.pvp_lte));
     if (params.dy_gte !== undefined) qs.set('dy_gte', String(params.dy_gte));
+    if (params.score_gte !== undefined) qs.set('score_gte', String(params.score_gte));
+    if (params.vacancy_lte !== undefined) qs.set('vacancy_lte', String(params.vacancy_lte));
     if (params.liquidity_gte !== undefined) qs.set('liquidity_gte', String(params.liquidity_gte));
     if (params.classification) qs.set('classification', params.classification);
     if (params.segment) qs.set('segment', params.segment);
