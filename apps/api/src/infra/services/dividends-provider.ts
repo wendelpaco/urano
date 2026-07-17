@@ -8,11 +8,12 @@
  * Fallback: se o endpoint falhar, retorna null → caller degrada com DMPL.
  */
 
-import { getOrSet } from './redis.ts';
+import { getOrSet, redis } from './redis.ts';
 import { withRetry, RateLimitError } from '../../shared/retry.ts';
 import { statusInvestLimiter } from './rate-limiter.ts';
 import { statusInvestCircuitBreaker } from './circuit-breaker.ts';
 import { getDividendsEndpoint } from '../../shared/ticker-utils.ts';
+import { readBodyWithCap } from '../../shared/safe-fetch.ts';
 import type { DividendEvent } from '../../core/services/dividends-analyzer.ts';
 import {
   loadFreshDividends,
@@ -128,6 +129,30 @@ export class DividendsProvider {
     }
   }
 
+  /**
+   * Como fetchDividends, mas NUNCA bate rede — só cache Redis ou DB canônico.
+   * Miss vira null (DY fica indisponível na resposta; próximo warmup/sync popula).
+   *
+   * Uso: rotas de alto volume (ranking, N tickers por request) que não podem
+   * esperar o rate limiter do StatusInvest (0.5 req/s serializado e global —
+   * concorrência do batch não ajuda, N tickers frios = N * ~2s mínimo).
+   */
+  async getCachedDividends(ticker: string): Promise<DividendEvent[] | null> {
+    const cacheKey = `dividends:${ticker.toUpperCase()}`;
+
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) return JSON.parse(cached) as DividendEvent[];
+    } catch { /* redis offline */ }
+
+    try {
+      const fromDb = await loadFreshDividends(ticker);
+      if (fromDb && fromDb.events.length > 0) return fromDb.events;
+    } catch { /* ok */ }
+
+    return null;
+  }
+
   // ---------------------------------------------------------------------------
   // Privados
   // ---------------------------------------------------------------------------
@@ -173,7 +198,8 @@ export class DividendsProvider {
 
     await statusInvestCircuitBreaker.onSuccess();
 
-    const text = await response.text();
+    // SSRF-1r: leitura streaming com teto de 512 KiB.
+    const text = await readBodyWithCap(response, 512 * 1024);
     if (!text || text.trim() === '[]' || text.trim() === 'null') {
       return []; // Ticker sem proventos registrados
     }

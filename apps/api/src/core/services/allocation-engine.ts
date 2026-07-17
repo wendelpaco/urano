@@ -18,6 +18,7 @@ import { fiiOperationalService } from '../../infra/services/fii-operational.serv
 import { redis } from '../../infra/services/redis.ts';
 import { calcAllIndicators } from './indicators.ts';
 import { StockScoreCalculator } from './stock-score.ts';
+import { STOCK_UNITS_SQL_LIST } from '../../shared/ticker-utils.ts';
 import {
   FIIScoreCalculatorV4,
   type FIIScoreInput,
@@ -723,7 +724,10 @@ export class AllocationEngine {
         cf.reference_date
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))
+      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN (${sql.join(
+        STOCK_UNITS_SQL_LIST.map(u => sql`${u}`),
+        sql`, `
+      )}))
         AND LENGTH(c.ticker) >= 5
       ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
     `);

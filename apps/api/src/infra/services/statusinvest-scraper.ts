@@ -15,6 +15,7 @@
  */
 
 import { withRetry, RateLimitError } from '../../shared/retry.ts';
+import { readBodyWithCap } from '../../shared/safe-fetch.ts';
 import { statusInvestLimiter } from './rate-limiter.ts';
 import { statusInvestCircuitBreaker } from './circuit-breaker.ts';
 import { userAgentPool } from './user-agent-pool.ts';
@@ -77,7 +78,7 @@ export class StatusInvestScraper {
 
     return {
       ...parsed,
-      dy12m: parsed.dy12m || divData.rendiment,
+      dy12m: parsed.dy12m || (divData.rendiment ?? 0),
       dividendsHistory: divData.history,
       earningsThisYear: divData.earningsThisYear,
       earningsLastYear: divData.earningsLastYear,
@@ -129,10 +130,10 @@ export class StatusInvestScraper {
    */
   private async fetchFIIDividendsData(ticker: string): Promise<{
     history: DividendEntry[];
-    earningsThisYear: number;
-    earningsLastYear: number;
-    provisionedThisYear: number;
-    rendiment: number;
+    earningsThisYear: number | null;
+    earningsLastYear: number | null;
+    provisionedThisYear: number | null;
+    rendiment: number | null;
   }> {
     const cacheKey = `dividends:${ticker.toUpperCase()}`;
 
@@ -158,10 +159,10 @@ export class StatusInvestScraper {
 
   /** Busca apenas os totais anuais (cache miss). */
   private async fetchFIIDividendsTotals(ticker: string): Promise<{
-    earningsThisYear: number;
-    earningsLastYear: number;
-    provisionedThisYear: number;
-    rendiment: number;
+    earningsThisYear: number | null;
+    earningsLastYear: number | null;
+    provisionedThisYear: number | null;
+    rendiment: number | null;
   }> {
     try {
       const url = `${this.baseUrl}/fii/companytickerprovents?ticker=${ticker}`;
@@ -172,9 +173,8 @@ export class StatusInvestScraper {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
 
-      // SSRF-1: limita leitura a 512 KiB para JSON de dividendos
-      const text = await r.text();
-      if (text.length > 512 * 1024) throw new Error('Resposta de dividendos muito grande');
+      // SSRF-1r: leitura streaming com teto de 512 KiB (substitui .text() + check post-hoc).
+      const text = await readBodyWithCap(r, 512 * 1024);
       const data = JSON.parse(text) as {
         earningsThisYear?: string;
         earningsLastYear?: string;
@@ -182,24 +182,31 @@ export class StatusInvestScraper {
         rendiment?: string;
       };
 
+      // PIPE-4r: ausência → null (não confundir com zero real).
+      const safeParse = (v: string | undefined): number | null => {
+        if (v === undefined || v === null || v.trim() === '') return null;
+        const n = parseFloat(v.replace(',', '.'));
+        return Number.isNaN(n) ? null : n;
+      };
+
       return {
-        earningsThisYear: parseFloat((data.earningsThisYear || '0').replace(',', '.')),
-        earningsLastYear: parseFloat((data.earningsLastYear || '0').replace(',', '.')),
-        provisionedThisYear: parseFloat((data.provisionedThisYear || '0').replace(',', '.')),
-        rendiment: parseFloat((data.rendiment || '0').replace(',', '.')),
+        earningsThisYear: safeParse(data.earningsThisYear),
+        earningsLastYear: safeParse(data.earningsLastYear),
+        provisionedThisYear: safeParse(data.provisionedThisYear),
+        rendiment: safeParse(data.rendiment),
       };
     } catch {
-      return { earningsThisYear: 0, earningsLastYear: 0, provisionedThisYear: 0, rendiment: 0 };
+      return { earningsThisYear: null, earningsLastYear: null, provisionedThisYear: null, rendiment: null };
     }
   }
 
   /** Busca completa da JSON API de dividendos de FIIs. */
   private async fetchFIIDividendsFromApi(ticker: string): Promise<{
     history: DividendEntry[];
-    earningsThisYear: number;
-    earningsLastYear: number;
-    provisionedThisYear: number;
-    rendiment: number;
+    earningsThisYear: number | null;
+    earningsLastYear: number | null;
+    provisionedThisYear: number | null;
+    rendiment: number | null;
   }> {
     try {
       const url = `${this.baseUrl}/fii/companytickerprovents?ticker=${ticker}`;
@@ -209,8 +216,8 @@ export class StatusInvestScraper {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
 
-      const rawText = await r.text();
-      if (rawText.length > 512 * 1024) throw new Error('Resposta de dividendos FII muito grande');
+      // SSRF-1r: leitura streaming com teto de 512 KiB.
+      const rawText = await readBodyWithCap(r, 512 * 1024);
       const data = JSON.parse(rawText) as {
         earningsThisYear?: string;
         earningsLastYear?: string;
@@ -221,14 +228,22 @@ export class StatusInvestScraper {
         }>;
       };
 
+      // PIPE-4r: ausência → null (não confundir com zero real).
+      const safeParse = (v: string | undefined): number | null => {
+        if (v === undefined || v === null || v.trim() === '') return null;
+        const n = parseFloat(v.replace(',', '.'));
+        return Number.isNaN(n) ? null : n;
+      };
+
       const history: DividendEntry[] = [];
       if (data.assetEarningsModels?.length) {
         for (const item of data.assetEarningsModels) {
           const date = (item.pd || item.ed || '');
+          if (!item.v) continue; // ausente → pula (não gera evento zero).
           const value = typeof item.v === 'number'
             ? item.v
-            : parseFloat(String(item.v || '0').replace(',', '.'));
-          if (date && value > 0) {
+            : safeParse(String(item.v));
+          if (date && value !== null && value > 0) {
             history.push({
               date: date.split('/').reverse().join('-'),
               value,
@@ -240,13 +255,13 @@ export class StatusInvestScraper {
 
       return {
         history,
-        earningsThisYear: parseFloat((data.earningsThisYear || '0').replace(',', '.')),
-        earningsLastYear: parseFloat((data.earningsLastYear || '0').replace(',', '.')),
-        provisionedThisYear: parseFloat((data.provisionedThisYear || '0').replace(',', '.')),
-        rendiment: parseFloat((data.rendiment || '0').replace(',', '.')),
+        earningsThisYear: safeParse(data.earningsThisYear),
+        earningsLastYear: safeParse(data.earningsLastYear),
+        provisionedThisYear: safeParse(data.provisionedThisYear),
+        rendiment: safeParse(data.rendiment),
       };
     } catch {
-      return { history: [], earningsThisYear: 0, earningsLastYear: 0, provisionedThisYear: 0, rendiment: 0 };
+      return { history: [], earningsThisYear: null, earningsLastYear: null, provisionedThisYear: null, rendiment: null };
     }
   }
 
@@ -265,31 +280,49 @@ export class StatusInvestScraper {
 
       if (!resp.ok) return [];
 
-      const raw = await resp.text();
+      // SSRF-1r: leitura streaming com teto de 512 KiB.
+      const raw = await readBodyWithCap(resp, 512 * 1024);
       let data: unknown;
       try { data = JSON.parse(raw); } catch { return []; }
 
       // Formato antigo (lista de proventos)
       const old = data as { assetEarningsModels?: Array<{ et: string; pd?: string; ed?: string; v: number | string }> };
       if (old.assetEarningsModels?.length) {
+        // PIPE-4r: helper local para parse seguro.
+        const safeParseValue = (v: number | string | undefined): number | null => {
+          if (v === undefined || v === null) return null;
+          if (typeof v === 'number') return Number.isNaN(v) ? null : v;
+          const s = String(v).replace(',', '.').trim();
+          if (s === '') return null;
+          const n = parseFloat(s);
+          return Number.isNaN(n) ? null : n;
+        };
         return old.assetEarningsModels
           .filter((i) => ['Rendimento', 'Dividendo', 'JCP', 'Amortização'].includes(i.et))
-          .map((i) => ({
-            date: (i.pd || i.ed || '').split('/').reverse().join('-'),
-            value: typeof i.v === 'number' ? i.v : parseFloat(String(i.v).replace(',', '.') || '0'),
-            type: i.et,
-          }))
-          .filter((i) => i.date && i.value > 0);
+          .map((i) => {
+            const value = safeParseValue(i.v);
+            const date = (i.pd || i.ed || '');
+            return { date: date.split('/').reverse().join('-'), value, type: i.et };
+          })
+          .filter((i) => i.date && i.value !== null && i.value > 0)
+          .map((i) => ({ date: i.date, value: i.value as number, type: i.type }));
       }
 
       // PIPE-3: formato novo — gera sintético dos anuais com marcação explícita.
       // Eventos fabricados não têm cadência mensal real; o score deve tratar
       // cobertura via IMP-3r em vez de fingir 12/12 meses.
+      // PIPE-4r: safeParse para não confundir ausência com zero.
       const nf = data as { earningsThisYear?: string; earningsLastYear?: string };
-      if (nf.earningsThisYear || nf.earningsLastYear) {
-        const thisY = parseFloat((nf.earningsThisYear || '0').replace(',', '.'));
-        const lastY = parseFloat((nf.earningsLastYear || '0').replace(',', '.'));
-        const monthly = (thisY || lastY) / 12;
+      const safeParseAnnual = (v: string | undefined): number | null => {
+        if (v === undefined || v === null || v.trim() === '') return null;
+        const n = parseFloat(v.replace(',', '.'));
+        return Number.isNaN(n) ? null : n;
+      };
+      const thisY = safeParseAnnual(nf.earningsThisYear);
+      const lastY = safeParseAnnual(nf.earningsLastYear);
+      const annual = thisY ?? lastY;
+      if (annual !== null && annual > 0) {
+        const monthly = annual / 12;
         const events: DividendEntry[] = [];
         const now = new Date();
         for (let m = 0; m < 24; m++) {
@@ -350,7 +383,8 @@ export class StatusInvestScraper {
           throw new Error(`StatusInvest HTTP ${response.status}`);
         }
 
-        return response.text();
+        // SSRF-1r: leitura streaming com teto (2 MiB) em vez de response.text() ilimitado.
+        return readBodyWithCap(response, 2 * 1024 * 1024, url);
       }, {
         maxRetries: 1,
         initialDelay: 2000,

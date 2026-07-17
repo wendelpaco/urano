@@ -37,14 +37,19 @@ export const tickerParamSchema = z
  * Fonte: mapeamento TICKER_TO_CNPJ em sync-company-fundamentals.ts.
  * Estes tickers têm CNPJ real de empresa listada na B3.
  */
-const KNOWN_STOCK_UNITS = new Set([
+const KNOWN_STOCK_UNITS_ARRAY = [
   'KLBN11',  // Klabin S.A. — Unit
   'SANB11',  // Banco Santander Brasil — Unit
   'TAEE11',  // Transmissora Aliança de Energia Elétrica — Unit
   'ENGI11',  // Energisa — Unit
   'ALUP11',  // Alupar Investimentos — Unit
   'BPAC11',  // Banco BTG Pactual — Unit
-]);
+] as const;
+
+const KNOWN_STOCK_UNITS = new Set<string>(KNOWN_STOCK_UNITS_ARRAY);
+
+/** Lista SQL-safe de Units para interpolação em queries (evita divergência entre queries). */
+export const STOCK_UNITS_SQL_LIST = KNOWN_STOCK_UNITS_ARRAY;
 
 // ─── Classificação ──────────────────────────────────────────────────────────
 

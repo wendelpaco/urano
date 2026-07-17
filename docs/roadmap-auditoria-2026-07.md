@@ -1,156 +1,160 @@
-# Urano — Auditoria & Roadmap (Julho 2026 — rev. 2026-07-16)
+# Urano — Auditoria & Roadmap (Julho 2026 — rev. 2026-07-17)
 
 > Documento para revisão **ponto a ponto** antes de implementar. Cada item tem ID
 > estável, evidência `arquivo:linha`, impacto, fix proposto e esforço.
 >
-> **Rev. 2026-07-16:** todos os itens da auditoria original foram re-verificados
-> contra o código atual (commit `80245df` + working tree). Grande parte foi
-> resolvida naquele commit — os resolvidos estão na primeira tabela, com evidência.
-> O que segue aberto (ou parcial) foi re-citado com linhas atuais. A auditoria de
-> **confiabilidade** que estava pendente foi executada nesta revisão (Track R).
+> **Rev. 2026-07-17:** re-auditoria completa contra o HEAD atual (`701bfba`).
+> A maior parte da Fase 0/1 da rev. anterior foi **resolvida e verificada no
+> código** (primeira tabela). Esta revisão adiciona um track novo (**Track N**)
+> com achados desta rodada — a maioria é residual de performance, hardening e
+> um bug de produto real (N-1, mesma classe do ENG-3r).
 
 ## Como ler este documento
 
 - **Status:**
   - `✅ resolvido` — confirmado no código atual, com evidência.
-  - `🔶 parcial` — parte do problema resolvida; resta o residual descrito.
-  - `🔴 aberto` — confirmado ainda presente no código atual.
+  - `🔶 parcial` — parte resolvida; resta o residual descrito.
+  - `🔴 aberto` — confirmado presente no código atual.
   - `🕒 runtime` — precisa inspeção de dado real (banco/logs) para confirmar ou agir.
 - **Severidade:** `crítico` distorce resultado/segurança de forma ampla; `alto` afeta muitos casos; `médio` casos específicos; `baixo` cosmético/hardening.
 - **Esforço:** `P` (<1h), `M` (algumas horas), `G` (dia+ / precisa dado em runtime).
 
 ---
 
-## Resolvidos desde a auditoria original (verificados em 2026-07-16)
+## Resolvidos desde a rev. 2026-07-16 (verificados em 2026-07-17)
 
 | ID | Era | Evidência da correção |
 |----|-----|----------------------|
-| SEC-1 (núcleo) | API keys em texto plano no banco | Coluna `key` agora grava `ur_hashonly_<prefixo-do-hash>` (`auth.controller.ts:50`, usada em create `:150` e rotate `:230`); auth e `updateLastUsed` filtram por `keyHash` (`auth.ts:168,210`). Resta residual SEC-1r abaixo. |
-| SEC-3 | Listagem de keys vazava todos os tenants | `listApiKeysController` escopa por `id = caller OR ownerId = caller` (`auth.controller.ts:200-201`); gestão só de self/filhas (`getManageableKey:96-109`); scopes administrativos não são herdáveis via HTTP (`resolveChildScopes`). |
-| SEC-4 | Rate limiter burlável (bucket = header cru) e fail-open | Bucket pré-auth por hash de IP, pós-auth por `apiKeyId` (`rate-limit.ts:179-186`); `failClosed` configurável, default **true em produção** (`env.ts:70-73`); incremento atômico via script Redis. |
-| SEC-5 | Defaults inseguros de env em produção | `env.ts:3,23-41` — em `NODE_ENV=production` não aceita defaults com credencial dev; exige `DATABASE_URL`/`REDIS_URL`. |
-| SEC-6 | Postgres/Redis expostos em 0.0.0.0 | `docker-compose.yml:12,30` — bind `127.0.0.1`; senhas obrigatórias via `${VAR:?}` (`:58-59`). |
-| SEC-7 | Sem security headers / resposta de key cacheável | Middleware dedicado com `nosniff` e `Cache-Control: no-store` em `/v1/*` (`security-headers.ts:11,28`). |
-| SEC-8 | Revogação de key demorava até 60s (cache) | `invalidateCachedAuth` grava cache negativo no Redis + bloqueio local imediato (`auth.ts:50-82,130,140`). |
-| SEC-9 | Erros internos vazavam em 5xx | Error handler central: 5xx responde `"Erro interno."` em **qualquer** ambiente; detalhe só em log (`server.ts:130-155`). |
-| SEC-10 | Healthcheck público vazava estado operacional | `/v1/healthcheck` reduzido a db/redis up-down (`healthcheck.controller.ts`); diagnóstico de scraper atrás de `admin:ops` (`routes/index.ts:59-61`). |
-| SEC-11 | Ticker sem validação de charset | `tickerParamSchema` (regex `^[A-Z]{4}\d{1,2}$`, `ticker-utils.ts:15,27`) aplicado nos controllers de stocks, fiis, dividends, fundamentals, wallets. |
-| ENG-1 | camelCase/snake_case zerava fundamentos no ranking | `calcAllIndicators` aceita ambas as convenções (`indicators.ts:21,33`); ranking seleciona todas as colunas necessárias (`allocation-engine.ts:672-677`). |
-| ENG-2 | DY estimado hardcoded 6% | Estimativa fabricada removida — retorna `null` + `dividendEstimateStatus: 'unavailable'` (`allocation-engine.ts:542-545`). Ver IMP-6 para computar valor real. |
-| ENG-3 (seleção) | `selectDiversified` sub-alocava | Seleção em duas passagens: diversifica ~60% dos slots, completa por score (`allocation-engine.ts:830-870`). Resta residual ENG-3r (LIMIT 100). |
-| ENG-4 | Liquidez FII em cotas vs thresholds em R$ | Liquidez financeira `volume * price` no warmup (`score-warmup.ts:313`) e no controller (`fiis.controller.ts:490`); score trata ausência como `null`, nunca imputa (`fii-score.ts:183`). |
-| ENG-7 | Histórico de dividendos sem ordenação | Serviço novo `dividend-income.ts`: agregação mensal ordenada desc (`:62`), série com lacunas explícitas em zero e âncora `asOf` (`:72-98`) — consistência conta meses distintos, não eventos. |
-| IMP-2 | EV usava passivo total como proxy de dívida | Resolvido de forma conservadora: EV/dívida ficam `null` até o ETL mapear dívida financeira real (`indicators.ts:47-48,76`) — sem número falso. Reativar é evolução (Fase 3). |
-| PIPE-6 (parte) | `duration_ms smallint` overflow >32,7s; módulo morto | Migration `0018_stable_job_runtime.sql` → `integer`; `fundamentus-scraper.ts` removido do repo. |
-| UX-1 | Adaptador frontend / chart / pilares | Corrigido na sessão original (DONE-1/2, commitado). Revalidar visualmente após deploy. |
+| SEC-1r | Coluna `key` + índice legados | Migration `0019_drop_legacy_key_column.sql` dropa coluna e `idx_api_keys_key`; schema comenta a remoção (`schema.ts:332`). |
+| SEC-12a | `.gitignore` sem `.env.production` | `.gitignore:19-21` — `.env`, `.env.*`, `!.env.example`. |
+| SEC-12b | MCP enviava key em cleartext p/ host remoto http | `mcp/server.ts:40-58` — valida URL e recusa `http://` quando host ≠ localhost. |
+| SEC-2 (CI) | Sem regra gitleaks p/ formato da key | `.gitleaks.toml` com regex `ur_[0-9a-f]{12}(_...)x3` + job `secret-scan` no CI. **Resta SEC-2r abaixo (rotação no banco).** |
+| SSRF-3r | Fetch seguia redirects | `redirect: 'error'` em todos os fetches de upstream (statusinvest `:171,208,263,335`, yahoo `stock-quote-service.ts:451,551`, cvm `:391`, bcb `selic-provider.ts:30`, investidor10 `:126,187`, dividends `:152`). |
+| SSRF-2r | Rotas de live-scrape sem bucket dedicado | `server.ts:29-44` — `scraperPathLimits` (default 10/min via `SCRAPER_RATE_LIMIT_PER_MINUTE`) em search/screener/ranking/allocate/contribution/compare. |
+| SSRF-1 (CVM) | ZIP CVM sem teto de bytes | `cvm-storage-service.ts:395-405` — valida `Content-Length` e tamanho pós-leitura (50 MiB). **Resta SSRF-1r abaixo (scrapers + leitura streaming).** |
+| ENG-8 | Prejuízo mascarado por dado ausente | `indicators.ts:44-45` — `eps`/`bvps` `null` quando shares ausente; `:94` — `fcoToNetIncome` só com `netIncome > 0`. |
+| ENG-3r (engine) | LIMIT 100 alfabético no universo | `allocation-engine.ts:715,775` — LIMIT removido, universo completo. **Resta N-1 abaixo (ranking/screener controllers).** |
+| ENG-5r | Backtest entrava na data do balanço (look-ahead) | `backtest.ts:123-131` — `entryDate = reference_date + 4 meses`. |
+| REL-1 | Timezone errado no dia-da-semana da janela ETL | `time-window.ts:129-203` — weekday derivado das parts do `Intl`. **Resta N-6 (residual menor).** |
+| REL-2 | Universo com awaits sequenciais | `allocation-engine.ts:716` — `withConcurrency` (5 simultâneos); ranking/search usam `batchWithConcurrency`. |
+| REL-3 | Pool Postgres fixo em 10 | `env.ts:112-116` + `connection.ts:15` — `DATABASE_POOL_MAX` configurável (2-100). |
+| PIPE-3 | Dividendos sintéticos sem marcação | `statusinvest-scraper.ts:302` — `type: 'SINTETICO_ANUAL'`. |
+| IMP-1 (SELIC) | SELIC hardcoded 14.0 | `stock-score.ts:11-14` + `server.ts:205-216` — SELIC dinâmica via BCB com fallback. **Resta IMP-1r (setor-relativo + re-fit).** |
+| IMP-6 | Renda estimada sempre `unavailable` | `allocation-engine.ts:139-140` — `dividendEstimateStatus: full \| partial \| unavailable` com DY real por ativo. |
+| IMP-5 | Alocação proporcional vs equal-weight inconsistente | Ambos usam equal-weight **por design** (backtest: score filtra, não ordena): `allocation-engine.ts:518`, `contribution-advisor.ts:192-212`. Consistente — fechado. |
 
 ---
 
-## Track S — Segurança (residuais e novos)
+## Track S — Segurança (abertos)
 
 | ID | Sev | Status | Item |
 |----|-----|--------|------|
-| **SEC-2** | alto | 🕒 runtime | **Rotacionar a key que vazou no histórico do git.** `API.http` já está sanitizado, mas a key `ur_9a02...` existe em todo o histórico e só morre quando for desativada **no banco**. **Ação:** localizar a linha pelo `key_hash` e desativar/rotacionar; adicionar regra gitleaks `ur_[0-9a-f]{12}(_[0-9a-f]{12}){3}` no CI. **Esforço:** P |
-| **SEC-1r** | médio | 🔴 aberto | **Coluna `key` + índice legados ainda existem** (`schema.ts:332,355`). Código novo grava `ur_hashonly_...`, mas **linhas antigas no banco podem ainda conter a key em texto plano**, e a coluna/índice são superfície morta. **Fix:** migration que sobrescreve valores legados com o formato hashonly (ou dropa coluna + `idx_api_keys_key` de vez — nada mais lê essa coluna). **Esforço:** P |
-| **SEC-12a** | baixo | 🔴 aberto | `.gitignore` cobre `.env` e `.env.*.local`, mas **não `.env.production`** (`.gitignore:19-23`). **Fix:** adicionar `.env.*`+ exceção `!.env.example`. **Esforço:** P |
-| **SEC-12b** | baixo | 🔴 aberto | **MCP envia a key em cleartext** se `URANO_API_URL` apontar para host remoto `http://` (`mcp/server.ts:37`). **Fix:** recusar URL não-https quando host ≠ localhost. **Esforço:** P |
-| **SEC-13** | baixo | 🔴 aberto (novo) | **API key guardada em `localStorage` no frontend** (`apps/web/src/lib/api.ts:2,59`) — qualquer XSS rouba a credencial. Aceitável para uso pessoal/self-host; se houver multiusuário, mover para proxy server-side ou cookie httpOnly. **Esforço:** M (só se multiusuário) |
+| **SEC-2r** | alto | 🕒 runtime | **Rotacionar/desativar no banco a key vazada no histórico do git** (`ur_9a02...`, presente nos commits `c1eed31`/`5af5a9b`/`701bfba` e anteriores). O CI agora barra vazamento novo, mas a credencial antiga só morre quando a linha correspondente for desativada **no Postgres**. **Ação:** calcular o SHA-256 da key vazada, localizar por `key_hash`, desativar (`active=false`) ou rotacionar; conferir `last_used_at` para detectar uso indevido. **Esforço:** P |
+| **SEC-13** | baixo | 🔴 aceito | **API key em `localStorage` no frontend** (`apps/web/src/lib/api.ts:9-10`). Aceitável para single-operator/self-host (decisão registrada em `MATURITY-STATUS.md`). Vira **bloqueador** se houver multiusuário → mover para proxy server-side (session cookie httpOnly) ou BFF. **Esforço:** M (só se multiusuário) |
+| **N-7** | médio | 🔴 aberto | **CSP fraca no terminal web** (`__root.tsx:102-113`): `script-src 'unsafe-inline'` + `connect-src ... https:` (qualquer host). Com a key no localStorage, um XSS injeta script inline e exfiltra para qualquer domínio https. Mitigado por ser single-user e sem input de terceiros renderizado, mas é a linha de defesa que protege a credencial. **Fix:** remover `'unsafe-inline'` de `script-src` (nonce/hash — verificar suporte no TanStack Start SSR) e restringir `connect-src` à origem da API. **Esforço:** M |
 
-## Track SSRF — Scraping / Supply-chain
+## Track SSRF — Scraping / Supply-chain (residuais)
 
 | ID | Sev | Status | Item |
 |----|-----|--------|------|
-| **SSRF-1** | alto | 🔴 aberto | **Respostas de upstream lidas sem limite de tamanho** — `cvm-storage-service.ts:384` (`arrayBuffer()` de ZIP da CVM, com abort de 120s mas sem teto de bytes), `statusinvest-scraper.ts:173,206,259,341` (`.json()`/`.text()`). Upstream comprometido ou MITM = OOM/zip-bomb. Timeouts já existem (15s scraper / 120s CVM). **Fix:** validar `Content-Length` e ler stream com teto (ex.: 50 MB CVM, 2 MB scraper). **Esforço:** M |
-| **SSRF-3r** | médio | 🔴 aberto | **`fetch` segue redirects para host arbitrário** — nenhum `redirect:` configurado nos scrapers (default `follow`), então um 302 do StatusInvest/Yahoo pode apontar o processo para host interno. A parte de ticker-na-URL foi mitigada pela validação de charset (SEC-11 ✅). **Fix:** `redirect: 'manual'` (ou `'error'`) + allowlist de hosts nos fetches de scraping. **Esforço:** P |
-| **SSRF-2r** | médio | 🔶 parcial | Live-scrape agora é cache-first com concorrência 5 (`fiis.controller.ts:467-548`) e diagnostics exige `admin:ops`. **Resta:** rotas que ainda podem disparar scrape síncrono (search/detalhe frio) não têm rate-limit dedicado mais apertado que o global — uma key válida ainda amplia custo/risco de ban. **Fix:** bucket de rate-limit separado (ex.: 10/min) nas rotas que tocam scraper. **Esforço:** P/M |
+| **SSRF-1r** | médio | 🔶 parcial | **Corpo de resposta ainda sem teto nos scrapers**: `statusinvest-scraper.ts:176,212,268,353` (`.text()`), `stock-quote-service.ts:487,586` e `investidor10-provider.ts:146,204` (`.json()`), `dividends-provider.ts:176` — leitura ilimitada (mitigada por timeout 15s). CVM valida `Content-Length` mas lê o corpo inteiro **antes** de checar o tamanho (`cvm-storage-service.ts:402-405`) — se o header faltar/mentir, o buffer de até N GB entra na memória antes do throw. **Agravante:** `shared/safe-fetch.ts` já implementa exatamente isso (leitura streaming com teto + redirect error) e **nenhum arquivo o importa — é código morto**. **Fix:** trocar os fetches dos scrapers por `safeFetch`/`safeFetchBuffer` (2 MiB scraper, 50 MiB CVM) ou deletar o módulo se decidir não usar. **Esforço:** P/M |
 
-## Track E — Engine (correção)
+## Track E/P — Engine & Pipeline (abertos)
 
 | ID | Sev | Status | Item |
 |----|-----|--------|------|
-| **ENG-8** | alto | 🔴 aberto | **Empresa no prejuízo escapa das penalidades quando faltam dados.** (a) `shares` ausente → `eps = 0` (`indicators.ts:42`), então o guard `eps < 0` (`stock-score.ts:73`) nunca dispara; (b) `fcoToNetIncome` usa `|netIncome|` (`indicators.ts:83`) — empresa no prejuízo com OCF positivo ganha crédito de "qualidade". **Fix:** `eps: null` quando shares ausente (e tratar null nos consumidores); `fcoToNetIncome: null` quando `netIncome <= 0`; gate do quality premium em `netIncome > 0`. **Esforço:** P |
-| **ENG-3r** | alto | 🔴 aberto | **Universo truncado nos 100 primeiros tickers alfabéticos** — ações (`allocation-engine.ts:683`) e FIIs (`:731`, `ORDER BY ticker LIMIT 100`). Ranking/alocação nunca veem PETR4/VALE3/WEGE3 se ficarem fora do corte alfabético. **Fix:** remover o LIMIT (com REL-2 para não explodir latência) ou ordenar por liquidez/score persistido antes de cortar. **Esforço:** M |
-| **ENG-5r** | médio | 🔶 parcial | **Backtest ainda entra na data do balanço** (`backtest.ts:123`) — usa demonstração publicada ~3-4 meses depois (look-ahead de fundamento). Já corrigido: momentum é calculado look-ahead-free na data de referência (`:141-165`) e delistados agora ficam no resultado com `return12m: null` (`:186-187`) em vez de sumir. **Fix restante:** deslocar entrada para `reference_date + ~4 meses` (ou data real de filing CVM). **Esforço:** M |
-| **ENG-6r** | médio | 🔶 parcial | **Pilar dividends do backtest depende de `dividends_paid`** (`backtest.ts:134`) — que está 100% NULL (PIPE-2). Momentum resolvido; dividends continua efetivamente constante até PIPE-2. **Bloqueado por PIPE-2.** **Esforço:** M (após PIPE-2) |
+| **N-1** | alto | 🔴 aberto | **Ranking e screener ainda truncam o universo alfabeticamente** — mesma classe do ENG-3r, corrigido só no allocation-engine: `analysis.controller.ts:576` (ações, `ORDER BY ticker ... LIMIT 200`), `analysis.controller.ts:665` (FIIs, `LIMIT 200`), `screener.controller.ts:127` (`LIMIT 100`). Com universo B3 > limite, tickers do fim do alfabeto (VALE3, WEGE3, VIVT3...) somem do ranking/screener. **Fix:** remover LIMIT (paths já são cache-first + concorrência limitada) ou cortar por liquidez/score persistido do warmup, nunca por ordem alfabética. Decidir junto: paginação do screener. **Esforço:** P/M |
+| **PIPE-4r** | médio | 🔴 aberto | Padrão `parseFloat((campo \|\| '0'))` persiste (`statusinvest-scraper.ts:186-189,243-246,279`) — ausência vira `0` indistinguível de zero real, alimentando DY/proventos. **Fix:** ausência → `null` e propagar (consumidores já toleram `null` pós ENG-8/IMP-3). **Esforço:** P/M |
+| **ENG-6r** | médio | 🔶 bloqueado | Pilar dividends do backtest depende de `dividends_paid` (100% NULL — PIPE-2). Sem mudança desde a rev. anterior. **Bloqueado por PIPE-2.** |
+| **PIPE-1** | alto | 🕒 runtime | `shares_outstanding` ~60% NULL → P/L e P/VP "—" na maioria das ações. Investigar match de CNPJ com arquivo de capital da CVM; fallback via StatusInvest. **Esforço:** G |
+| **PIPE-2** | alto | 🕒 runtime | `dividends_paid` 100% NULL (DMPL nunca casa contas 5.04.06/5.04.07). Faminta pilar de dividendos + ENG-6r. **Esforço:** G |
+| **PIPE-5** | médio | 🕒 runtime | Snapshots diários possivelmente falhando (histórico: ~17/113 jobs gravando). Worker foi reescrito — **confirmar em `job_runs` real** antes de agir. **Esforço:** M |
+| **PIPE-6r** | médio | 🕒 runtime | CNPJ placeholder (`STOCK*`/`FII*`) em ~53% das empresas — impede join com CVM (alimenta PIPE-1/2). Backfill de CNPJ real (B3/StatusInvest). **Esforço:** M |
 
-## Track P — Pipeline de dados
-
-| ID | Sev | Status | Item |
-|----|-----|--------|------|
-| **PIPE-1** | alto | 🕒 runtime | **`shares_outstanding` ~60% NULL** → P/L e P/VP "—" para a maioria das ações. Parsing correto; problema é cobertura de ingestão (match de CNPJ com arquivo de capital da CVM). **Fix:** inspecionar CSV real da CVM, entender o mismatch; fallback de shares via StatusInvest. **Esforço:** G |
-| **PIPE-2** | alto | 🕒 runtime | **`dividends_paid` 100% NULL** (DMPL nunca casa contas 5.04.06/5.04.07). Faminta o pilar de dividendos e o backtest (ENG-6r). **Fix:** revisar matching de contas DMPL com dado real. **Esforço:** G |
-| **PIPE-3** | médio | 🔴 aberto | **Dividendos sintéticos fabricados sem marcação** (`statusinvest-scraper.ts:276-295`) — quando só há totais anuais, gera 24 eventos mensais `anual/12` datados no dia 15, com `type: 'Rendimento'` idêntico a evento real. Infla consistência FII para fake-perfeito e envenena o cache. **Fix:** marcar `type: 'SINTETICO_ANUAL'`, e o score tratar cadência desconhecida via coverage (IMP-3) em vez de fingir 12/12 meses. Fazer junto com IMP-3. **Esforço:** M |
-| **PIPE-4r** | médio | 🔶 parcial | `extractNumber` foi removido, mas o padrão `parseFloat((campo \|\| '0'))` persiste (`statusinvest-scraper.ts:181-184,235-238`) — ausência vira 0 indistinguível de 0 real. Menor superfície que antes (indicadores scraped não são mais persistidos), mas ainda alimenta DY/proventos. **Fix:** ausência → `null` e propagar. **Esforço:** P/M |
-| **PIPE-5** | médio | 🕒 runtime | **Snapshots diários: ~17/113 jobs gravando** na auditoria original (provável 429). Baixo impacto hoje (nada lê snapshots), mas mata features futuras de histórico. **Fix:** ver `job_runs` real pós-`80245df` (worker foi reescrito) e confirmar se persiste; parar de gravar 0-como-dado. **Esforço:** M |
-| **PIPE-6r** | baixo | 🕒 runtime | Residual: **CNPJ placeholder (`STOCK*`/`FII*`) em ~53% das empresas** — impede join com dado CVM (alimenta PIPE-1/2). **Fix:** backfill de CNPJ real (B3/StatusInvest). **Esforço:** M |
-
-## Track R — Confiabilidade (novo — auditoria pendente executada nesta revisão)
+## Track R/PERF — Confiabilidade & Performance (novos)
 
 | ID | Sev | Status | Item |
 |----|-----|--------|------|
-| **REL-1** | médio | 🔴 aberto | **Bug de timezone no `TimeWindow`** (`time-window.ts:129-160`): `getLocalTime()` pede `weekday` ao `Intl.DateTimeFormat` mas **nunca lê a parte** — o `Date` retornado usa ano/mês/dia do timezone **do servidor** com hora de São Paulo. `isOpen()`/`minutesUntilOpen()` chamam `getDay()` nesse Date → perto da virada de dia (servidor UTC: 21:00–23:59 em SP já é o dia seguinte em UTC) o check de `allowedDays` erra o dia da semana. Janela ETL seg-sex pode abrir no domingo à noite ou pular a segunda. **Fix:** derivar dia-da-semana das parts do Intl (que já estão ali) em vez de `getDay()`. Adicionar teste com TZ simulada. **Esforço:** P |
-| **REL-2** | médio | 🔴 aberto | **Ranking constrói o universo com awaits sequenciais por ticker** (`allocation-engine.ts:670-745`): para cada um dos até 100 tickers, `getQuote` + `fetchDividends` em série. Latência de minutos na primeira carga e pressão desnecessária no upstream. **Fix:** concorrência limitada (~5 simultâneos, alinhada ao rate-limiter interno) + preferir score do warmup persistido. Pré-requisito para remover o LIMIT 100 (ENG-3r). **Esforço:** M |
-| **REL-3** | baixo | 🔴 aberto | **Pool Postgres `max: 10`** (`connection.ts:13`) compartilhado entre API, scheduler e workers — job pesado + burst de requests = fila. postgres.js enfileira (não quebra), mas latência de API degrada silenciosamente durante ETL. **Fix:** monitorar; se confirmar contenção, pool separado para workers ou `max` maior. **Esforço:** P |
-| **REL-4** | — | ✅ ok | Revisado sem finding: scheduler tem guarda de reentrância e não abandona jobs em shutdown (`scheduler.ts:30,62,113-114`); retry de worker é bounded por `retryCount` com espaçamento de 60s (`worker.ts:107-127`); retry HTTP tem backoff exponencial com jitter e respeita `Retry-After` (`shared/retry.ts`). |
+| **N-3** | médio | 🔴 aberto | **Gzip síncrono no event loop** (`server.ts:124-138`): `Bun.gzipSync` roda inline para todo payload ≥1 KiB. Respostas grandes (ranking/screener, centenas de KB) bloqueiam o loop e seguram todas as outras requests. **Fix:** limite superior (ex.: só comprimir < 1 MiB), ou compressão assíncrona/stream (`@fastify/compress`), ou aceitar sem gzip para payloads grandes atrás de proxy que comprime. **Esforço:** P/M |
+| **N-4** | baixo/médio | 🔴 aberto | **`updateLastUsed` faz UPDATE em `api_keys` a cada request autenticado** (`auth.ts:207-219`), inclusive em cache-hit. Write amplification no hot path (200 req/min/key = 200 UPDATEs/min). **Fix:** throttle — só atualizar se `last_used_at` > 60s (guardar timestamp em memória/Redis junto do cache de auth). **Esforço:** P |
+| **N-5** | baixo | 🔴 aberto | **Rate limiter faz 2 round-trips Redis por request** (`rate-limit.ts:203,217` — `eval` + `ttl`). **Fix:** retornar `{count, ttl}` do próprio script Lua. **Esforço:** P |
+| **N-6** | baixo | 🔴 aberto | Residual do REL-1: `getLocalDay` fallback ignora o `date` recebido e recalcula com `new Date()` (`time-window.ts:191-202`); o weekday viaja como propriedade expando `__tzWeekday` num `Date` (`:177`) — qualquer cópia (`new Date(d)`) perde o valor silenciosamente. Funciona hoje, mas é frágil. **Fix:** retornar um objeto `{date, weekday}` tipado em vez de expando. **Esforço:** P |
+| **N-11** | baixo | 🔴 aberto | **MCP server chama a API sem timeout** (`mcp/server.ts:66-80` — `fetch` cru). Endpoint lento (ranking frio pode passar de 30s) pendura a tool call no Claude. **Fix:** `AbortSignal.timeout(120_000)` + mensagem de erro amigável. **Esforço:** P |
 
-## Track U — Frontend/UX (não re-verificado nesta revisão — herdado)
+## Track M — Manutenibilidade / Operação (novos)
 
 | ID | Sev | Status | Item |
 |----|-----|--------|------|
-| **UX-2** | médio | 🕒 runtime | `sector` ~47% NULL → coluna Setor "—". Depende de PIPE-6r/PIPE-1 (CNPJ/cobertura) + incluir sector no JSON de detalhe. **Esforço:** M |
-| **UX-3** | baixo | herdado | `changePct` sem fonte real (finge 0 no path StatusInvest). Decidir fonte (Yahoo) e propagar. **Esforço:** M |
-| **UX-4** | baixo | herdado | ROIC nunca calculado → "—" sempre. Adicionar em `calcAllIndicators` (NOPAT/capital investido) — depende de dívida real (junto com evolução do IMP-2). **Esforço:** P/M |
-| **UX-5** | baixo | herdado | FII: esconder linhas N/A (P/L, ROE, margens...) em vez de "—". **Esforço:** P |
+| **N-9** | baixo | 🔴 aberto | **Allowlist de Units duplicada em 3 queries SQL** (`'KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'` em `allocation-engine.ts:725`, `analysis.controller.ts:572`, e filtro espelhado no ranking FII). Divergência silenciosa quando alguém editar uma e esquecer as outras. **Fix:** constante única exportada (ex.: `shared/b3-units.ts`) interpolada via `sql.join`, ou tabela/coluna `asset_class`. **Esforço:** P |
+| **N-10** | médio | 🔴 aberto | **Backups sem retenção, sem offsite, restore nunca testado.** `backup-postgres.sh` acumula `.sql.gz` locais para sempre no mesmo disco do banco; gate "Restore testado" segue aberto no `MATURITY-STATUS.md`. **Fix:** (a) pruning no script (ex.: manter 7 diários + 4 semanais); (b) cópia offsite (rclone/S3/B2 — qualquer destino barato); (c) rodar 1× o ritual `CONFIRM=yes RESTORE_DB=urano_restore_test` e marcar o gate. **Esforço:** M |
+| **N-12** | médio | 🔴 aberto | **Sem monitoramento/alerta externo.** `/v1/metrics` e `/v1/health/*` existem mas nada os consome; falha de job ETL ou API fora do ar só é percebida manualmente. **Fix mínimo (single-operator):** uptime-check externo gratuito no `/v1/healthcheck` + alerta (e-mail/Telegram) quando job falhar N vezes (o scheduler já sabe o estado — falta o notificador). Prometheus/Grafana é opcional depois. **Esforço:** M |
+| **N-8** | médio | 🔴 aberto | **Web sem nenhum teste (0 arquivos) e sem E2E.** O terminal já tem ~23 rotas; regressões de adapter/formatação (classe UX-1) só aparecem no olho. **Fix:** começar pelo custo-benefício alto — testes de unidade dos adapters/lib (`src/lib`) + 1 smoke E2E (Playwright: login key → ranking renderiza → detalhe abre). **Esforço:** M (unidade) / G (E2E) |
+| **N-15** | baixo | 🔴 aberto | **Housekeeping:** `scripts/hash-existing-keys.ts` é artefato de migração já aplicada (coluna dropada — o script nem roda mais); `apps/web/.lovable/`, `.wrangler/`, `.tanstack/` são lixo de tooling no working tree (não versionados, mas conferir `.gitignore` do web); `MATURITY-STATUS.md` defasado (diz "SELIC hardcoded", "LIMIT 100"...). **Fix:** deletar script legado, atualizar MATURITY-STATUS junto com este doc. **Esforço:** P |
+
+## Track U — Frontend/UX (herdado, não re-verificado)
+
+| ID | Sev | Status | Item |
+|----|-----|--------|------|
+| **UX-2** | médio | 🕒 runtime | `sector` ~47% NULL → coluna Setor "—". Depende de PIPE-6r/PIPE-1. **Esforço:** M |
+| **UX-3** | baixo | herdado | `changePct` sem fonte real no path StatusInvest. Decidir fonte (Yahoo) e propagar. **Esforço:** M |
+| **UX-4** | baixo | herdado | ROIC nunca calculado → "—". Depende de dívida financeira real (evolução do IMP-2). **Esforço:** P/M |
+| **UX-5** | baixo | herdado | FII: esconder linhas N/A (P/L, ROE...) em vez de "—". **Esforço:** P |
 | **UX-6** | baixo | herdado | `isScraping` do search fica true para sempre; sem estado de erro/retry. **Esforço:** P |
 
 ## Track I — Melhorias (evoluções, não bugs)
 
 | ID | Status | Item |
 |----|--------|------|
-| **IMP-1** | 🔴 aberto | **Score sem poder de ranking na própria validação** (corr ≈ 0 em `score-validation.data.ts`). Componentes confirmados ainda presentes: SELIC hardcoded `14.0` (`stock-score.ts:78`); setor por substring contra tabela estática (`stock-score.ts:46`). **Proposta:** SELIC via API BCB; scoring setor-relativo por percentil; re-fit dos pesos contra `backtest_results` — **depois** de ENG-5r/ENG-6r limparem o backtest. **Esforço:** G |
-| **IMP-3r** | 🔶 parcial | Coverage/confidence já existe no score FII (`fii-score.ts:113,133,217` — `data_coverage`, `missing_data_penalty`). **Resta:** mesmo conceito no score de ações (hoje dado faltando pontua neutro), e ligar vacância/inadimplência (`fiiOperationalService`) nos paths de ranking/warmup (hoje só no endpoint single). **Esforço:** M/G |
-| **IMP-4** | 🔴 aberto | FII sem fatores diferenciadores: classificação ainda por listas estáticas de tickers (`fii-classification.data.ts`); sem cap rate, mix de indexador ou duration; backtest exclui FIIs. **Proposta:** inferir tipo do dado CVM; cap rate vs NTN-B; estender backtest. **Esforço:** G |
-| **IMP-5** | 🕒 recheck | Alocação proporcional-ao-score vs equal-weight do ContributionAdvisor — o allocation-engine foi reescrito no `80245df` (712 linhas); **re-verificar** se a inconsistência persiste antes de agir. **Esforço:** P (verificação) |
-| **IMP-6** | 🔴 aberto (novo) | **Estimativa de renda da alocação está sempre `unavailable`** (`allocation-engine.ts:542-545`) — o fix do ENG-2 removeu o número fake mas não pôs o real no lugar. `dividend-income.ts` já sabe agregar renda mensal por ativo. **Proposta:** somar `allocationAmount * dy12m` por ativo com dado real; status `partial` quando parte do portfólio não tem DY. **Esforço:** M |
+| **IMP-1r** | 🔶 parcial | SELIC dinâmica ✅. **Resta:** setor ainda casado por substring contra tabela estática (`stock-score.ts:59`); re-fit dos pesos contra `backtest_results` — pré-requisito: ENG-6r (que depende de PIPE-2). **Esforço:** G |
+| **IMP-3r** | 🔶 parcial | Coverage/confidence existe no score FII. **Resta:** mesmo conceito no score de ações (dado faltando pontua neutro) e ligar vacância/inadimplência nos paths de ranking/warmup. **Esforço:** M/G |
+| **IMP-4** | 🔴 aberto | FII sem fatores diferenciadores: classificação por listas estáticas de tickers; sem cap rate, mix de indexador ou duration; backtest FII sem rank por score. **Esforço:** G |
+| **N-14** | ⚠️ estratégico | **Dependência estrutural de fontes não-oficiais** (StatusInvest, Investidor10, Yahoo — scraping sem contrato). Circuit breakers e cache-first já mitigam, mas um ban ou mudança de HTML degrada DY/quotes silenciosamente. **Direção:** aumentar a fatia coberta por fontes oficiais (CVM/BCB/B3), medir no `/health/data` a % de dados por fonte, e documentar o modo degradado esperado. Alimenta a decisão "feed B3 pago" (deferred). |
 
 ---
 
 ## Matriz de prioridade sugerida
 
-**Fazer primeiro (alto impacto / esforço P):**
-`SEC-2` (rotacionar key no banco — único item com credencial viva exposta),
-`SEC-1r` (limpar coluna legada), `REL-1` (timezone da janela ETL), `ENG-8`
-(prejuízo mascarado), `SSRF-3r` (redirects), `SEC-12a/b`.
+**Fase 0 — Correção imediata (alto impacto, ~½ dia):**
+1. `SEC-2r` — rotacionar a key vazada no banco (única credencial viva exposta; 10 min).
+2. `N-1` — remover truncamento alfabético do ranking/screener (bug de produto visível: tickers V/W ausentes).
+3. `SSRF-1r` — ligar o `safeFetch` já escrito nos scrapers (ou deletá-lo).
+4. `PIPE-4r` — ausência → `null` no scraper de proventos.
+5. `N-11`, `N-9`, `N-6` — timeout no MCP, constante de Units, tipagem do weekday (miúdos de 15-30 min cada).
 
-**Alto impacto / esforço M:**
-`SSRF-1` (teto de bytes), `PIPE-3 + IMP-3r` (sintéticos + coverage — juntos),
-`REL-2` → `ENG-3r` (concorrência primeiro, depois remover LIMIT 100),
-`ENG-5r` (timing do backtest), `IMP-6` (renda real na alocação), `SSRF-2r`.
+**Fase 1 — Performance & operação (~1-2 dias):**
+6. `N-3` — gzip fora do hot path (medir antes: payload típico do ranking).
+7. `N-4` + `N-5` — throttle do `last_used_at` e Lua único no rate limit.
+8. `N-10` — retenção + offsite de backup + **ritual de restore 1×** (fecha gate de maturidade).
+9. `N-12` — uptime-check externo + alerta de falha de job.
 
-**Investigação em runtime (G / precisa dado real):**
-`PIPE-1`, `PIPE-2`, `PIPE-5`, `PIPE-6r` (cobertura CVM/CNPJ), `UX-2`, `SEC-2` (execução), `IMP-5` (recheck).
+**Fase 2 — Investigação em runtime (G, precisa banco/logs reais):**
+10. `PIPE-1` / `PIPE-2` / `PIPE-6r` — cobertura CVM/CNPJ (destrava ENG-6r, UX-2, e o re-fit do score).
+11. `PIPE-5` — confirmar snapshots no worker novo.
 
-**Evolução (depois do backtest limpo):**
-`IMP-1` (recalibração + SELIC dinâmica + setor-relativo), `IMP-4` (fatores FII), `UX-3/4/5/6`.
+**Fase 3 — Evolução do produto (depois do pipeline saudável):**
+12. `IMP-3r` — coverage no score de ações + vacância no ranking.
+13. `IMP-1r` — setor-relativo + re-fit dos pesos (só após ENG-6r/PIPE-2).
+14. `IMP-4` — fatores FII (CVM-based) + backtest FII com score.
+15. `N-8` — testes de unidade web + smoke E2E.
+16. `UX-3/4/5/6` — polimentos do terminal.
 
-**Sequência de fases proposta:**
-
-1. **Fase 0 — Residual de segurança** (~1 dia): SEC-2, SEC-1r, SSRF-3r, SSRF-1, SSRF-2r, SEC-12a/b.
-2. **Fase 1 — Engine e confiabilidade** (~2-3 dias): ENG-8, REL-1, REL-2 → ENG-3r, PIPE-3 + IMP-3r (juntos), IMP-6, ENG-5r.
-3. **Fase 2 — Pipeline/cobertura** (investigação em runtime): PIPE-1, PIPE-2, PIPE-6r, PIPE-5; UX-2.
-4. **Fase 3 — Evolução do score**: IMP-1 (após backtest limpo), IMP-4, IMP-5 (recheck), UX-3/4/5/6.
+**Condicionais (só se o contexto mudar):**
+- `SEC-13` + `N-7` (BFF/cookie httpOnly + CSP estrita) — **gatilho: abrir para segundo usuário**.
+- Staging + TLS — gatilho: deploy fora do localhost/LAN.
+- `N-14` feed pago B3 — gatilho: % de dados via scraping não cair com PIPE-1/2 resolvidos.
 
 ---
 
-## Pendências de verificação
-
-- Itens `🕒 runtime` exigem Postgres/logs reais (read-only) — nada foi confirmado em banco nesta revisão.
-- Track U (frontend) herdado da auditoria original sem re-verificação — revalidar visualmente.
-- Verificação adversarial (segundo agente tentando refutar) não rodou para os achados novos desta revisão (REL-1/2/3, SEC-13, IMP-6); a evidência é citação direta de código com linha.
-
 ## Decisões que preciso de você
 
-1. **SEC-1r:** dropar a coluna `key` + índice de vez (recomendado — nada mais lê) ou manter com valores hashonly por compatibilidade?
-2. **PIPE-3 + IMP-3r:** confirmar que vão juntos (marcar sintético só faz sentido se o score souber tratar cadência desconhecida).
-3. **ENG-3r:** remover o LIMIT 100 por completo (universo inteiro, exige REL-2 + warmup persistido) ou manter um cap ordenado por liquidez?
-4. **Ordem Fase 1 vs Fase 2:** backtest limpo (ENG-5r) antes de recalibrar (IMP-1) — confirma essa dependência como aceita?
+1. **N-1:** remover os LIMITs do ranking/screener por completo (paths já são cache-first) ou cortar por liquidez com cap configurável? Recomendo remover e medir latência do primeiro warm.
+2. **N-3:** aceitável desligar gzip para payloads > 1 MiB (proxy/browser aguentam) ou prefere `@fastify/compress` async? Recomendo o limite simples primeiro.
+3. **N-10:** qual destino offsite para backup (S3/B2/rclone p/ drive)? Precisa de credencial que só você pode criar.
+4. **N-12:** canal de alerta preferido (e-mail, Telegram, ntfy)? Define a implementação do notificador de jobs.
+5. **Fase 2:** rodar as investigações PIPE-* direto na base de produção local (read-only) — posso preparar as queries de diagnóstico antes, para você só executar e colar o resultado.
+
+## Pendências de verificação
+
+- `SEC-2r` e todos os `🕒 runtime` exigem Postgres/logs reais — nada foi confirmado em banco nesta revisão.
+- Track U herdado sem re-verificação visual.
+- Verificação adversarial não rodou para os achados novos (N-1..N-15); a evidência é citação direta de código com linha — conferir `arquivo:linha` ao revisar cada ponto.

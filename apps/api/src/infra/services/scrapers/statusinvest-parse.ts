@@ -71,10 +71,10 @@ export interface FiisData {
   ifixParticipation: number | null; // %
   category: 'papel' | 'tijolo' | 'hibrido';
   dividendsHistory: DividendEntry[];
-  /** Totais anuais de proventos */
-  earningsThisYear: number;
-  earningsLastYear: number;
-  provisionedThisYear: number;
+  /** Totais anuais de proventos — null quando ausente na API (PIPE-4r: não confundir ausência com zero). */
+  earningsThisYear: number | null;
+  earningsLastYear: number | null;
+  provisionedThisYear: number | null;
 }
 
 export interface DividendEntry {
@@ -270,8 +270,8 @@ export function parseStatusInvestFiiHtml(html: string, ticker: string): FiisData
     ifixParticipation: extractNullablePercent(indicators['PARTICIPAÇÃO NO IFIX']),
     category,
     dividendsHistory: EMPTY_DIVIDENDS,
-    earningsThisYear: 0,
-    earningsLastYear: 0,
-    provisionedThisYear: 0,
+    earningsThisYear: null,
+    earningsLastYear: null,
+    provisionedThisYear: null,
   };
 }

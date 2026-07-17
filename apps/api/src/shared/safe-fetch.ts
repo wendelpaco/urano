@@ -160,3 +160,51 @@ export async function safeFetchBuffer(
 
   return combined.buffer;
 }
+
+/**
+ * Lê o corpo de uma Response já recebida com teto de bytes (streaming).
+ * Útil quando o caller precisa inspecionar status/headers antes de ler o corpo.
+ */
+export async function readBodyWithCap(
+  response: Response,
+  maxBytes: number,
+  debugUrl?: string,
+): Promise<string> {
+  const url = debugUrl || response.url;
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return response.text();
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        totalBytes += value.length;
+        if (totalBytes > maxBytes) {
+          reader.cancel();
+          throw new Error(
+            `Resposta excedeu limite de ${maxBytes} bytes durante leitura (${url})`,
+          );
+        }
+        chunks.push(value);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(combined);
+}

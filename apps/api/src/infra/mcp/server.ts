@@ -63,21 +63,35 @@ if (!process.env.URANO_API_KEY) {
 const API_KEY = process.env.URANO_API_KEY;
 
 async function api(path: string): Promise<unknown> {
-  const r = await fetch(`${API_BASE}${path}`, {
-    headers: { 'x-api-key': API_KEY, Accept: 'application/json' },
-  });
-  if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);
-  return r.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const r = await fetch(`${API_BASE}${path}`, {
+      headers: { 'x-api-key': API_KEY, Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);
+    return r.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function apiPost(path: string, body: unknown): Promise<unknown> {
-  const r = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);
-  return r.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const r = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!r.ok) throw new Error(`API ${r.status}: ${await r.text().catch(() => '')}`);
+    return r.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ─── Server ──────────────────────────────────────────────────────────────────

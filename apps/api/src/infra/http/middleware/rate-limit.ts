@@ -21,11 +21,16 @@ const WINDOW_SECONDS = 60;
 
 // ─── Interface ───────────────────────────────────────────────────────────────
 
+export interface RateLimitResult {
+  /** Total de requisições na janela atual. */
+  count: number;
+  /** TTL restante da janela (segundos). */
+  ttl: number;
+}
+
 export interface RateLimitStore {
-  /** Incrementa o contador da key na janela. Retorna o total atual. */
-  increment(key: string, windowSeconds: number): Promise<number>;
-  /** Retorna o TTL restante da janela (segundos) */
-  ttl(key: string): Promise<number>;
+  /** Incrementa o contador da key na janela. Retorna count + ttl. */
+  increment(key: string, windowSeconds: number): Promise<RateLimitResult>;
 }
 
 // ─── Implementação Redis ─────────────────────────────────────────────────────
@@ -36,9 +41,10 @@ export interface RedisRateLimitClient {
     numberOfKeys: number,
     ...args: Array<string | number>
   ): Promise<unknown>;
-  ttl(key: string): Promise<number>;
 }
 
+// N-5: script Lua retorna {count, ttl} em um único round-trip Redis.
+// Antes: INCR+TTL (atômico) + comando TTL separado = 2 round-trips.
 const INCREMENT_WITH_EXPIRY_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
 local ttl = redis.call('TTL', KEYS[1])
@@ -49,9 +55,10 @@ local ttl = redis.call('TTL', KEYS[1])
 -- covered defensively, although INCR normally creates the key first.
 if ttl < 0 then
   redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+  ttl = tonumber(ARGV[1])
 end
 
-return count
+return {count, ttl}
 `;
 
 export class RedisRateLimitStore implements RateLimitStore {
@@ -60,37 +67,31 @@ export class RedisRateLimitStore implements RateLimitStore {
     private readonly client: RedisRateLimitClient = redis,
   ) {}
 
-  async increment(key: string, windowSeconds: number): Promise<number> {
+  async increment(key: string, windowSeconds: number): Promise<RateLimitResult> {
     const redisKey = `ratelimit:${key}`;
     try {
-      // One server-side operation: a lost connection can make the result
-      // ambiguous, but can no longer persist INCR without its expiration.
-      const rawCount = await this.client.eval(
+      // N-5: script Lua retorna {count, ttl} — um único round-trip.
+      const raw = await this.client.eval(
         INCREMENT_WITH_EXPIRY_SCRIPT,
         1,
         redisKey,
         windowSeconds,
       );
-      const count = Number(rawCount);
+      // Redis retorna array como string no Bun (dependendo do client);
+      // normalizamos para número(s).
+      const arr = Array.isArray(raw) ? raw : [raw];
+      const count = Number(arr[0]);
+      const ttl = Number(arr[1] ?? windowSeconds);
       if (!Number.isSafeInteger(count) || count < 1) {
         throw new Error('Resposta inválida do Redis ao incrementar rate limit.');
       }
-      return count;
+      return { count, ttl: Number.isSafeInteger(ttl) && ttl > 0 ? ttl : windowSeconds };
     } catch (err) {
       if (this.failClosed) {
-        // Fail-closed: surface the error so the middleware can deny the request.
         throw err;
       }
       // Fail-open (default): Redis offline → allow traffic (degraded).
-      return 0;
-    }
-  }
-
-  async ttl(key: string): Promise<number> {
-    try {
-      return await this.client.ttl(`ratelimit:${key}`);
-    } catch {
-      return 60; // fallback
+      return { count: 0, ttl: windowSeconds };
     }
   }
 }
@@ -100,23 +101,18 @@ export class RedisRateLimitStore implements RateLimitStore {
 export class MemoryRateLimitStore implements RateLimitStore {
   private store = new Map<string, { count: number; resetAt: number }>();
 
-  async increment(key: string, windowSeconds: number): Promise<number> {
+  async increment(key: string, windowSeconds: number): Promise<RateLimitResult> {
     const now = Date.now();
     const entry = this.store.get(key);
 
     if (!entry || now > entry.resetAt) {
       this.store.set(key, { count: 1, resetAt: now + windowSeconds * 1000 });
-      return 1;
+      return { count: 1, ttl: windowSeconds };
     }
 
     entry.count++;
-    return entry.count;
-  }
-
-  async ttl(key: string): Promise<number> {
-    const entry = this.store.get(key);
-    if (!entry) return 60;
-    return Math.max(0, Math.ceil((entry.resetAt - Date.now()) / 1000));
+    const ttl = Math.max(0, Math.ceil((entry.resetAt - now) / 1000));
+    return { count: entry.count, ttl };
   }
 }
 
@@ -198,9 +194,9 @@ export function buildRateLimiter(options: RateLimitOptions = {}) {
       ? baseKey
       : `${baseKey}:path:${createHash('sha256').update(path).digest('hex')}`;
 
-    let current: number;
+    let result: RateLimitResult;
     try {
-      current = await store.increment(rateLimitKey, windowSeconds);
+      result = await store.increment(rateLimitKey, windowSeconds);
     } catch {
       if (failClosed) {
         reply.status(503).send({
@@ -213,8 +209,9 @@ export function buildRateLimiter(options: RateLimitOptions = {}) {
       return;
     }
 
+    const current = result.count;
+    const resetIn = result.ttl;
     const remaining = Math.max(0, effectiveLimit - current);
-    const resetIn = await store.ttl(rateLimitKey);
 
     // Headers informativos
     reply.header('X-RateLimit-Limit', String(effectiveLimit));

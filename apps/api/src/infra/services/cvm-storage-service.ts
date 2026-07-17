@@ -7,6 +7,7 @@ import type { CompanyFundamentals } from '../../core/entities/company-fundamenta
 import { withRetry } from '../../shared/retry.ts';
 import { cvmLimiter } from './rate-limiter.ts';
 import { cvmCircuitBreaker } from './circuit-breaker.ts';
+import { safeFetchBuffer } from '../../shared/safe-fetch.ts';
 
 // ---- Constantes de parsing CVM ----
 
@@ -384,26 +385,13 @@ export class CvmStorageService {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 120_000);
         try {
-          // SSRF-3r: CVM não deve redirecionar para outro host
-          const r = await fetch(url, {
+          // SSRF-1r/SSRF-3r: safeFetchBuffer faz streaming com teto + redirect:error.
+          return await safeFetchBuffer(url, {
             headers: { 'User-Agent': this.userAgent },
             signal: controller.signal,
             redirect: 'error',
+            maxBytes: 50 * 1024 * 1024, // 50 MiB
           });
-          if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
-          // SSRF-1: limita ZIP da CVM a 50 MiB
-          const cl = r.headers.get('Content-Length');
-          if (cl) {
-            const len = parseInt(cl, 10);
-            if (!Number.isNaN(len) && len > 50 * 1024 * 1024) {
-              throw new Error(`ZIP CVM muito grande: ${len} bytes (limite 50 MiB)`);
-            }
-          }
-          const buf = await r.arrayBuffer();
-          if (buf.byteLength > 50 * 1024 * 1024) {
-            throw new Error(`ZIP CVM excedeu 50 MiB durante leitura: ${buf.byteLength} bytes`);
-          }
-          return buf;
         } finally { clearTimeout(timeout); }
       }, {
         maxRetries: 3,

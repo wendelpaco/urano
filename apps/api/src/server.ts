@@ -121,10 +121,14 @@ app.addHook('onResponse', async (request, reply) => {
 });
 
 // Compressão gzip (Bun nativo)
+// N-3: pula payloads > 1 MiB — compressão síncrona bloqueia o event loop;
+// payloads grandes geralmente são cotações/ranking onde o proxy (nginx/Caddy)
+// já comprime, e o custo de bloquear todas as requests não compensa.
+const GZIP_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB
 app.addHook('onSend', async (request, reply, payload) => {
   if (typeof payload !== 'string' && !Buffer.isBuffer(payload)) return payload;
   const body = typeof payload === 'string' ? payload : payload.toString('utf-8');
-  if (body.length < 1024) return payload;
+  if (body.length < 1024 || body.length > GZIP_MAX_BYTES) return payload;
   const accept = request.headers['accept-encoding'] || '';
   if (accept.includes('gzip')) {
     // Bun.gzipSync retorna Uint8Array puro; Fastify só aceita string/Buffer/Stream

@@ -43,18 +43,14 @@ function fakeRequest(
   return { url, ip, apiKeyId, headers: key ? { 'x-api-key': key } : {} };
 }
 
-/** Store wrapper that records keys passed to increment/ttl for assertions. */
+/** Store wrapper that records keys passed to increment for assertions. */
 class RecordingRateLimitStore implements RateLimitStore {
   readonly keys: string[] = [];
   private inner = new MemoryRateLimitStore();
 
-  async increment(key: string, windowSeconds: number): Promise<number> {
+  async increment(key: string, windowSeconds: number): Promise<{ count: number; ttl: number }> {
     this.keys.push(key);
     return this.inner.increment(key, windowSeconds);
-  }
-
-  async ttl(key: string): Promise<number> {
-    return this.inner.ttl(key);
   }
 }
 
@@ -85,11 +81,8 @@ class AtomicRedisClient implements RedisRateLimitClient {
       this.failAfterCommit = false;
       throw new Error('socket closed after Redis committed EVAL');
     }
-    return this.count;
-  }
-
-  async ttl(): Promise<number> {
-    return this.remainingTtl;
+    // N-5: script Lua retorna {count, ttl} (array no Redis).
+    return [this.count, this.remainingTtl];
   }
 }
 
@@ -100,8 +93,9 @@ describe('rateLimiter', () => {
     const client = new AtomicRedisClient(7, -1);
     const store = new RedisRateLimitStore(true, client);
 
-    expect(await store.increment('ip:legacy', 45)).toBe(8);
-    expect(await store.ttl('ip:legacy')).toBe(45);
+    const result = await store.increment('ip:legacy', 45);
+    expect(result.count).toBe(8);
+    expect(result.ttl).toBe(45);
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0]?.numberOfKeys).toBe(1);
     expect(client.calls[0]?.args).toEqual(['ratelimit:ip:legacy', 45]);
@@ -117,12 +111,14 @@ describe('rateLimiter', () => {
 
     // Fail-open sees no count because the response was lost, while the Redis
     // state already contains both the increment and its expiration.
-    expect(await store.increment('ip:ambiguous', 30)).toBe(0);
-    expect(await store.ttl('ip:ambiguous')).toBe(30);
+    const r1 = await store.increment('ip:ambiguous', 30);
+    expect(r1.count).toBe(0);
+    expect(r1.ttl).toBe(30);
 
     // A later request observes the same expiring bucket, not a poisoned key.
-    expect(await store.increment('ip:ambiguous', 30)).toBe(2);
-    expect(await store.ttl('ip:ambiguous')).toBe(30);
+    const r2 = await store.increment('ip:ambiguous', 30);
+    expect(r2.count).toBe(2);
+    expect(r2.ttl).toBe(30);
   });
 
   test('healthcheck público tem bucket e limite próprio', async () => {
@@ -261,9 +257,6 @@ describe('rateLimiter', () => {
       async increment() {
         throw new Error('redis down');
       },
-      async ttl() {
-        return 60;
-      },
     };
     const hook = buildRateLimiter({ store, limit: 10, failClosed: true });
 
@@ -279,9 +272,6 @@ describe('rateLimiter', () => {
     const store: RateLimitStore = {
       async increment() {
         throw new Error('redis down');
-      },
-      async ttl() {
-        return 60;
       },
     };
     const hook = buildRateLimiter({ store, limit: 10, failClosed: false });

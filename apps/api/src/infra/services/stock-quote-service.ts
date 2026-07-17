@@ -10,6 +10,7 @@ import {
 import { StatusInvestScraper } from './statusinvest-scraper.ts';
 import { investidor10Provider } from './investidor10-provider.ts';
 import { isFii } from '../../shared/ticker-utils.ts';
+import { readBodyWithCap } from '../../shared/safe-fetch.ts';
 
 /**
  * Dados de cotação em tempo real de um ativo da B3.
@@ -484,7 +485,9 @@ export class StockQuoteService {
       throw error;
     }
 
-    const data = (await response.json()) as YahooFinanceResponse;
+    // SSRF-1r: leitura streaming com teto de 2 MiB.
+    const rawQuote = await readBodyWithCap(response, 2 * 1024 * 1024);
+    const data = JSON.parse(rawQuote) as YahooFinanceResponse;
 
     if (data.chart.error) {
       throw new Error(
@@ -583,7 +586,9 @@ export class StockQuoteService {
       throw error;
     }
 
-    const data = (await response.json()) as YahooFinanceHistoryResponse;
+    // SSRF-1r: leitura streaming com teto de 2 MiB.
+    const rawHistory = await readBodyWithCap(response, 2 * 1024 * 1024);
+    const data = JSON.parse(rawHistory) as YahooFinanceHistoryResponse;
     const result = data.chart.result?.[0];
 
     if (!result?.timestamp) {

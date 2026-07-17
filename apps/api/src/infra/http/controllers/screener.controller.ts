@@ -22,6 +22,7 @@ import {
 } from '../../../core/services/dividend-income.ts';
 import { batchWithConcurrency } from '../../../shared/retry.ts';
 import { redis } from '../../services/redis.ts';
+import { STOCK_UNITS_SQL_LIST } from '../../../shared/ticker-utils.ts';
 
 function sendZodError(reply: FastifyReply, error: z.ZodError, message: string): void {
   reply.status(400).send({
@@ -118,13 +119,17 @@ export async function screenerController(
       cf.source
     FROM companies c
     INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-    WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11')) AND LENGTH(c.ticker) >= 5
+    WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN (${sql.join(
+      STOCK_UNITS_SQL_LIST.map(u => sql`${u}`),
+      sql`, `
+    )})) AND LENGTH(c.ticker) >= 5
   `;
 
   if (filters.sector) query = sql`${query} AND c.sector ILIKE ${`%${filters.sector}%`}`;
   if (filters.year) query = sql`${query} AND cf.fiscal_year = ${filters.year}`;
 
-  query = sql`${query} ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC LIMIT 100`;
+  query = sql`${query} ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC`;
+  // N-1: LIMIT removido — universo completo; paginação via limit/offset no wrapper
 
   const rows = await db.execute(query);
   const rawData = rows as unknown as Record<string, unknown>[];

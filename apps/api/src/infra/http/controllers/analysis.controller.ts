@@ -36,6 +36,7 @@ import {
 } from '../../../core/services/dividend-income.ts';
 import { marketDataService } from '../../services/market-data-service.ts';
 import { redis } from '../../services/redis.ts';
+import { STOCK_UNITS_SQL_LIST } from '../../../shared/ticker-utils.ts';
 import { SCORE_VALIDATION } from '../../../core/data/score-validation.data.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -570,10 +571,13 @@ export async function getRankingController(
         cf.jcp_paid AS "jcpPaid"
       FROM companies c
       INNER JOIN company_fundamentals cf ON cf.company_cnpj = c.cnpj
-      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN ('KLBN11','SANB11','TAEE11','ENGI11','ALUP11','BPAC11'))  -- Exclui FIIs, mas mantém Units
+      WHERE (c.ticker NOT LIKE '%11' OR c.ticker IN (${sql.join(
+        STOCK_UNITS_SQL_LIST.map(u => sql`${u}`),
+        sql`, `
+      )}))  -- Exclui FIIs, mas mantém Units (N-9: constante única)
         AND LENGTH(c.ticker) >= 5
       ORDER BY c.ticker, cf.source = 'DFP' DESC, cf.reference_date DESC
-      LIMIT 200
+      -- N-1: LIMIT removido para não truncar universo alfabeticamente
     `);
 
     // Processa em batch (concorrência 5) em vez de sequencial
@@ -582,11 +586,12 @@ export async function getRankingController(
       async (r) => {
         const ticker = String(r.ticker);
 
-        // Quote e proventos não dependem um do outro — busca em paralelo
-        // (antes era sequencial, dobrando a latência por ticker no ranking).
+        // Quote (fresca) + proventos (só cache/DB — StatusInvest é 0.5 req/s
+        // serializado e global; bater rede aqui em N tickers estoura o timeout
+        // do proxy independente de concorrência do batch).
         const [quote, proventos] = await Promise.all([
           stockQuoteService.getQuote(ticker).catch(() => null),
-          dividendsProvider.fetchDividends(ticker).catch(() => null),
+          dividendsProvider.getCachedDividends(ticker).catch(() => null),
         ]);
 
         if (!quote) return null;
@@ -662,7 +667,7 @@ export async function getRankingController(
       WHERE ticker LIKE '%11'
         AND LENGTH(ticker) = 6
       ORDER BY ticker
-      LIMIT 200
+      -- N-1: LIMIT removido (universo completo de FIIs)
     `);
 
     const fiiTickers = (allTickers as unknown as Record<string, unknown>[])
@@ -679,10 +684,11 @@ export async function getRankingController(
       async (r) => {
         const ticker = String(r.ticker);
 
-        // Quote e proventos não dependem um do outro — busca em paralelo.
+        // Quote (fresca) + proventos (só cache/DB, sem scrape síncrono —
+        // ver getCachedDividends acima no branch stock).
         const [q, proventos] = await Promise.all([
           stockQuoteService.getQuote(ticker).catch(() => null),
-          dividendsProvider.fetchDividends(ticker).catch(() => null),
+          dividendsProvider.getCachedDividends(ticker).catch(() => null),
         ]);
 
         if (!q) return null;

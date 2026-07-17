@@ -17,6 +17,7 @@ import {
   investidor10CircuitBreaker,
   CircuitOpenError,
 } from './circuit-breaker.ts';
+import { readBodyWithCap } from '../../shared/safe-fetch.ts';
 
 export type I10QuoteHit = {
   ticker: string;
@@ -143,7 +144,9 @@ export class Investidor10Provider {
         throw new Error(`Investidor10 chart HTTP ${res.status} para ${upper}`);
       }
 
-      const data = (await res.json()) as {
+      // SSRF-1r: leitura streaming com teto de 2 MiB.
+      const raw = await readBodyWithCap(res, 2 * 1024 * 1024);
+      const data = JSON.parse(raw) as {
         real?: Array<{ price: number; created_at: string }>;
       };
       const series = data.real ?? [];
@@ -201,7 +204,9 @@ export class Investidor10Provider {
         throw new Error(`Investidor10 batch HTTP ${res.status}`);
       }
 
-      const data = (await res.json()) as Record<
+      // SSRF-1r: leitura streaming com teto de 2 MiB.
+      const rawBatch = await readBodyWithCap(res, 2 * 1024 * 1024);
+      const data = JSON.parse(rawBatch) as Record<
         string,
         { price?: number; last_update?: string }
       >;

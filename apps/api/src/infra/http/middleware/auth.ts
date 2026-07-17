@@ -207,7 +207,27 @@ export async function authMiddleware(
   updateLastUsed(keyHash).catch(() => {});
 }
 
+// N-4: throttle — só atualiza last_used_at a cada 60s por key para evitar
+// write amplification no hot path (200 req/min/key = 200 UPDATEs/min sem throttle).
+const lastUsedThrottle = new Map<string, number>();
+const LAST_USED_THROTTLE_SECONDS = 60;
+
 async function updateLastUsed(keyHash: string): Promise<void> {
+  const now = Date.now();
+  const last = lastUsedThrottle.get(keyHash);
+  if (last !== undefined && now - last < LAST_USED_THROTTLE_SECONDS * 1000) {
+    return; // atualizado recentemente, pula
+  }
+  lastUsedThrottle.set(keyHash, now);
+
+  // Limpeza periódica do Map (a cada ~1000 entradas, remove as expiradas)
+  if (lastUsedThrottle.size > 1000) {
+    const cutoff = now - LAST_USED_THROTTLE_SECONDS * 1000 * 2;
+    for (const [k, t] of lastUsedThrottle) {
+      if (t < cutoff) lastUsedThrottle.delete(k);
+    }
+  }
+
   try {
     await db
       .update(apiKeys)
