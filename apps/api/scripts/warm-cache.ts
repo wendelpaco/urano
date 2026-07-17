@@ -36,7 +36,7 @@ async function warm(url: string, label: string): Promise<void> {
 
 const STOCKS = [
   'PETR4', 'VALE3', 'ITUB4', 'BBDC4', 'BBAS3', 'WEGE3', 'ABEV3',
-  'ELET3', 'RENT3', 'SUZB3', 'PRIO3', 'EQTL3', 'GGBR4', 'EMBR3',
+  'AXIA3', 'RENT3', 'SUZB3', 'PRIO3', 'EQTL3', 'GGBR4', 'EMBJ3',
   'RADL3', 'TOTS3', 'VIVT3', 'CPLE6', 'EGIE3', 'LREN3',
 ];
 

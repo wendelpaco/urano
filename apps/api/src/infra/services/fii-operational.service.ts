@@ -20,6 +20,7 @@ import { redis } from './redis.ts';
 import { stockQuoteService } from './stock-quote-service.ts';
 import { statusInvestLimiter } from './rate-limiter.ts';
 import { userAgentPool } from './user-agent-pool.ts';
+import { investidor10Provider } from './investidor10-provider.ts';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -137,7 +138,15 @@ export class FiiOperationalService {
       tenantData = await this.scrapeTenantsSection(t);
     } catch { /* ok */ }
 
-    const hasOperationalEvidence = operationalData !== null && (
+    // 4. Vacância — fallback Investidor10 quando StatusInvest não publica
+    let vacancyFallback: number | null = null;
+    if (operationalData === null || operationalData.vacancyPct === null) {
+      try {
+        vacancyFallback = await investidor10Provider.getFiiVacancy(t);
+      } catch { /* ok */ }
+    }
+
+    const hasOperationalEvidence = vacancyFallback !== null || (operationalData !== null && (
       operationalData.assetComposition !== null
       || operationalData.vacancyPct !== null
       || operationalData.delinquencyPct !== null
@@ -145,7 +154,7 @@ export class FiiOperationalService {
       || operationalData.totalAreaSqm !== null
       || operationalData.topProperties.length > 0
       || operationalData.referenceDate !== null
-    );
+    ));
 
     const result: FiiOperationalData = {
       ticker: t,
@@ -166,7 +175,7 @@ export class FiiOperationalService {
 
       // Operacionais (do HTML)
       assetComposition: operationalData?.assetComposition ?? null,
-      vacancyPct: operationalData?.vacancyPct ?? null,
+      vacancyPct: operationalData?.vacancyPct ?? vacancyFallback,
       delinquencyPct: operationalData?.delinquencyPct ?? null,
       propertyCount: operationalData?.propertyCount ?? null,
       totalAreaSqm: operationalData?.totalAreaSqm ?? null,

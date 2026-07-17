@@ -178,6 +178,51 @@ export class Investidor10Provider {
     }
   }
 
+  /**
+   * Vacância física de FII via página HTML (StatusInvest não publica esse
+   * indicador para a maioria dos fundos; Investidor10 é fallback gratuito).
+   */
+  async getFiiVacancy(ticker: string): Promise<number | null> {
+    const upper = ticker.toUpperCase();
+    await investidor10CircuitBreaker.beforeRequest();
+    await investidor10Limiter.acquire();
+
+    const url = `${BASE}/fiis/${upper.toLowerCase()}/`;
+    try {
+      const res = await fetch(url, { headers: headers(upper), redirect: 'error' });
+      if (res.status === 429) {
+        const sec = parseInt(res.headers.get('Retry-After') ?? '15', 10) || 15;
+        investidor10Limiter.penalize(sec * 1000);
+        await investidor10CircuitBreaker.onFailure('rate-limit', 'I10 fii-page 429');
+        throw new RateLimitError(`Investidor10 HTTP 429 (fii ${upper})`, sec * 1000);
+      }
+      if (!res.ok) {
+        if (res.status >= 500) {
+          await investidor10CircuitBreaker.onFailure(
+            'server-error',
+            `I10 fii-page HTTP ${res.status}`,
+          );
+        }
+        await investidor10CircuitBreaker.onSuccess();
+        return null;
+      }
+
+      // SSRF-1r: leitura streaming com teto de 2 MiB.
+      const html = await readBodyWithCap(res, 2 * 1024 * 1024);
+      const m = html.match(/VAC[ÂA]NCIA.*?<div class="value">\s*<span>\s*([\d,.]+)\s*%/is);
+      await investidor10CircuitBreaker.onSuccess();
+      if (!m) return null;
+      const pct = parseFloat(m[1]!.replace(',', '.'));
+      return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+    } catch (err) {
+      if (err instanceof CircuitOpenError || err instanceof RateLimitError) throw err;
+      if (err instanceof Error && !err.message.includes('HTTP')) {
+        await investidor10CircuitBreaker.onFailure('network-error', err.message);
+      }
+      return null;
+    }
+  }
+
   private async fetchBatchChunk(
     tickers: string[],
   ): Promise<Map<string, I10QuoteHit>> {

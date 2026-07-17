@@ -10,21 +10,21 @@ export const ALL_STOCK_TICKERS = [
   // Bancos
   'ITUB4', 'BBDC4', 'BBAS3', 'SANB11', 'BPAC11',
   // Energia
-  'ELET3', 'CPLE6', 'EGIE3', 'CMIG4', 'TAEE11', 'ENGI11', 'ENEV3', 'ALUP11', 'EQTL3', 'CPFE3',
+  'AXIA3', 'CPLE6', 'EGIE3', 'CMIG4', 'TAEE11', 'ENGI11', 'ENEV3', 'ALUP11', 'EQTL3', 'CPFE3',
   // Mineração / Siderurgia
   'VALE3', 'GGBR4', 'CSNA3', 'USIM5', 'GOAU4', 'CMIN3',
   // Petróleo
   'PETR4', 'PRIO3', 'BRAV3', 'RECV3',
   // Alimentos / Bebidas
-  'ABEV3', 'JBSS3', 'BRFS3', 'MDIA3', 'MRFG3', 'BEEF3',
+  'ABEV3', 'JBSS3', 'BRFS3', 'MDIA3', 'MBRF3', 'BEEF3',
   // Saúde
   'HAPV3', 'RDOR3', 'FLRY3', 'QUAL3', 'DASA3',
   // Varejo
-  'MGLU3', 'LREN3', 'NTCO3', 'ASAI3', 'GMAT3', 'BHIA3', 'PETZ3', 'ARZZ3',
+  'MGLU3', 'LREN3', 'NATU3', 'ASAI3', 'GMAT3', 'BHIA3', 'AUAU3', 'AZZA3',
   // Indústria
-  'WEGE3', 'EMBR3', 'TUPY3', 'MYPK3', 'ROMI3',
+  'WEGE3', 'EMBJ3', 'TUPY3', 'MYPK3', 'ROMI3',
   // Transporte
-  'RAIL3', 'CCRO3', 'STBP3', 'ECOR3',
+  'RAIL3', 'MOTV3', 'STBP3', 'ECOR3',
   // Papel / Celulose
   'SUZB3', 'KLBN11',
   // Telecom

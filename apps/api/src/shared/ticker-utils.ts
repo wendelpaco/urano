@@ -44,6 +44,8 @@ const KNOWN_STOCK_UNITS_ARRAY = [
   'ENGI11',  // Energisa — Unit
   'ALUP11',  // Alupar Investimentos — Unit
   'BPAC11',  // Banco BTG Pactual — Unit
+  'IGTI11',  // Iguatemi Empresa de Shopping Centers — Unit
+  'SAPR11',  // Sanepar — Unit
 ] as const;
 
 const KNOWN_STOCK_UNITS = new Set<string>(KNOWN_STOCK_UNITS_ARRAY);

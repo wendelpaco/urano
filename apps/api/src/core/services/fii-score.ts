@@ -205,11 +205,15 @@ export class FIIScoreCalculatorV4 {
       { field: 'liquidity', available: liquidity !== null },
       { field: 'dividends_history', available: observedIncomeMonths >= 6 },
     ];
+    // Vacância só existe/é divulgada para fundos com imóveis físicos;
+    // inadimplência só existe/é divulgada para fundos com recebíveis (CRI).
+    // Exigir o campo errado do tipo travaria criticalComplete permanentemente
+    // (dado inexistente em qualquer fonte gratuita), não é falha de coleta.
     if (type !== 'papel') {
-      requiredData.push(
-        { field: 'vacancy', available: vacancy !== null },
-        { field: 'delinquency', available: delinquency !== null },
-      );
+      requiredData.push({ field: 'vacancy', available: vacancy !== null });
+    }
+    if (type !== 'tijolo') {
+      requiredData.push({ field: 'delinquency', available: delinquency !== null });
     }
     const missingFields = requiredData
       .filter((item) => !item.available)
