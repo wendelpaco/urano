@@ -483,7 +483,7 @@ async function buildScreenerResult(
     () => new Map<string, { navPerShare: number; referenceDate: string }>(),
   );
 
-  const enriched: FiiScreenerResult[] = await batchWithConcurrency(
+  const rawEnriched = await batchWithConcurrency(
     candidates,
     async (fii) => {
       const result: FiiScreenerResult = {
@@ -605,6 +605,7 @@ async function buildScreenerResult(
     },
     5, // menos pressão no scraper: CVM/cache cobrem a maioria
   );
+  const enriched: FiiScreenerResult[] = rawEnriched.filter((f): f is FiiScreenerResult => f !== null);
 
   // 3. Aplica filtros numéricos
   let filtered = enriched;

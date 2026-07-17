@@ -245,15 +245,23 @@ export async function batchWithConcurrency<T, R>(
   items: T[],
   operation: (item: T) => Promise<R>,
   concurrency: number = 2,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+): Promise<(R | null)[]> {
+  const results: (R | null)[] = new Array(items.length);
   const executing: Promise<void>[] = [];
 
   for (const [index, item] of items.entries()) {
-    const promise = operation(item).then((result) => {
-      results[index] = result;
-      executing.splice(executing.indexOf(promise), 1);
-    });
+    // Um item que rejeita não pode derrubar o batch inteiro: sem este catch,
+    // promises abandonadas em `executing` viram unhandled rejection e o Bun
+    // mata o processo (visto em produção como socket hang up no /v1/analysis/ranking).
+    const promise = operation(item)
+      .then((result) => { results[index] = result; })
+      .catch((err) => {
+        console.error(`[batchWithConcurrency] item ${index} falhou:`, err instanceof Error ? err.message : err);
+        results[index] = null;
+      })
+      .finally(() => {
+        executing.splice(executing.indexOf(promise), 1);
+      });
 
     executing.push(promise);
 

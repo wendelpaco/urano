@@ -1040,7 +1040,7 @@ export async function compareController(
     if (cached) { reply.send(JSON.parse(cached)); return; }
   } catch { /* Redis offline */ }
 
-  const results: CompareResultItem[] = await batchWithConcurrency(tickers, async (ticker) => {
+  const rawResults = await batchWithConcurrency<string, CompareResultItem>(tickers, async (ticker) => {
     try {
       if (type === 'fii') {
         const cacheKeyFii = `analysis:fii:v3:${ticker}`;
@@ -1222,6 +1222,7 @@ export async function compareController(
       return { ticker, name: ticker, price: null, score: null, error: String(err) };
     }
   }, 5);
+  const results: CompareResultItem[] = rawResults.filter((r): r is CompareResultItem => r !== null);
 
   // Adiciona análise de dispersão
   const scores = results.filter((r) => r.score !== null).map((r) => r.score!);
